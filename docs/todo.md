@@ -1,0 +1,495 @@
+# Virtuals Whale Radar 管理后台迭代执行清单
+
+> 基于 [PLAN.md](/D:/20_Projects/virtuals-whale-radar/docs/PLAN.md) 拆解。  
+> 本清单用于跟踪“迭代版信息架构”落地进度。  
+> 说明：保留仍然有效的现有基线为已完成；所有新架构下尚未落地的任务恢复为未完成。
+
+## 已确认决策
+
+- [x] 品牌名称统一为 `Virtuals Whale Radar`。
+- [x] 左侧栏一级导航调整为 `Overview / Projects / SignalHub / Wallets / Settings`。
+- [x] `Overview` 只展示正在发射项目的实时数据，不承担编辑。
+- [x] `Projects` 承担项目新建、删除、编辑、采集、回扫和状态展示。
+- [x] `SignalHub` 作为关注列表入口，勾选项目后自动进入 `Projects`。
+- [x] `Wallets` 独立为一级页面，只管理 `钱包地址 + 名称`。
+- [x] `Settings` 仅保留全局设置，不放用户配置。
+- [x] 结束时间优先级为：`管理员手动设置 > SignalHub > 开始时间 + 99 分钟`。
+- [x] `+99` 的单位确认为 `99 分钟`。
+- [x] `SpentV` 柱状图放在 `Overview` 项目头下方，作为实时主图。
+- [x] 删除项目的语义固定为：`取消关注 + 从 Projects 移除 + 停止调度 + 保留历史数据`。
+- [x] 未登录访问业务页时统一跳转 `/auth/login`。
+- [x] 用户端固定为 `Overview / Projects / SignalHub / Wallets / Billing` 五页。
+- [x] 管理员端新增 `Users` 页面。
+- [x] 用户端只有 `Wallets` 可编辑，其余页面只读。
+- [x] 用户钱包数据彼此隔离，管理员可查看全部用户钱包。
+- [x] 管理员默认不直接查看完整密码哈希，只提供密码状态和重置能力。
+- [x] 初始管理员账号通过配置或环境变量 bootstrap 创建。
+- [x] 用户查看某个项目 `Overview` 详细数据时，按“每用户、每项目首次解锁”扣 `10` 积分，解锁后永久可看。
+- [x] 新用户注册赠送 `20` 积分。
+- [x] 充值方案固定为：`10 积分 = 10 元`、`100 积分 = 90 元`。
+- [x] 用户端 `Projects / SignalHub` 免费可看，未解锁项目的 `Overview` 详细数据不可看。
+- [x] 用户积分不足时，点击未解锁项目应引导到 `Billing`。
+- [x] `Billing` 页面展示联系方式二维码，不接入在线支付。
+- [x] `Billing` 顶部固定展示邀请文案与注册链接。
+- [x] 管理员调整积分时只允许“加积分 / 扣积分 + 备注”，不直接裸改余额。
+
+## 当前有效基线
+
+- [x] `frontend/admin/` 已存在，可作为本轮迭代基础工程。
+- [x] `/admin` 静态托管、SPA 刷新回退与旧 `/dashboard` 共存能力已存在。
+- [x] `React + Vite + TypeScript + Tailwind + shadcn/ui` 技术栈已接入。
+- [x] 当前已具备 `Overview / Projects / SignalHub / Wallets / Operations` 页面基线，可重构而非重搭。
+- [x] `SignalHub` API 代理与基础拉取能力已存在。
+- [x] 当前主题、图标和品牌资源链路已可复用，但需要按新品牌文案和布局再调整。
+
+## Phase 0：文档与范围冻结
+
+- [x] 将迭代版信息架构、五页职责、状态机和调度时序回写到 `docs/PLAN.md`。
+- [x] 将旧版“已全部完成”的执行清单替换为新的迭代任务清单。
+- [ ] 补一版“旧页面到新页面”的字段迁移对照，明确哪些旧模块被删除、合并或下沉。
+- [ ] 补一版“现有 API / 新 API / 待废弃 API”对照表，避免实现中反复返工。
+
+## Phase 1：壳层重构
+
+- [x] 将左侧栏调整为最终一级导航：`Overview / Projects / SignalHub / Wallets / Settings`。
+- [x] 移除 `Legacy Dashboard`、`Operations` 作为一级导航项的现状。
+- [x] 实现桌面端左侧栏三态：`Expanded / Rail / Hidden`。
+- [x] 将左侧栏状态持久化到 `localStorage`。
+- [x] 将顶部品牌文案全部替换为 `Virtuals Whale Radar`。
+- [x] 将当前品牌展示由 `V-Pulse` 全量替换为新品牌。
+- [x] 精简 `Top Bar`，只保留品牌、侧栏切换、活跃项目切换、runtime 状态、刷新。
+- [x] 删除侧栏和顶栏中重复的状态摘要与说明性文案。
+- [x] 调整默认路由逻辑：存在活跃项目时默认进入 `Overview`，否则默认进入 `Projects`。
+
+## Phase 2：数据模型与后端基础改造
+
+- [x] 设计并创建 `managed_projects` 表。
+- [x] 为 `managed_projects` 增加字段：
+  - `name`
+  - `signalhub_project_id`
+  - `detail_url`
+  - `token_addr`
+  - `internal_pool_addr`
+  - `start_at`
+  - `signalhub_end_at`
+  - `manual_end_at`
+  - `resolved_end_at`
+  - `is_watched`
+  - `collect_enabled`
+  - `backfill_enabled`
+  - `status`
+  - `source`
+  - `created_at`
+  - `updated_at`
+- [x] 确定 `launch_configs` 与 `managed_projects` 的同步规则。
+- [x] 扩展钱包表，为钱包增加 `name` 字段。
+- [ ] 评估是否增加钱包启用状态字段 `is_enabled`。
+- [x] 为项目状态定义统一枚举：`draft / scheduled / prelaunch / live / ended / removed`。
+- [x] 为项目结束时间实现统一解析逻辑：`manual > signalhub > start + 99m`。
+
+## Phase 3：后端 API 改造
+
+- [x] 新增 `managed_projects` 列表接口。
+- [x] 新增 `managed_projects` 创建接口。
+- [x] 新增 `managed_projects` 编辑接口。
+- [x] 新增 `managed_projects` 删除接口。
+- [x] 新增 `SignalHub` 加入关注接口。
+- [x] 新增 `SignalHub` 取消关注接口。
+- [x] 新增 `SignalHub` 批量加入关注接口。
+- [x] 新增 `SignalHub` 批量取消关注接口。
+- [x] 新增 `Wallets` CRUD 接口，并支持 `name` 字段。
+- [x] 新增 `Overview` 专用聚合接口，返回：
+  - 活跃项目头信息
+  - `SpentV` 柱状图数据
+  - Whale Board
+  - 追踪钱包持仓
+  - 交易录入延迟
+- [x] 新增项目调度状态读取接口。
+- [x] 为 `Projects` 行展开态提供统一项目详情接口。
+
+## Phase 4：自动调度器
+
+- [x] 增加项目调度器循环。
+- [x] 让调度器按固定频率扫描 `scheduled / prelaunch / live` 项目。
+- [x] 在 `start_at - 30 分钟` 自动将项目切换为 `prelaunch`。
+- [x] 在 `prelaunch` 阶段自动触发该项目的采集准备。
+- [x] 在 `prelaunch` 阶段自动触发该项目回扫。
+- [x] 在 `prelaunch` 阶段自动设置项目默认分钟图区间为 `[start_at, resolved_end_at]`。
+- [x] 在 `start_at` 将项目切换为 `live`。
+- [x] 在 `resolved_end_at` 将项目切换为 `ended`。
+- [x] 在项目删除时停止该项目调度。
+- [x] 处理边界情况：
+  - 关注时已进入预热窗口
+  - 关注时项目已开始
+  - 关注时项目已结束
+
+## Phase 5：Overview 页面重构
+
+- [x] 将 `Overview` 改成“当前活跃项目实时看板”，移除旧版系统总览逻辑。
+- [x] 顶部增加活跃项目切换器。
+- [x] 实现项目头信息区，展示：
+  - 项目名称
+  - 开始时间
+  - 结束时间
+  - 项目详情链接
+  - 代币地址
+  - 内盘地址
+  - 当前项目累计税收
+- [x] 在项目头下实现 `SpentV` 实时柱状图。
+- [x] 将图表默认时间区间绑定到项目 `start_at / resolved_end_at`。
+- [x] 重构 Whale Board，字段固定为：
+  - 钱包地址
+  - 累计花费 V
+  - 累计代币数量（万）
+  - 成本（万）
+  - 更新时间
+- [x] 在 Whale Board 下方实现“追踪钱包持仓”，字段与 Whale Board 完全一致。
+- [x] 将交易录入延迟放到页面底部并默认折叠。
+- [x] 移除 `Overview` 中所有项目编辑能力。
+- [x] 清理 `Overview` 中重复的 KPI 卡、快捷入口、说明块和无关运维块。
+- [x] 完成 `Overview` 的 loading / empty / error / no-active-project 状态。
+
+## Phase 6：Projects 页面重构
+
+- [x] 将 `Projects` 从“单项目工作区”改为“项目管理列表页”。
+- [x] 页面顶部增加 `新建项目` 按钮。
+- [x] 页面顶部增加 `删除项目` 按钮，并支持批量删除。
+- [x] 列表每行展示：
+  - 项目名称
+  - 开始时间
+  - 结束时间
+  - 项目详情
+  - 当前状态
+  - 选择框
+  - 折叠按钮
+- [x] 每个项目支持折叠展开。
+- [x] 展开后展示：
+  - 代币地址
+  - 内盘地址
+  - 运行状态
+  - `采集` 按钮
+  - `回扫` 按钮
+  - `编辑` 按钮
+- [x] 明确 `采集` 按钮对应 `collect_enabled`。
+- [x] 明确 `回扫` 按钮对应“按项目时间窗口立即发起回扫”。
+- [x] 将项目编辑抽屉/弹窗绑定到 `managed_projects`。
+- [x] 实现项目手动创建流程。
+- [x] 实现批量删除流程，并确保语义符合已确认规则。
+
+## Phase 7：SignalHub 页面重构
+
+- [x] 将 `SignalHub Inbox` 重命名为 `SignalHub`。
+- [x] 将主心智从“导入”改成“关注列表”。
+- [x] 在列表中加入勾选框与全选能力。
+- [x] 每行展示：
+  - 项目名称
+  - 开始时间
+  - 解析后的结束时间
+  - 项目详情
+  - 字段完整度
+  - 当前关注状态
+- [x] 实现单项目加入关注。
+- [x] 实现单项目取消关注。
+- [x] 实现批量加入关注。
+- [x] 实现批量取消关注。
+- [x] 勾选关注后立即写入 `managed_projects`。
+- [x] 勾选关注后立即同步到 `Projects`。
+- [x] 字段缺失项目进入 `draft`。
+- [x] 字段完整项目进入 `scheduled`。
+
+## Phase 8：Wallets 页面重构
+
+- [x] 将 `Wallets` 作为正式一级页面纳入新架构，而不是沿用旧逻辑拼接。
+- [x] 钱包列表展示：
+  - 名称
+  - 钱包地址
+  - 编辑
+  - 删除
+- [x] 实现新增钱包流程。
+- [x] 实现编辑钱包流程。
+- [x] 实现删除钱包流程。
+- [x] 让 `Overview` 的追踪钱包持仓严格使用这里维护的钱包列表。
+
+## Phase 9：Settings 页面实现
+
+- [x] 新增 `Settings` 页面或设置面板。
+- [x] 将全局固定参数迁移到 `Settings`。
+- [x] 将 `DB_BATCH_SIZE` 控制迁移到 `Settings`。
+- [x] 将极速模式 / 超速模式控制迁移到 `Settings`。
+- [x] 将全局 runtime 状态展示迁移到 `Settings`。
+- [x] 将调度器状态展示迁移到 `Settings`。
+- [x] 删除其它页面中重复出现的全局设置控件。
+
+## Phase 10：前端状态与交互收敛
+
+- [x] 重新定义“当前活跃项目”状态来源，优先服务 `Overview`。
+- [x] 将 `Projects` 与 `SignalHub` 的选中状态拆开，避免共享一个模糊的 `selectedProject`。
+- [x] 将项目默认分钟图区间改为来自后端调度状态，而不是页面本地临时选择。
+- [ ] 清理页面中重复的 toast、inline message、状态 badge 逻辑。
+- [x] 为删除项目、取消关注等危险操作补齐确认流程。
+- [x] 清理当前新后台中多余的解释性文案与重复的摘要块。
+- [x] 修复右侧抽屉长内容无法滚动的问题，确保 `Users / Projects / SignalHub` 详情抽屉都可纵向滚动查看完整内容。
+- [x] 统一 `Projects / SignalHub / Users` 抽屉结构为“内容区独立滚动 + 底部操作区固定”。
+
+## Phase 11：品牌与视觉收尾
+
+- [x] 将页面标题、品牌区、空状态文案中的 `V-Pulse` 全量替换为 `Virtuals Whale Radar`。
+- [x] 将左侧栏品牌块改成最终品牌展示方案。
+- [x] 检查图标和 favicon 是否仍使用旧命名或旧文案。
+- [x] 清理和新信息架构不一致的卡片、标题、副标题与提示文本。
+- [ ] 调整页面层级，避免同一状态在侧栏、顶栏、正文中重复出现。
+- [x] 为 `Projects / SignalHub` 抽屉补齐隐藏的 `DialogTitle / DialogDescription`，清理控制台无障碍警告。
+
+## Phase 12：联调与验收
+
+- [ ] 验证 `SignalHub -> 关注 -> Projects -> 调度 -> Overview` 主链路。
+- [ ] 验证结束时间解析逻辑严格符合：
+  - `manual_end_at`
+  - `signalhub_end_at`
+  - `start_at + 99 分钟`
+- [ ] 验证项目开始前 30 分钟能自动触发预热。
+- [ ] 验证 `Overview` 中的图表区间自动同步到项目时间窗口。
+- [ ] 验证删除项目后：
+  - 不再出现在 `Projects`
+  - 不再参与调度
+  - 历史数据仍保留
+- [ ] 验证钱包名称编辑后能正确影响追踪钱包展示。
+- [ ] 验证左侧栏隐藏/收窄/展开三态均正常。
+- [ ] 验证 `Overview / Projects / SignalHub / Wallets / Settings` 五页没有重复 UI 和错位职责。
+
+## Phase 13：认证与角色体系
+
+- [x] 新增 `users` 表。
+- [x] 新增 `user_sessions` 表。
+- [x] 为 `users` 增加字段：
+  - `nickname`
+  - `email`
+  - `password_hash`
+  - `role`
+  - `status`
+  - `password_updated_at`
+  - `last_login_at`
+  - `created_at`
+  - `updated_at`
+- [x] 为 `user_sessions` 增加字段：
+  - `user_id`
+  - `token_hash`
+  - `user_agent`
+  - `ip_addr`
+  - `last_seen_at`
+  - `expires_at`
+  - `revoked_at`
+  - `created_at`
+  - `updated_at`
+- [x] 接入密码哈希方案，默认使用 `Argon2id`。
+- [x] 增加初始管理员 bootstrap 逻辑。
+- [x] 新增认证接口：
+  - `/api/auth/register`
+  - `/api/auth/login`
+  - `/api/auth/logout`
+  - `/api/auth/me`
+- [x] 增加 session middleware。
+- [x] 增加 `require_auth` 守卫。
+- [x] 增加 `require_admin` 守卫。
+- [x] 完成未登录跳转 `/auth/login`。
+- [x] 完成用户访问 `/admin/*` 跳转 `/app`。
+- [x] 完成管理员访问 `/app/*` 跳转 `/admin`。
+
+## Phase 14：用户私有钱包模型
+
+- [x] 新增 `user_wallets` 表。
+- [x] 为 `user_wallets` 增加字段：
+  - `user_id`
+  - `wallet`
+  - `name`
+  - `is_enabled`
+  - `created_at`
+  - `updated_at`
+- [x] 保留现有 `monitored_wallets` 作为管理员全局钱包表。
+- [x] 确认用户钱包与管理员钱包完全分离，不共用同一张表。
+- [x] 新增用户钱包 CRUD 接口：
+  - `GET /api/app/wallets`
+  - `POST /api/app/wallets`
+  - `PATCH /api/app/wallets/{id}`
+  - `DELETE /api/app/wallets/{id}`
+- [x] 新增用户钱包持仓接口 `GET /api/app/wallets/positions`。
+- [x] 让用户 `Overview` 的追踪钱包区只使用当前用户的钱包。
+- [x] 保证用户之间无法互相读取钱包数据。
+
+## Phase 15：用户端五页
+
+- [x] 新增用户端路由壳层 `/app/*`。
+- [x] 新增用户端导航：`Overview / Projects / SignalHub / Wallets`。
+- [x] 新增用户端导航项 `Billing`。
+- [x] 新增用户端 `Overview` 页面。
+- [x] 新增用户端 `Projects` 页面。
+- [x] 新增用户端 `SignalHub` 页面。
+- [x] 复用或重建用户端 `Wallets` 页面。
+- [x] 新增用户端 `Billing` 页面。
+- [x] 删除用户端中所有项目编辑按钮。
+- [x] 删除用户端中所有删除项目按钮。
+- [x] 删除用户端中所有 SignalHub 勾选和关注按钮。
+- [x] 删除用户端中所有采集 / 回扫 / 全局设置入口。
+- [x] 保证用户端 `Projects` 只显示可公开阅读项目，不显示 `draft / removed`。
+- [x] 保证用户端 `SignalHub` 只读。
+
+## Phase 19：积分模型与解锁机制
+
+- [x] 为 `users` 增加积分字段：
+  - `credit_balance`
+  - `credit_spent_total`
+  - `credit_granted_total`
+- [x] 新增 `credit_ledger` 表。
+- [x] 为 `credit_ledger` 增加字段：
+  - `user_id`
+  - `delta`
+  - `balance_after`
+  - `type`
+  - `source`
+  - `project_id`
+  - `note`
+  - `operator_user_id`
+  - `created_at`
+- [x] 新增 `user_project_access` 表。
+- [x] 为 `user_project_access` 增加字段：
+  - `user_id`
+  - `project_id`
+  - `unlock_cost`
+  - `source`
+  - `unlocked_at`
+  - `expires_at`
+  - `created_at`
+- [x] 注册成功后自动发放 `20` 积分。
+- [x] 将注册赠送写入 `credit_ledger(type=signup_bonus)`。
+- [x] 实现“每用户、每项目首次解锁扣 `10` 积分”的事务逻辑。
+- [x] 保证同一用户对同一项目不会重复扣分。
+- [x] 新增项目访问守卫，限制普通用户访问未解锁项目的 `Overview`。
+- [x] 管理员默认拥有全部项目访问权限，不受积分限制。
+- [x] 新增用户端项目解锁接口：
+  - `GET /api/app/projects/{id}/access`
+  - `POST /api/app/projects/{id}/unlock`
+- [x] 新增用户端计费摘要接口 `GET /api/app/billing/summary`。
+- [x] 在 `app/projects` 与 `app/signalhub` 返回解锁状态字段：
+  - `is_unlocked`
+  - `unlock_cost`
+  - `can_unlock_now`
+
+## Phase 20：Billing 页面与管理员积分运营
+
+- [x] 在用户端 Sidebar 增加 `Billing` 一级入口。
+- [x] 新增 `Billing` 页面顶部公告条：
+  - `Virtuals 新用户使用邀请码注册，后续付费一律五折`
+  - `https://app.virtuals.io/referral?code=LFfW5x`
+- [x] 在 `Billing` 页面展示：
+  - 当前积分
+  - 累计消耗积分
+  - 已解锁项目数
+- [x] 在 `Billing` 页面展示固定套餐：
+  - `10 积分 / 10 元`
+  - `100 积分 / 90 元`
+- [x] 在 `Billing` 页面展示联系方式二维码与联系说明。
+- [x] 用户点击购买时只弹出联系方式二维码，不接入在线支付。
+- [x] 用户点击未解锁项目时：
+  - 积分足够则弹确认框解锁
+  - 积分不足则引导去 `Billing`
+- [x] 管理员 `Users` 列表新增字段：
+  - 当前积分
+  - 累计消耗积分
+  - 已解锁项目数
+- [x] 管理员用户详情新增：
+  - 当前积分
+  - 累计消耗
+  - 积分流水
+  - 已解锁项目列表
+- [x] 新增管理员积分接口：
+  - `GET /api/admin/users/{id}/credit-ledger`
+  - `GET /api/admin/users/{id}/project-access`
+  - `POST /api/admin/users/{id}/credits/adjust`
+  - `POST /api/admin/users/{id}/credits/topup`
+- [x] 管理员只允许“加积分 / 扣积分 + 备注”，不直接裸改余额。
+- [x] 管理员积分录入前端增加整数校验，避免无效输入直接触发后端报错。
+- [x] 管理员积分运营区收敛为“线下充值入账”主入口 + “手工修正积分”折叠次级入口。
+
+## Phase 21：商业模式联调与验收
+
+- [x] 验证新用户注册后默认获得 `20` 积分。
+- [x] 验证用户首次解锁项目时扣除 `10` 积分。
+- [x] 验证同一用户再次访问同一项目不会重复扣分。
+- [x] 验证积分不足时无法查看未解锁项目 `Overview`，并会引导到 `Billing`。
+- [x] 验证用户端 `Projects / SignalHub` 免费可看，但不泄露未解锁项目详细数据。
+- [x] 验证 `Billing` 页面能显示余额、套餐、邀请链接和联系方式二维码。
+- [x] 验证管理员手动加积分后，用户端余额立即更新。
+- [x] 验证管理员手动扣积分后，流水和累计消耗保持正确。
+- [x] 验证管理员能看到用户已解锁项目列表。
+- [x] 验证管理员积分录入对非法整数输入会被前端拦截，后端也返回明确字段错误。
+
+## Phase 16：管理员 Users 页面
+
+- [x] 管理员端导航增加 `Users`。
+- [x] 新增 `GET /api/admin/users`。
+- [x] 新增 `GET /api/admin/users/{id}`。
+- [x] 新增 `GET /api/admin/users/{id}/wallets`。
+- [x] 新增 `POST /api/admin/users/{id}/status`。
+- [x] 新增 `POST /api/admin/users/{id}/reset-password`。
+- [x] 可选新增用户钱包管理接口：
+  - `POST /api/admin/users/{id}/wallets/{wallet_id}/status`
+  - `DELETE /api/admin/users/{id}/wallets/{wallet_id}`
+- [x] 新增管理员 `Users` 页面列表。
+- [x] 在 `Users` 页面展示：
+  - 昵称
+  - 注册邮箱
+  - 角色
+  - 状态
+  - 钱包数量
+  - 最近登录时间
+  - 注册时间
+- [x] 新增用户详情抽屉。
+- [x] 在详情抽屉展示：
+  - 基本资料
+  - 密码状态
+  - 用户钱包列表
+  - 禁用/启用操作
+  - 重置密码操作
+
+## Phase 17：前后端接口拆分
+
+- [x] 将当前无前缀接口逐步拆分为：
+  - `/api/auth/*`
+  - `/api/app/*`
+  - `/api/admin/*`
+- [x] 新增 `/api/app/meta`。
+- [x] 新增 `/api/app/overview-active`。
+- [x] 新增 `/api/app/projects`。
+- [x] 新增 `/api/app/signalhub`。
+- [x] 新增 `/api/admin/meta`。
+- [ ] 评估哪些旧接口保留兼容，哪些标记待废弃。
+- [ ] 补一版管理员端与用户端接口映射表。
+
+## Phase 18：双角色联调与验收
+
+- [x] 验证注册 -> 自动登录 -> 进入 `/app`。
+- [x] 验证未登录访问 `/app/*` 与 `/admin/*` 会跳到 `/auth/login`。
+- [x] 验证普通用户无法访问管理员写接口。
+- [x] 验证普通用户无法看到其它用户钱包。
+- [ ] 验证用户端 `Overview / Projects / SignalHub` 全只读。
+- [ ] 验证用户端 `Wallets` 可新增、编辑、删除自己的钱包。
+- [x] 验证管理员端 `Users` 能看到用户列表和用户钱包。
+- [x] 验证管理员重置密码后用户可用新密码登录。
+- [x] 验证管理员禁用用户后该用户无法继续访问业务页。
+
+## 完成定义
+
+- [ ] 左侧栏完成最终五页导航结构，并支持隐藏。
+- [ ] `Overview` 成为只读活跃项目实时看板。
+- [ ] `Projects` 成为项目管理页。
+- [ ] `SignalHub` 成为关注列表入口，并自动同步到 `Projects`。
+- [ ] `Wallets` 成为独立一级页面。
+- [ ] `Settings` 成为唯一全局设置入口。
+- [ ] 项目自动调度逻辑生效。
+- [ ] 品牌名称与页面结构全部符合 `Virtuals Whale Radar` 迭代版方案。
+- [x] 用户端 `/app` 五页可用。
+- [x] 认证与会话体系可用。
+- [x] 管理员端 `Users` 页面可用。
+- [x] 用户钱包完成私有隔离。
+- [x] 积分与项目解锁机制可用。
+- [x] `Billing` 页面与管理员积分管理可用。

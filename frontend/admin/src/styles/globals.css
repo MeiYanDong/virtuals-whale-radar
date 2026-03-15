@@ -1,0 +1,110 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --background: #f2f8f3;
+  --foreground: #184b52;
+  --card: #fbfefc;
+  --card-foreground: #173f45;
+  --popover: #ffffff;
+  --popover-foreground: #184b52;
+  --primary: #248e93;
+  --primary-strong: #1c767a;
+  --primary-foreground: #f7fffe;
+  --secondary: #d8e9e1;
+  --secondary-foreground: #24595f;
+  --muted: #ecf3ef;
+  --muted-foreground: #5d7579;
+  --accent: #77b9af;
+  --accent-foreground: #114449;
+  --border: #c7ddd7;
+  --input: #c7ddd7;
+  --ring: #2a9598;
+  --sidebar: #eaf4ee;
+  --danger: #be4b4e;
+  --warning: #d28a21;
+  --success: #2f8f65;
+  --chart-1: #248e93;
+  --chart-2: #57afa8;
+  --chart-3: #8ac9b4;
+  --chart-4: #b9d7b0;
+  --chart-5: #dce8c7;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: "IBM Plex Sans", "MiSans", "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "Cascadia Code", monospace;
+  --radius-sm: 0.75rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.35rem;
+  --radius-xl: 1.7rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    @apply min-h-screen bg-background font-sans text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at 0% 0%, rgba(119, 185, 175, 0.18), transparent 28%),
+      radial-gradient(circle at 100% 0%, rgba(185, 215, 176, 0.24), transparent 26%),
+      linear-gradient(180deg, #f7fbf8 0%, #f0f7f3 42%, #edf6f1 100%);
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(rgba(36, 142, 147, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36, 142, 147, 0.035) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: linear-gradient(180deg, rgba(0,0,0,0.18), rgba(0,0,0,0.02));
+  }
+
+  a {
+    @apply text-inherit no-underline;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .surface-glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.62));
+    backdrop-filter: blur(18px);
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
