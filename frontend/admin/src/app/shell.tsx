@@ -426,6 +426,25 @@ function TopBar({
     logout,
   } = useShell();
 
+  const runtimeSummary =
+    viewer === "admin"
+      ? health?.runtimePaused
+        ? "采集已暂停"
+        : "采集运行中"
+      : null;
+  const signalHubSummary =
+    viewer === "admin"
+      ? signalHubPreview?.available
+        ? "SignalHub 在线"
+        : "SignalHub 异常"
+      : null;
+  const systemSummary =
+    viewer === "admin" ? [runtimeSummary, signalHubSummary].filter(Boolean).join(" · ") : null;
+  const systemSummaryVariant =
+    viewer === "admin" && health?.runtimePaused === false && signalHubPreview?.available
+      ? "success"
+      : "warning";
+
   return (
     <Card className="surface-glass sticky top-4 z-20 rounded-[28px] p-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px_auto] xl:items-center">
@@ -473,20 +492,13 @@ function TopBar({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-          {viewer === "admin" ? (
-            <>
-              <Badge variant={health?.runtimePaused ? "warning" : "success"}>
-                {health?.runtimePaused ? "Runtime 暂停" : "Runtime 运行中"}
-              </Badge>
-              <Badge variant={signalHubPreview?.available ? "success" : "warning"}>
-                SignalHub {signalHubPreview?.available ? "在线" : "异常"}
-              </Badge>
-            </>
-          ) : (
-            <Badge variant="secondary">用户只读视图</Badge>
-          )}
-          <Badge variant="secondary">最近刷新 {formatDateTime(Math.floor(lastRefreshAt / 1000))}</Badge>
-          {authUser ? <Badge variant="secondary">{authUser.nickname}</Badge> : null}
+          {viewer === "admin" && systemSummary ? (
+            <Badge variant={systemSummaryVariant}>{systemSummary}</Badge>
+          ) : null}
+          <div className="hidden text-right text-xs text-muted-foreground sm:block">
+            <div>{authUser ? authUser.nickname : "未登录"}</div>
+            <div>上次刷新 {formatDateTime(Math.floor(lastRefreshAt / 1000))}</div>
+          </div>
           <Button variant="outline" onClick={() => void refreshAll()} disabled={isRefreshing}>
             <RefreshCcw className={cn("size-4", isRefreshing && "animate-spin")} />
             刷新

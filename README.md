@@ -1,108 +1,172 @@
-# Virtuals-Launch-Hunter
+# Virtuals Whale Radar
 
-Virtuals-Launch-Hunter 是一个面向 Base 链的实时监控与回扫分析工具，支持三进程低延迟架构（writer/realtime/backfill），用于观察项目盘面、买家行为、分钟消耗与钱包持仓。
+Virtuals Whale Radar 是一个面向普通用户和管理员的项目观察台。
 
-## 功能总览
-- 实时监听：WS 新块/日志监听，快速捕捉交易。
-- 自动补漏：backfill 周期回扫，修复实时链路漏单。
-- 手动回扫：支持 UTC+8 时间区间回扫。
-- 项目管理：UI 可切换/保存/删除项目（保留历史数据）。
-- 钱包管理：UI 可新增/删除监控钱包，支持单钱包重算。
-- 统计面板：
-  - 分钟消耗 SpentV
-  - 大户榜
-  - 我的钱包持仓
-  - 交易录入延迟
-  - 项目累计税收(V)
+你可以把它理解成一块“看盘屏幕”：
+- 看正在发射的项目现在怎么样
+- 看大户都在买什么、花了多少
+- 看自己关注的钱包有没有进场
+- 看接下来有哪些项目值得提前盯着
 
-## 架构说明（三进程）
-- `writer`：唯一写库进程，同时提供 API/UI。
-- `realtime`：实时监听 + 回执解析，写入事件总线。
-- `backfill`：自动/手动回扫，写入事件总线。
+它不是交易软件，也不是自动下单工具。  
+它更适合用来“盯项目、看资金、跟钱包、做判断”。
 
-说明：实时与回扫不直接写主库，由 writer 统一落库，降低写锁竞争。
+## 你进入后会看到什么
 
-## 目录（发布最小集合）
-- `virtuals_bot.py`：后端主程序
-- `dashboard.html`：前端页面
-- `favicon-vpulse.svg`：浏览器图标
-- `config.example.json`：配置模板（API 已脱敏）
-- `requirements.txt`：依赖
-- `start_3roles.ps1`：一键启动三进程
-- `stop_3roles.ps1`：一键停止三进程
-- `RELEASE_v3.1.0_更新说明.md`：历史版本更新日志
-- `RELEASE_v3.1.0_使用说明.md`：历史版本使用教程
-- `需求文档_v3.0.0.md`：需求说明模板
+### 1. Overview
+这里是实时主看板。
 
-## 环境要求
-- Windows 10/11 + PowerShell
-- Python 3.10+
-- Base RPC 节点（建议）：
-  - 1 个 WS（实时）
-  - 1 个 HTTP（实时补充）
-  - 1 个 HTTP（回扫专用，建议独立）
+你可以看到：
+- 当前项目名称、开始时间、结束时间
+- 项目详情链接
+- 代币地址、内盘地址
+- 当前项目累计税收
+- 分钟消耗柱状图
+- 大户榜单
+- 追踪钱包持仓
+- 交易录入延迟
 
-## 快速开始
-1. 安装依赖
-```powershell
-cd virtual
-python -m pip install -r requirements.txt
-```
+如果你已经解锁了某个项目，这一页就是你最常用的页面。
 
-2. 准备配置
-```powershell
-copy .\config.example.json .\config.json
-```
+### 2. Projects
+这里是项目列表。
 
-3. 修改最少参数
-- `WS_RPC_URL`
-- `HTTP_RPC_URL`
-- `BACKFILL_HTTP_RPC_URL`
+你可以在这里先看项目的基础信息：
+- 项目名称
+- 开始时间
+- 结束时间
+- 项目详情
+- 当前状态
 
-4. 启动
-```powershell
-.\start_3roles.ps1
-```
+普通用户在这里是只读查看。  
+管理员可以在这里新建、编辑、删除项目，并控制项目运行状态。
 
-5. 打开 UI
-- `http://127.0.0.1:8080/`
+### 3. SignalHub
+这里是“即将发射项目”的入口。
 
-## 手动启动（排障）
-```powershell
-python virtuals_bot.py --config .\config.json --role writer
-python virtuals_bot.py --config .\config.json --role realtime
-python virtuals_bot.py --config .\config.json --role backfill
-```
+你可以在这里快速浏览 upcoming 项目，先看名字、时间、状态和详情。  
+普通用户只能查看。  
+管理员可以把项目加入关注列表，项目会自动进入 `Projects` 页面。
 
-## 服务器部署（前后端分离/同域）
-- 详细部署文档：`deploy/README_DEPLOY.md`
-- 一键安装脚本（Ubuntu22.04，同域 `/api` 反代）：`deploy/install_ubuntu22_oneclick.sh`
-- systemd 模板：`deploy/systemd/vpulse@.service`
-- Nginx 配置示例：
-  - 分域：`deploy/nginx/vpulse-split-app.conf` + `deploy/nginx/vpulse-split-api.conf`
-  - 同域 `/api`：`deploy/nginx/vpulse-same-domain.conf`
-- 前端可通过 `dashboard.html` 中的
-  - `<meta name="vpulse-api-base" content="...">`
-  指定 API 基地址（如 `https://api.example.com` 或 `/api`）。
+### 4. Wallets
+这里是钱包管理页。
 
-## 关键 API
-- `GET /health`：系统健康状态
-- `GET /meta`：项目/钱包/运行参数
-- `GET /minutes`：分钟消耗
-- `GET /leaderboard`：大户榜
-- `GET /mywallets`：我的钱包
-- `GET /event-delays`：录入延迟
-- `GET /project-tax`：项目累计税收
-- `POST /scan-range`：发起区间回扫
-- `POST /scan-jobs/{job_id}/cancel`：取消回扫任务
+你可以：
+- 添加自己的钱包
+- 给钱包起名字
+- 修改钱包名称
+- 删除钱包
+
+你的钱包数据只属于你自己。  
+别的用户看不到。  
+管理员可以在后台看到所有用户的钱包数据，但普通用户之间彼此隔离。
+
+### 5. Billing
+这里是积分和充值页。
+
+你可以看到：
+- 当前剩余积分
+- 累计消耗积分
+- 已解锁项目数
+- 充值档位
+- 联系方式二维码
+
+目前不接在线支付。  
+你只需要在 Billing 页面扫码联系，付款确认后，管理员会手动给你补积分。
+
+## 积分是怎么用的
+
+规则很简单：
+
+- 新用户注册默认赠送 `20` 积分
+- 每解锁一个项目的 `Overview` 详细数据，消耗 `10` 积分
+- 同一个项目只扣一次
+- 解锁后，这个项目以后都可以继续看
+
+当前固定两档：
+- `10` 积分 = `10` 元
+- `100` 积分 = `90` 元
+
+也就是说，你可以先免费注册、先看列表、先加钱包，再决定要不要解锁某个项目的实时大盘。
+
+## 第一次使用，建议你这样开始
+
+1. 先注册账号  
+注册成功后，系统会先送你 `20` 积分。
+
+2. 先去 Wallets 添加自己的钱包  
+这样你后面看项目时，能直接看到“自己的追踪钱包持仓”。
+
+3. 去 SignalHub 或 Projects 看项目列表  
+先挑你真正关心的项目，不用一上来就解锁全部。
+
+4. 想看某个项目的实时大盘时，再解锁  
+如果积分够，确认一次就能永久解锁那个项目。
+
+5. 积分不够时，再去 Billing  
+扫码联系，线下付款后由管理员补积分。
+
+## 普通用户和管理员有什么区别
+
+### 普通用户
+你能做的是：
+- 看 `Overview`
+- 看 `Projects`
+- 看 `SignalHub`
+- 管理自己的 `Wallets`
+- 使用 `Billing`
+
+你不能做的是：
+- 新建项目
+- 编辑项目
+- 删除项目
+- 勾选关注项目
+- 管理别人的钱包
+- 修改全局设置
+
+### 管理员
+管理员除了看数据，还能：
+- 管理项目
+- 管理关注列表
+- 管理全局钱包
+- 管理用户
+- 手动给用户加积分或扣积分
+- 查看所有用户的钱包数据
+
+## 这个产品适合谁
+
+如果你属于下面这几类人，它会比较适合你：
+- 想盯 Virtuals 相关项目发射节奏的人
+- 想看大户有没有进场的人
+- 想跟踪自己钱包或重点钱包的人
+- 想先看项目列表，再决定是否花积分看细节的人
 
 ## 常见问题
-- 端口占用（10048）：说明 8080 已被占用，停掉旧进程或改 `API_PORT`。
-- 回扫限制错误（`eth_getLogs is limited`）：调小 `BACKFILL_CHUNK_BLOCKS`。
-- 没有实时数据：检查 realtime 进程、WS 节点连通性、项目地址正确性。
 
-## 版本文档
-- `RELEASE_v3.1.0_更新说明.md`
-- `RELEASE_v3.1.0_使用说明.md`
-- `RELEASE_v3.0.0_更新说明.md`（历史）
-- `RELEASE_v3.0.0_使用说明.md`（历史）
+### 为什么我能看到项目列表，却看不了详细大盘？
+因为项目列表和 upcoming 列表默认免费可看。  
+但 `Overview` 详细数据需要按项目解锁。
+
+### 为什么我的钱包别人看不到？
+因为普通用户的钱包数据是私有的。  
+系统默认按用户隔离。
+
+### 充值为什么不是在线支付？
+当前版本先走最简单、最稳定的方式：  
+用户扫码联系，管理员确认后手动补积分。
+
+### 我解锁过的项目以后还要再扣分吗？
+不用。  
+同一个项目只在第一次解锁时扣分。
+
+### 我注册后应该先做什么？
+先去 `Wallets` 添加自己的钱包，再去 `Projects` 或 `SignalHub` 选项目。
+
+## 一句话总结
+
+Virtuals Whale Radar 不是拿来“直接操作”的。  
+它更像一个帮你盯项目、盯资金、盯钱包的观察台。
+
+如果你是第一次用，最简单的路径就是：
+
+`注册 -> 加钱包 -> 看项目 -> 解锁一个真正想盯的项目 -> 持续观察`
