@@ -31,13 +31,13 @@ export function AuthFrame({
               <div className="space-y-6">
                 <div className="flex items-center gap-4">
                   <div className="flex size-16 items-center justify-center rounded-[22px] bg-white shadow-[0_24px_60px_rgba(36,142,147,0.18)]">
-                    <img src="/admin/brand/logo-mark.svg" alt="Virtuals Whale Radar" className="size-11" />
+                    <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-11 rounded-[14px] object-cover" />
                   </div>
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-[0.24em] text-primary/80">
                       Virtuals Whale Radar
                     </div>
-                    <div className="text-2xl font-semibold tracking-[-0.04em]">Portal</div>
+                    <div className="text-2xl font-semibold tracking-[-0.04em]">项目观察台</div>
                   </div>
                 </div>
 
@@ -54,15 +54,15 @@ export function AuthFrame({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-[24px] border border-border/80 bg-white/78 px-5 py-4">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Admin</div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">看发射</div>
                   <div className="mt-2 text-sm leading-6 text-foreground">
-                    管理项目、关注列表、全局钱包、用户与设置。
+                    盯正在发射的项目，快速看分钟消耗、税收和大户有没有进场。
                   </div>
                 </div>
                 <div className="rounded-[24px] border border-border/80 bg-white/78 px-5 py-4">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">User</div>
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">跟钱包</div>
                   <div className="mt-2 text-sm leading-6 text-foreground">
-                    只读查看项目与实时看板，管理自己的私有钱包。
+                    先加自己的钱包，再去挑项目。真正想盯的盘面再用积分解锁。
                   </div>
                 </div>
               </div>
@@ -116,14 +116,17 @@ export function LoginPage() {
   return (
     <AuthFrame
       eyebrow="Login"
-      title="登录到双角色工作台"
-      description="登录后会根据账号角色自动进入管理员或用户视图。"
+      title="继续盯你关心的项目"
+      description="登录后可以继续看项目列表、跟踪自己的钱包，并解锁真正想长期盯的实时盘面。"
     >
       <div className="mx-auto flex h-full max-w-md flex-col justify-center">
         <div className="space-y-6">
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Account Access</div>
             <div className="text-3xl font-semibold tracking-[-0.05em]">欢迎回来</div>
+            <p className="text-sm leading-6 text-muted-foreground">
+              如果你已经加过钱包，登录后就能继续看自己关注的钱包有没有在项目里进场。
+            </p>
           </div>
 
           <div className="space-y-4">

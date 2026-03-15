@@ -6,7 +6,10 @@ export const queryKeys = {
   managedProjects: ["managed-projects"] as const,
   appProjects: ["app-projects"] as const,
   appBillingSummary: ["app-billing-summary"] as const,
+  appBillingRequests: (limit: number) => ["app-billing-requests", limit] as const,
+  appNotifications: (limit: number) => ["app-notifications", limit] as const,
   appProjectAccess: (projectId: number) => ["app-project-access", projectId] as const,
+  appProjectOverview: (projectId: number) => ["app-project-overview", projectId] as const,
   signalHub: (limit: number, withinHours: number) =>
     ["signalhub", "upcoming", limit, withinHours] as const,
   appSignalHub: (limit: number, withinHours: number) =>
@@ -33,4 +36,7 @@ export const queryKeys = {
   adminUserWallets: (userId: number) => ["admin-user-wallets", userId] as const,
   adminUserCreditLedger: (userId: number) => ["admin-user-credit-ledger", userId] as const,
   adminUserProjectAccess: (userId: number) => ["admin-user-project-access", userId] as const,
+  adminBillingRequests: (status: string, q: string, limit: number) =>
+    ["admin-billing-requests", status, q, limit] as const,
+  legacyApis: ["legacy-apis"] as const,
 };

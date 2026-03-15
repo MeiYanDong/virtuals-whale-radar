@@ -1,7 +1,7 @@
 interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   params?: Record<string, string | number | boolean | null | undefined>;
-  body?: unknown;
+  body?: unknown | FormData;
   signal?: AbortSignal;
 }
 
@@ -33,13 +33,22 @@ function buildUrl(
 }
 
 export async function requestJson<T>(path: string, options: RequestOptions = {}) {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const requestBody: BodyInit | null | undefined =
+    options.body === undefined
+      ? undefined
+      : isFormData
+        ? (options.body as FormData)
+        : JSON.stringify(options.body);
   const response = await fetch(buildUrl(path, options.params), {
     method: options.method ?? "GET",
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    headers: isFormData
+      ? undefined
+      : {
+          "Content-Type": "application/json",
+        },
+    body: requestBody,
     signal: options.signal,
     cache: "no-store",
   });

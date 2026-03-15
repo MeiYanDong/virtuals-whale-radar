@@ -470,14 +470,11 @@ export function UsersPage() {
                   </div>
                   <div className="space-y-3">
                     <div className="rounded-[22px] border border-border bg-white/72 px-4 py-4">
-                      <div className="flex items-start justify-between gap-4">
+                      <div className="space-y-2">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium">线下充值入账</div>
-                            <Badge variant="success">主入口</Badge>
-                          </div>
+                          <div className="text-sm font-medium">微信付款后手动入账</div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            用于用户已付款后的正式入账。支持记录实付金额，流水会标记为 `manual_topup`。
+                            用户微信付款后，你直接在这里补积分即可。微信记录和你的备注，足够支撑当前阶段的人工入账。
                           </p>
                         </div>
                       </div>
@@ -497,7 +494,7 @@ export function UsersPage() {
                           </div>
                         ) : (
                           <div className="text-xs text-muted-foreground">
-                            仅支持正整数。推荐用于线下付款到账后的正式补分。
+                            仅支持正整数。确认微信到账后，直接在这里手动补分。
                           </div>
                         )}
                         <Input
@@ -507,7 +504,7 @@ export function UsersPage() {
                           onChange={(event) => setTopupAmount(event.target.value)}
                         />
                         <Input
-                          placeholder="备注（可选）"
+                          placeholder="备注（例如微信昵称、付款时间、订单说明）"
                           value={topupNote}
                           onChange={(event) => setTopupNote(event.target.value)}
                         />
@@ -520,7 +517,7 @@ export function UsersPage() {
                             topupCreditsMutation.isPending
                           }
                         >
-                          记账充值
+                          确认入账
                         </Button>
                       </div>
                     </div>
@@ -647,15 +644,16 @@ export function UsersPage() {
                   <div className="text-sm font-medium">积分流水</div>
                   {userLedgerQuery.data?.items.length ? (
                     <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>时间</TableHead>
-                          <TableHead>变化值</TableHead>
-                          <TableHead>类型</TableHead>
-                          <TableHead>项目</TableHead>
-                          <TableHead>备注</TableHead>
-                        </TableRow>
-                      </TableHeader>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>时间</TableHead>
+                            <TableHead>变化值</TableHead>
+                            <TableHead>类型</TableHead>
+                            <TableHead>项目</TableHead>
+                            <TableHead>金额 / 附注</TableHead>
+                            <TableHead>备注</TableHead>
+                          </TableRow>
+                        </TableHeader>
                       <TableBody>
                         {userLedgerQuery.data.items.map((row) => (
                           <TableRow key={row.id}>
@@ -665,6 +663,14 @@ export function UsersPage() {
                             </TableCell>
                             <TableCell>{row.type}</TableCell>
                             <TableCell>{row.project_name || "-"}</TableCell>
+                            <TableCell>
+                              <div className="space-y-1 text-xs">
+                                <div>{row.payment_amount ? `实付 ${row.payment_amount}` : "-"}</div>
+                                {row.payment_proof_ref ? (
+                                  <div className="break-all text-muted-foreground">{row.payment_proof_ref}</div>
+                                ) : null}
+                              </div>
+                            </TableCell>
                             <TableCell>{row.note || row.operator_nickname || "-"}</TableCell>
                           </TableRow>
                         ))}

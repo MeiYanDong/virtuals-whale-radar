@@ -28,7 +28,13 @@ import { Select } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { AppMetaResponse, MetaResponse, RefreshMode, SignalHubResponse } from "@/types/api";
+import type {
+  AppMetaResponse,
+  AppNotificationsResponse,
+  MetaResponse,
+  RefreshMode,
+  SignalHubResponse,
+} from "@/types/api";
 
 const PROJECT_STORAGE_PREFIX: Record<WorkspaceViewer, string> = {
   admin: "vwr_admin_project",
@@ -214,6 +220,7 @@ function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
         metaQuery.refetch(),
         signalHubPreviewQuery.refetch(),
         queryClient.invalidateQueries({ queryKey: queryKeys.appBillingSummary }),
+        queryClient.invalidateQueries({ queryKey: ["app-notifications"] }),
         queryClient.invalidateQueries({ queryKey: queryKeys.appProjects }),
         queryClient.invalidateQueries({ queryKey: queryKeys.userWalletConfigs }),
         queryClient.invalidateQueries({ queryKey: queryKeys.appOverviewActive(selectedProject) }),
@@ -320,7 +327,7 @@ function BrandBlock({
   return (
     <div className={cn("flex items-center gap-4", compact && "justify-center")}>
       <div className="flex size-14 shrink-0 items-center justify-center rounded-[20px] bg-white shadow-[0_20px_40px_rgba(36,142,147,0.18)]">
-        <img src="/admin/brand/logo-mark.svg" alt="Virtuals Whale Radar" className="size-10" />
+        <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-10 rounded-[12px] object-cover" />
       </div>
       {compact ? null : (
         <div className="min-w-0">
@@ -413,6 +420,7 @@ function TopBar({
   const {
     viewer,
     authUser,
+    meta,
     health,
     signalHubPreview,
     projectOptions,
@@ -425,6 +433,37 @@ function TopBar({
     isRuntimeMutating,
     logout,
   } = useShell();
+  const queryClient = useQueryClient();
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+  const notificationsQuery = useQuery<AppNotificationsResponse>({
+    queryKey: queryKeys.appNotifications(8),
+    queryFn: () => dashboardApi.app.getNotifications(8),
+    enabled: viewer === "user",
+    refetchOnWindowFocus: false,
+  });
+
+  const markNotificationReadMutation = useMutation({
+    mutationFn: (notificationId: number) => dashboardApi.app.markNotificationRead(notificationId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["app-notifications"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.appBillingSummary }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.appMeta }),
+      ]);
+    },
+  });
+
+  const markAllNotificationsReadMutation = useMutation({
+    mutationFn: () => dashboardApi.app.markAllNotificationsRead(),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["app-notifications"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.appBillingSummary }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.appMeta }),
+      ]);
+    },
+  });
 
   const runtimeSummary =
     viewer === "admin"
@@ -444,6 +483,11 @@ function TopBar({
     viewer === "admin" && health?.runtimePaused === false && signalHubPreview?.available
       ? "success"
       : "warning";
+  const appMeta = viewer === "user" ? (meta as AppMetaResponse | undefined) : undefined;
+  const unreadNotificationCount =
+    viewer === "user"
+      ? appMeta?.unread_notification_count ?? notificationsQuery.data?.unreadCount ?? 0
+      : 0;
 
   return (
     <Card className="surface-glass sticky top-4 z-20 rounded-[28px] p-4">
@@ -462,7 +506,7 @@ function TopBar({
             <Menu className="size-4" />
           </Button>
           <div className="flex size-11 shrink-0 items-center justify-center rounded-[18px] bg-white shadow-sm">
-            <img src="/admin/brand/logo-mark.svg" alt="Virtuals Whale Radar" className="size-7" />
+            <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-7 rounded-[10px] object-cover" />
           </div>
           <div className="hidden min-w-0 sm:block">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">
@@ -495,6 +539,17 @@ function TopBar({
           {viewer === "admin" && systemSummary ? (
             <Badge variant={systemSummaryVariant}>{systemSummary}</Badge>
           ) : null}
+          {viewer === "user" ? (
+            <Button variant="outline" className="relative" onClick={() => setNotificationsOpen(true)}>
+              <BellDot className="size-4" />
+              提醒
+              {unreadNotificationCount > 0 ? (
+                <span className="absolute -right-2 -top-2 inline-flex min-w-6 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[11px] font-semibold text-white">
+                  {unreadNotificationCount}
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
           <div className="hidden text-right text-xs text-muted-foreground sm:block">
             <div>{authUser ? authUser.nickname : "未登录"}</div>
             <div>上次刷新 {formatDateTime(Math.floor(lastRefreshAt / 1000))}</div>
@@ -518,6 +573,80 @@ function TopBar({
           </Button>
         </div>
       </div>
+
+      {viewer === "user" ? (
+        <Sheet open={notificationsOpen} onOpenChange={setNotificationsOpen}>
+          <SheetContent className="px-0 py-0">
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="border-b border-border px-6 py-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm font-semibold">账户提醒</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      未读 {unreadNotificationCount} 条。
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void markAllNotificationsReadMutation.mutateAsync()}
+                    disabled={
+                      unreadNotificationCount <= 0 || markAllNotificationsReadMutation.isPending
+                    }
+                  >
+                    全部已读
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto px-6 py-5">
+                {notificationsQuery.data?.items.length ? (
+                  <div className="space-y-3">
+                    {notificationsQuery.data.items.map((item) => (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "rounded-[22px] border px-4 py-4 shadow-sm",
+                          item.isRead
+                            ? "border-border bg-white/75"
+                            : "border-primary/30 bg-[linear-gradient(180deg,rgba(36,142,147,0.10),rgba(255,255,255,0.94))]",
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Badge variant={item.isRead ? "secondary" : "success"}>
+                              {item.isRead ? "已读" : "未读"}
+                            </Badge>
+                            <div className="text-sm font-medium">{item.title}</div>
+                          </div>
+                          {item.isRead ? null : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void markNotificationReadMutation.mutateAsync(item.id)}
+                              disabled={markNotificationReadMutation.isPending}
+                            >
+                              标记已读
+                            </Button>
+                          )}
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.body}</p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span>{formatDateTime(item.createdAt)}</span>
+                          {item.actionUrl ? <span>入口：{item.actionUrl}</span> : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-[22px] border border-dashed border-border bg-white/75 px-4 py-6 text-sm text-muted-foreground">
+                    当前没有新的账户提醒。
+                  </div>
+                )}
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
     </Card>
   );
 }
@@ -619,13 +748,13 @@ export function UserShell() {
   return (
     <WorkspaceShell
       viewer="user"
-      title="User View"
+      title="项目观察台"
       items={[
-        { to: "/app/overview", label: "Overview", icon: Gauge },
-        { to: "/app/projects", label: "Projects", icon: Activity },
-        { to: "/app/signalhub", label: "SignalHub", icon: BellDot },
-        { to: "/app/wallets", label: "Wallets", icon: Wallet },
-        { to: "/app/billing", label: "Billing", icon: Coins },
+        { to: "/app/overview", label: "实时看板", icon: Gauge },
+        { to: "/app/projects", label: "项目列表", icon: Activity },
+        { to: "/app/signalhub", label: "即将发射", icon: BellDot },
+        { to: "/app/wallets", label: "我的钱包", icon: Wallet },
+        { to: "/app/billing", label: "积分充值", icon: Coins },
       ]}
     />
   );

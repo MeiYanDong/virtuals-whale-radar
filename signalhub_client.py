@@ -77,7 +77,12 @@ class SignalHubClient:
             return await resp.json(content_type=None)
 
     def _normalize_project(self, project: Dict[str, Any]) -> Dict[str, Any]:
-        contract_address = _normalize_optional_address(project.get("contract_address"))
+        token_address = _normalize_optional_address(project.get("token_address"))
+        contract_address = _normalize_optional_address(project.get("contract_address")) or token_address
+        liquidity_pool = (
+            _normalize_optional_address(project.get("pool_address"))
+            or _normalize_optional_address(project.get("internal_market_address"))
+        )
         item = {
             "projectId": _clean_text(project.get("project_id")),
             "importName": _pick_import_name(project),
@@ -88,7 +93,7 @@ class SignalHubClient:
             "launchTime": _clean_text(project.get("launch_time")),
             "secondsToLaunch": _coerce_int(project.get("seconds_to_launch")),
             "contractAddress": contract_address,
-            "contractReady": bool(project.get("contract_ready") or contract_address),
+            "contractReady": bool(project.get("contract_ready") or contract_address or token_address),
             "url": _clean_text(project.get("url")),
             "creator": _normalize_optional_address(project.get("creator")),
             "description": _clean_text(project.get("description")),
@@ -99,10 +104,10 @@ class SignalHubClient:
             "riskLevel": _clean_text(project.get("risk_level")),
             "watchlist": bool(project.get("watchlist")),
             "links": project.get("links") or [],
-            "liquidityPool": None,
+            "liquidityPool": liquidity_pool,
             "treasuryAddress": None,
             "analysisError": None,
-            "syncReady": False,
+            "syncReady": bool(liquidity_pool),
         }
         return item
 
@@ -120,7 +125,7 @@ class SignalHubClient:
             address = _normalize_optional_address(row.get("address"))
             if not address:
                 continue
-            if address_type == "liquidity_pool" and not out["liquidityPool"]:
+            if address_type in {"liquidity_pool", "internal_market", "pool_address"} and not out["liquidityPool"]:
                 out["liquidityPool"] = address
             elif address_type == "treasury" and not out["treasuryAddress"]:
                 out["treasuryAddress"] = address
@@ -146,7 +151,10 @@ class SignalHubClient:
             try:
                 async with semaphore:
                     addresses = await self._load_analysis_addresses(project_id)
-                item.update(addresses)
+                if addresses.get("liquidityPool") and not item.get("liquidityPool"):
+                    item["liquidityPool"] = addresses["liquidityPool"]
+                if addresses.get("treasuryAddress") and not item.get("treasuryAddress"):
+                    item["treasuryAddress"] = addresses["treasuryAddress"]
             except Exception as exc:
                 item["analysisError"] = str(exc)
             item["syncReady"] = bool(item.get("liquidityPool"))

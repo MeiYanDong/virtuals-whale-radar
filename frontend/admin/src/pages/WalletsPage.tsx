@@ -102,13 +102,13 @@ export function WalletsPage() {
         description={
           isAdmin
             ? "统一管理全局追踪钱包的地址与名称，并保留当前项目的钱包持仓快照。"
-            : "这里管理当前登录用户自己的钱包，数据不会向其它用户公开。"
+            : "先把自己的钱包加进来，之后看项目时就能立刻知道自己有没有进场。"
         }
       />
 
       <SectionCard
         title="钱包配置"
-        description={isAdmin ? "保存到本地数据库的监控钱包列表。" : "保存到当前用户私有空间的钱包列表。"}
+        description={isAdmin ? "保存到本地数据库的监控钱包列表。" : "这里只保存你自己的钱包，不会被其他用户看到。"}
         actions={
           <div className="flex flex-wrap gap-2">
             <Input
@@ -174,7 +174,7 @@ export function WalletsPage() {
             ))}
           </div>
         ) : (
-          <EmptyState compact title="还没有监控钱包" description="添加至少一个钱包后，系统才会显示当前项目的钱包持仓。" />
+          <EmptyState compact title="还没有钱包" description="先添加自己的钱包，后面看项目时才能直接看到持仓变化。" />
         )}
       </SectionCard>
 
@@ -226,12 +226,12 @@ export function WalletsPage() {
               description={
                 isAdmin
                   ? "可以先回到 Projects 或 Inbox 导入项目，或者等待新的钱包事件进入数据库。"
-                  : "请先添加自己的钱包，或等待当前项目产生新的持仓数据。"
+                  : "你可以先添加自己的钱包，或者等当前项目出现新的持仓数据。"
               }
             />
           )
         ) : (
-          <EmptyState compact title="尚未选择项目" description="顶部项目切换器决定 Wallets 页展示哪一个项目的仓位数据。" />
+          <EmptyState compact title="先选一个项目" description="顶部项目切换器会决定这里展示哪一个项目的钱包仓位。" />
         )}
       </SectionCard>
     </div>

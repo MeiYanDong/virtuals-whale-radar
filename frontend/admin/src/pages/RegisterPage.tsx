@@ -34,7 +34,7 @@ export function RegisterPage() {
   const registerMutation = useMutation({
     mutationFn: () => register(nickname.trim(), email.trim(), password),
     onSuccess: (result) => {
-      toast.success("注册成功，已自动登录。");
+      toast.success("注册成功，20 积分已到账。");
       const redirectTo = new URLSearchParams(location.search).get("redirect");
       navigate(
         resolvePostAuthRedirect({
@@ -51,14 +51,17 @@ export function RegisterPage() {
   return (
     <AuthFrame
       eyebrow="Register"
-      title="创建用户账号"
-      description="注册完成后会自动进入用户视图。管理员账号仍由 bootstrap 配置创建。"
+      title="先领 20 积分，再开始看项目"
+      description="注册后会自动登录。你可以先添加自己的钱包，再去挑项目，最后把积分用在真正想盯的实时盘面上。"
     >
       <div className="mx-auto flex h-full max-w-md flex-col justify-center">
         <div className="space-y-6">
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Create Account</div>
             <div className="text-3xl font-semibold tracking-[-0.05em]">开始使用</div>
+            <p className="text-sm leading-6 text-muted-foreground">
+              新账号默认赠送 20 积分，足够你先体验项目列表、加钱包，并解锁前两个真正想看的盘面。
+            </p>
           </div>
 
           <div className="space-y-4">
@@ -109,7 +112,7 @@ export function RegisterPage() {
             onClick={() => void registerMutation.mutate()}
             disabled={!nickname.trim() || !email.trim() || !password.trim()}
           >
-            注册并进入
+            注册并领取 20 积分
             <ArrowRight className="size-4" />
           </Button>
 

@@ -5,6 +5,7 @@ import contextlib
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import secrets
 import signal
@@ -124,6 +125,20 @@ def parse_required_int(value: Any, field_name: str) -> int:
         raise ValueError(f"{field_name} must be integer") from exc
 
 
+def normalize_billing_request_status(value: Any) -> str:
+    status = str(value or "").strip().lower() or "pending_review"
+    if status not in BILLING_REQUEST_STATUSES:
+        raise ValueError(f"invalid billing request status: {status}")
+    return status
+
+
+def normalize_notification_kind(value: Any) -> str:
+    kind = str(value or "").strip().lower() or "info"
+    if kind not in USER_NOTIFICATION_KINDS:
+        raise ValueError(f"invalid notification kind: {kind}")
+    return kind
+
+
 def resolve_project_end_at(
     start_at: int,
     signalhub_end_at: Optional[int],
@@ -175,20 +190,51 @@ DEFAULT_SESSION_TTL_SEC = 14 * 24 * 60 * 60
 DEFAULT_SESSION_SECRET = "virtuals-whale-radar-dev-session-secret"
 DEFAULT_SIGNUP_BONUS_CREDITS = 20
 DEFAULT_PROJECT_UNLOCK_CREDITS = 10
-DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-placeholder.svg"
+DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
 DEFAULT_BILLING_CONTACT_HINT = "扫码添加运营联系方式，付款后联系管理员手动补积分。"
 DEFAULT_BILLING_REFERRAL_NOTICE = "Virtuals 新用户使用邀请码注册，后续付费一律五折"
 DEFAULT_BILLING_REFERRAL_URL = "https://app.virtuals.io/referral?code=LFfW5x"
 CREDIT_LEDGER_TYPES = {"signup_bonus", "manual_topup", "manual_adjustment", "project_unlock"}
+BILLING_REQUEST_STATUSES = {"pending_review", "credited", "notified"}
+USER_NOTIFICATION_KINDS = {"success", "warning", "info", "accent"}
+MAX_BILLING_PROOF_BYTES = 8 * 1024 * 1024
+ALLOWED_BILLING_PROOF_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 BILLING_PLANS = [
     {"id": "starter", "credits": 10, "priceCny": 10, "label": "10 积分 / 10 元"},
-    {"id": "value", "credits": 100, "priceCny": 90, "label": "100 积分 / 90 元"},
+    {"id": "value", "credits": 50, "priceCny": 40, "label": "50 积分 / 40 元"},
 ]
 ARGON2_HASHER = (
     PasswordHasher(time_cost=2, memory_cost=102400, parallelism=8)
     if PasswordHasher is not None
     else None
 )
+LEGACY_API_SPECS = [
+    {"path": "/meta", "replacement": "/api/admin/meta", "access": "admin", "state": "compatible"},
+    {"path": "/signalhub/upcoming", "replacement": "/api/admin/signalhub", "access": "admin", "state": "compatible"},
+    {"path": "/launch-configs", "replacement": "/api/admin/launch-configs", "access": "admin", "state": "compatible"},
+    {"path": "/managed-projects", "replacement": "/api/admin/projects", "access": "admin", "state": "compatible"},
+    {"path": "/project-scheduler/status", "replacement": "/api/admin/project-scheduler/status", "access": "admin", "state": "compatible"},
+    {"path": "/overview-active", "replacement": "/api/admin/overview-active", "access": "admin", "state": "compatible"},
+    {"path": "/signalhub/watchlist/add", "replacement": "/api/admin/signalhub/watchlist/add", "access": "admin", "state": "compatible"},
+    {"path": "/signalhub/watchlist/remove", "replacement": "/api/admin/signalhub/watchlist/remove", "access": "admin", "state": "compatible"},
+    {"path": "/signalhub/watchlist/batch-add", "replacement": "/api/admin/signalhub/watchlist/batch-add", "access": "admin", "state": "compatible"},
+    {"path": "/signalhub/watchlist/batch-remove", "replacement": "/api/admin/signalhub/watchlist/batch-remove", "access": "admin", "state": "compatible"},
+    {"path": "/wallet-configs", "replacement": "/api/admin/wallets", "access": "admin", "state": "compatible"},
+    {"path": "/wallet-recalc", "replacement": "/api/admin/wallet-recalc", "access": "admin", "state": "compatible"},
+    {"path": "/runtime/db-batch-size", "replacement": "/api/admin/runtime/db-batch-size", "access": "admin", "state": "compatible"},
+    {"path": "/runtime/pause", "replacement": "/api/admin/runtime/pause", "access": "admin", "state": "compatible"},
+    {"path": "/runtime/heartbeat", "replacement": "/api/admin/runtime/heartbeat", "access": "admin", "state": "compatible"},
+    {"path": "/scan-range", "replacement": "/api/admin/scan-range", "access": "admin", "state": "compatible"},
+    {"path": "/scan-jobs/{job_id}", "replacement": "/api/admin/scan-jobs/{job_id}", "access": "admin", "state": "compatible"},
+    {"path": "/scan-jobs/{job_id}/cancel", "replacement": "/api/admin/scan-jobs/{job_id}/cancel", "access": "admin", "state": "compatible"},
+    {"path": "/health", "replacement": "/api/admin/health", "access": "public", "state": "compatible"},
+    {"path": "/mywallets", "replacement": "/api/admin/mywallets", "access": "admin", "state": "compatible"},
+    {"path": "/mywallets/{addr}", "replacement": "/api/admin/mywallets/{addr}", "access": "admin", "state": "compatible"},
+    {"path": "/minutes", "replacement": "/api/admin/minutes", "access": "admin", "state": "compatible"},
+    {"path": "/leaderboard", "replacement": "/api/admin/leaderboard", "access": "admin", "state": "compatible"},
+    {"path": "/event-delays", "replacement": "/api/admin/event-delays", "access": "admin", "state": "compatible"},
+    {"path": "/project-tax", "replacement": "/api/admin/project-tax", "access": "admin", "state": "compatible"},
+]
 
 
 def serialize_event_for_bus(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -893,6 +939,8 @@ class Storage:
                 type TEXT NOT NULL,
                 source TEXT NOT NULL DEFAULT '',
                 project_id INTEGER,
+                payment_amount TEXT NOT NULL DEFAULT '',
+                payment_proof_ref TEXT NOT NULL DEFAULT '',
                 note TEXT NOT NULL DEFAULT '',
                 operator_user_id INTEGER,
                 created_at INTEGER NOT NULL,
@@ -925,6 +973,59 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_user_project_access_project_id
                 ON user_project_access(project_id, unlocked_at DESC);
 
+            CREATE TABLE IF NOT EXISTS billing_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                plan_id TEXT NOT NULL DEFAULT '',
+                requested_credits INTEGER NOT NULL,
+                payment_amount TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                proof_storage_key TEXT NOT NULL DEFAULT '',
+                proof_original_name TEXT NOT NULL DEFAULT '',
+                proof_content_type TEXT NOT NULL DEFAULT '',
+                proof_size INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending_review',
+                admin_note TEXT NOT NULL DEFAULT '',
+                credited_credit_ledger_id INTEGER,
+                operator_user_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                reviewed_at INTEGER,
+                credited_at INTEGER,
+                notified_at INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(operator_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_billing_requests_user_status
+                ON billing_requests(user_id, status, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_billing_requests_status
+                ON billing_requests(status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS user_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'info',
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                action_url TEXT NOT NULL DEFAULT '',
+                source_type TEXT NOT NULL DEFAULT '',
+                source_id INTEGER,
+                delta INTEGER NOT NULL DEFAULT 0,
+                project_id INTEGER,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_user_notifications_user_created
+                ON user_notifications(user_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread
+                ON user_notifications(user_id, is_read, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS dead_letters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_hash TEXT NOT NULL,
@@ -945,6 +1046,16 @@ class Storage:
         self._ensure_column("users", "credit_balance", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "credit_spent_total", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "credit_granted_total", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("credit_ledger", "payment_amount", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("credit_ledger", "payment_proof_ref", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("billing_requests", "credited_credit_ledger_id", "INTEGER")
+        self._ensure_column("billing_requests", "operator_user_id", "INTEGER")
+        self._ensure_column("billing_requests", "reviewed_at", "INTEGER")
+        self._ensure_column("billing_requests", "credited_at", "INTEGER")
+        self._ensure_column("billing_requests", "notified_at", "INTEGER")
+        self._ensure_column("user_notifications", "delta", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("user_notifications", "project_id", "INTEGER")
         self.conn.commit()
 
     def _ensure_column(self, table_name: str, column_name: str, ddl: str) -> None:
@@ -1248,6 +1359,8 @@ class Storage:
         entry_type: str,
         source: str = "",
         project_id: Optional[int] = None,
+        payment_amount: str = "",
+        payment_proof_ref: str = "",
         note: str = "",
         operator_user_id: Optional[int] = None,
         now_ts: Optional[int] = None,
@@ -1288,12 +1401,13 @@ class Storage:
             """,
             (next_balance, next_spent, next_granted, now, int(user_id)),
         )
-        executor.execute(
+        ledger_cur = executor.execute(
             """
             INSERT INTO credit_ledger(
                 user_id, delta, balance_after, type, source,
-                project_id, note, operator_user_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                project_id, payment_amount, payment_proof_ref,
+                note, operator_user_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(user_id),
@@ -1302,6 +1416,8 @@ class Storage:
                 type_value,
                 str(source or ""),
                 int(project_id) if project_id is not None else None,
+                str(payment_amount or "").strip(),
+                str(payment_proof_ref or "").strip(),
                 str(note or "").strip(),
                 int(operator_user_id) if operator_user_id is not None else None,
                 now,
@@ -1317,7 +1433,9 @@ class Storage:
         ).fetchone()
         if not updated_row:
             raise ValueError(f"user not found: {user_id}")
-        return dict(updated_row)
+        result = dict(updated_row)
+        result["credit_ledger_id"] = int(ledger_cur.lastrowid or 0)
+        return result
 
     def create_user(
         self,
@@ -1361,7 +1479,7 @@ class Storage:
             )
             user_id = int(cur.lastrowid)
             if bonus_credits > 0:
-                self._apply_credit_delta_in_tx(
+                updated_user = self._apply_credit_delta_in_tx(
                     self.conn,
                     user_id=user_id,
                     delta=bonus_credits,
@@ -1369,6 +1487,23 @@ class Storage:
                     source="auth.register",
                     note="new user signup bonus",
                     now_ts=now,
+                )
+                notification_content = self.build_credit_notification_content(
+                    entry_type="signup_bonus",
+                    delta=bonus_credits,
+                    note="new user signup bonus",
+                )
+                self._create_user_notification_in_tx(
+                    self.conn,
+                    user_id=user_id,
+                    kind=notification_content["kind"],
+                    title=notification_content["title"],
+                    body=notification_content["body"],
+                    action_url=notification_content["action_url"],
+                    source_type="credit:signup_bonus",
+                    source_id=int(updated_user.get("credit_ledger_id") or 0) or None,
+                    delta=bonus_credits,
+                    created_at=now,
                 )
         row = self.get_user_by_id(int(cur.lastrowid))
         if not row:
@@ -1546,6 +1681,492 @@ class Storage:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def _create_user_notification_in_tx(
+        self,
+        executor: sqlite3.Connection,
+        *,
+        user_id: int,
+        kind: str,
+        title: str,
+        body: str = "",
+        action_url: str = "",
+        source_type: str = "",
+        source_id: Optional[int] = None,
+        delta: int = 0,
+        project_id: Optional[int] = None,
+        created_at: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        now = int(created_at or time.time())
+        notification_cur = executor.execute(
+            """
+            INSERT INTO user_notifications(
+                user_id, kind, title, body, action_url,
+                source_type, source_id, delta, project_id,
+                is_read, created_at, read_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)
+            """,
+            (
+                int(user_id),
+                normalize_notification_kind(kind),
+                require_nonempty_text(title, "title"),
+                str(body or "").strip(),
+                str(action_url or "").strip(),
+                str(source_type or "").strip(),
+                int(source_id) if source_id is not None else None,
+                int(delta or 0),
+                int(project_id) if project_id is not None else None,
+                now,
+            ),
+        )
+        row = executor.execute(
+            """
+            SELECT *
+            FROM user_notifications
+            WHERE id = ?
+            """,
+            (int(notification_cur.lastrowid),),
+        ).fetchone()
+        if not row:
+            raise ValueError("failed to create notification")
+        return dict(row)
+
+    def create_user_notification(
+        self,
+        *,
+        user_id: int,
+        kind: str,
+        title: str,
+        body: str = "",
+        action_url: str = "",
+        source_type: str = "",
+        source_id: Optional[int] = None,
+        delta: int = 0,
+        project_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        with self.conn:
+            return self._create_user_notification_in_tx(
+                self.conn,
+                user_id=int(user_id),
+                kind=kind,
+                title=title,
+                body=body,
+                action_url=action_url,
+                source_type=source_type,
+                source_id=source_id,
+                delta=delta,
+                project_id=project_id,
+            )
+
+    def build_credit_notification_content(
+        self,
+        *,
+        entry_type: str,
+        delta: int,
+        project_name: str = "",
+        payment_amount: str = "",
+        note: str = "",
+    ) -> Dict[str, str]:
+        entry = str(entry_type or "").strip().lower()
+        delta_value = int(delta or 0)
+        payment_amount_value = str(payment_amount or "").strip()
+        note_value = str(note or "").strip()
+        project_name_value = str(project_name or "").strip()
+        if entry == "signup_bonus":
+            return {
+                "kind": "success",
+                "title": "新用户积分已到账",
+                "body": f"系统已赠送 {max(delta_value, 0)} 积分。",
+                "action_url": "/app/billing",
+            }
+        if entry == "manual_topup":
+            details = [f"管理员已为你入账 {max(delta_value, 0)} 积分。"]
+            if payment_amount_value:
+                details.append(f"实付 {payment_amount_value}")
+            if note_value:
+                details.append(note_value)
+            return {
+                "kind": "success",
+                "title": "充值积分已到账",
+                "body": " ".join(details),
+                "action_url": "/app/billing",
+            }
+        if entry == "manual_adjustment":
+            return {
+                "kind": "warning" if delta_value < 0 else "info",
+                "title": "积分已扣减" if delta_value < 0 else "积分已调整",
+                "body": note_value or f"管理员已调整 {abs(delta_value)} 积分。",
+                "action_url": "/app/billing",
+            }
+        if entry == "project_unlock":
+            return {
+                "kind": "accent",
+                "title": f"{project_name_value or '项目'} 已解锁",
+                "body": f"已扣除 {abs(delta_value)} 积分，Overview 现已永久可读。",
+                "action_url": "/app/overview",
+            }
+        return {
+            "kind": "info",
+            "title": "账户有新的动态",
+            "body": note_value or f"积分变动 {delta_value:+d}",
+            "action_url": "/app/billing",
+        }
+
+    def list_user_notifications_rows(self, user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                user_notifications.*,
+                managed_projects.name AS project_name
+            FROM user_notifications
+            LEFT JOIN managed_projects ON managed_projects.id = user_notifications.project_id
+            WHERE user_notifications.user_id = ?
+            ORDER BY user_notifications.created_at DESC, user_notifications.id DESC
+            LIMIT ?
+            """,
+            (int(user_id), max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_user_notifications(self, user_id: int, *, unread_only: bool = False) -> int:
+        if unread_only:
+            row = self.conn.execute(
+                """
+                SELECT COUNT(1) AS count_value
+                FROM user_notifications
+                WHERE user_id = ? AND is_read = 0
+                """,
+                (int(user_id),),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                """
+                SELECT COUNT(1) AS count_value
+                FROM user_notifications
+                WHERE user_id = ?
+                """,
+                (int(user_id),),
+            ).fetchone()
+        if not row:
+            return 0
+        return int(row["count_value"] or 0)
+
+    def mark_user_notification_read(self, user_id: int, notification_id: int) -> Optional[Dict[str, Any]]:
+        now = int(time.time())
+        self.conn.execute(
+            """
+            UPDATE user_notifications
+            SET is_read = 1,
+                read_at = COALESCE(read_at, ?)
+            WHERE id = ? AND user_id = ?
+            """,
+            (now, int(notification_id), int(user_id)),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM user_notifications
+            WHERE id = ? AND user_id = ?
+            """,
+            (int(notification_id), int(user_id)),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def mark_all_user_notifications_read(self, user_id: int) -> int:
+        now = int(time.time())
+        cur = self.conn.execute(
+            """
+            UPDATE user_notifications
+            SET is_read = 1,
+                read_at = COALESCE(read_at, ?)
+            WHERE user_id = ? AND is_read = 0
+            """,
+            (now, int(user_id)),
+        )
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
+    def create_billing_request(
+        self,
+        *,
+        user_id: int,
+        plan_id: str,
+        requested_credits: int,
+        payment_amount: str = "",
+        note: str = "",
+        proof_storage_key: str = "",
+        proof_original_name: str = "",
+        proof_content_type: str = "",
+        proof_size: int = 0,
+    ) -> Dict[str, Any]:
+        credits = max(1, int(requested_credits or 0))
+        now = int(time.time())
+        cur = self.conn.execute(
+            """
+            INSERT INTO billing_requests(
+                user_id, plan_id, requested_credits, payment_amount, note,
+                proof_storage_key, proof_original_name, proof_content_type, proof_size,
+                status, admin_note, credited_credit_ledger_id, operator_user_id,
+                created_at, updated_at, reviewed_at, credited_at, notified_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', '', NULL, NULL, ?, ?, NULL, NULL, NULL)
+            """,
+            (
+                int(user_id),
+                str(plan_id or "").strip(),
+                credits,
+                str(payment_amount or "").strip(),
+                str(note or "").strip(),
+                str(proof_storage_key or "").strip(),
+                str(proof_original_name or "").strip(),
+                str(proof_content_type or "").strip(),
+                max(0, int(proof_size or 0)),
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        row = self.get_billing_request(int(cur.lastrowid))
+        if not row:
+            raise ValueError("failed to create billing request")
+        return row
+
+    def get_billing_request(self, request_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT
+                billing_requests.*,
+                users.nickname AS user_nickname,
+                users.email AS user_email,
+                operator.nickname AS operator_nickname,
+                operator.email AS operator_email
+            FROM billing_requests
+            LEFT JOIN users ON users.id = billing_requests.user_id
+            LEFT JOIN users AS operator ON operator.id = billing_requests.operator_user_id
+            WHERE billing_requests.id = ?
+            """,
+            (int(request_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_billing_request_for_user(self, user_id: int, request_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT
+                billing_requests.*,
+                users.nickname AS user_nickname,
+                users.email AS user_email,
+                operator.nickname AS operator_nickname,
+                operator.email AS operator_email
+            FROM billing_requests
+            LEFT JOIN users ON users.id = billing_requests.user_id
+            LEFT JOIN users AS operator ON operator.id = billing_requests.operator_user_id
+            WHERE billing_requests.id = ? AND billing_requests.user_id = ?
+            """,
+            (int(request_id), int(user_id)),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_user_billing_requests(self, user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+                billing_requests.*,
+                operator.nickname AS operator_nickname,
+                operator.email AS operator_email
+            FROM billing_requests
+            LEFT JOIN users AS operator ON operator.id = billing_requests.operator_user_id
+            WHERE billing_requests.user_id = ?
+            ORDER BY billing_requests.created_at DESC, billing_requests.id DESC
+            LIMIT ?
+            """,
+            (int(user_id), max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_billing_requests(
+        self,
+        *,
+        status: str = "",
+        query: str = "",
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT
+                billing_requests.*,
+                users.nickname AS user_nickname,
+                users.email AS user_email,
+                operator.nickname AS operator_nickname,
+                operator.email AS operator_email
+            FROM billing_requests
+            LEFT JOIN users ON users.id = billing_requests.user_id
+            LEFT JOIN users AS operator ON operator.id = billing_requests.operator_user_id
+            WHERE 1 = 1
+        """
+        params: List[Any] = []
+        if status:
+            sql += " AND billing_requests.status = ?"
+            params.append(normalize_billing_request_status(status))
+        if query:
+            pattern = f"%{str(query or '').strip().lower()}%"
+            sql += """
+                AND (
+                    LOWER(COALESCE(users.nickname, '')) LIKE ?
+                    OR LOWER(COALESCE(users.email, '')) LIKE ?
+                    OR LOWER(COALESCE(billing_requests.plan_id, '')) LIKE ?
+                    OR LOWER(COALESCE(billing_requests.note, '')) LIKE ?
+                )
+            """
+            params.extend([pattern, pattern, pattern, pattern])
+        sql += """
+            ORDER BY
+                CASE billing_requests.status
+                    WHEN 'pending_review' THEN 0
+                    WHEN 'credited' THEN 1
+                    WHEN 'notified' THEN 2
+                    ELSE 3
+                END,
+                billing_requests.created_at DESC,
+                billing_requests.id DESC
+            LIMIT ?
+        """
+        params.append(max(1, int(limit)))
+        rows = self.conn.execute(sql, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
+
+    def credit_billing_request(
+        self,
+        request_id: int,
+        *,
+        operator_user_id: int,
+        credits: Optional[int] = None,
+        amount_paid: Optional[str] = None,
+        admin_note: str = "",
+    ) -> Dict[str, Any]:
+        request_row = self.get_billing_request(int(request_id))
+        if not request_row:
+            raise ValueError(f"billing request not found: {request_id}")
+        status = normalize_billing_request_status(request_row.get("status"))
+        if status not in {"pending_review", "credited", "notified"}:
+            raise ValueError(f"billing request cannot be credited from status: {status}")
+        if status in {"credited", "notified"}:
+            return request_row
+        now = int(time.time())
+        credit_amount = int(credits or request_row.get("requested_credits") or 0)
+        if credit_amount <= 0:
+            raise ValueError("credits must be positive")
+        note_parts = [str(request_row.get("note") or "").strip(), str(admin_note or "").strip()]
+        topup_note = " / ".join([part for part in note_parts if part]) or "manual topup"
+        with self.conn:
+            updated_user = self._apply_credit_delta_in_tx(
+                self.conn,
+                user_id=int(request_row["user_id"]),
+                delta=credit_amount,
+                entry_type="manual_topup",
+                source="admin.billing_request_credit",
+                payment_amount=str(amount_paid or request_row.get("payment_amount") or "").strip(),
+                payment_proof_ref=str(request_row.get("proof_original_name") or f"billing_request:{request_id}"),
+                note=topup_note,
+                operator_user_id=int(operator_user_id),
+                now_ts=now,
+            )
+            self._create_user_notification_in_tx(
+                self.conn,
+                user_id=int(request_row["user_id"]),
+                kind="success",
+                title="充值积分已到账",
+                body=f"管理员已确认你的付款，并入账 {credit_amount} 积分。",
+                action_url="/app/billing",
+                source_type="billing_request_credited",
+                source_id=int(request_id),
+                delta=credit_amount,
+                created_at=now,
+            )
+            self.conn.execute(
+                """
+                UPDATE billing_requests
+                SET status = 'credited',
+                    payment_amount = ?,
+                    admin_note = ?,
+                    credited_credit_ledger_id = ?,
+                    operator_user_id = ?,
+                    reviewed_at = COALESCE(reviewed_at, ?),
+                    credited_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    str(amount_paid or request_row.get("payment_amount") or "").strip(),
+                    str(admin_note or "").strip(),
+                    int(updated_user.get("credit_ledger_id") or 0) or None,
+                    int(operator_user_id),
+                    now,
+                    now,
+                    now,
+                    int(request_id),
+                ),
+            )
+        row = self.get_billing_request(int(request_id))
+        if not row:
+            raise ValueError(f"billing request not found: {request_id}")
+        return row
+
+    def mark_billing_request_notified(
+        self,
+        request_id: int,
+        *,
+        operator_user_id: int,
+        admin_note: str = "",
+    ) -> Dict[str, Any]:
+        request_row = self.get_billing_request(int(request_id))
+        if not request_row:
+            raise ValueError(f"billing request not found: {request_id}")
+        status = normalize_billing_request_status(request_row.get("status"))
+        if status == "notified":
+            return request_row
+        if status != "credited":
+            raise ValueError("billing request must be credited before notify")
+        now = int(time.time())
+        with self.conn:
+            self._create_user_notification_in_tx(
+                self.conn,
+                user_id=int(request_row["user_id"]),
+                kind="info",
+                title="充值处理已完成",
+                body="运营已完成充值处理，你可以在 Billing 页面查看到账与积分变化。",
+                action_url="/app/billing",
+                source_type="billing_request_notified",
+                source_id=int(request_id),
+                created_at=now,
+            )
+            self.conn.execute(
+                """
+                UPDATE billing_requests
+                SET status = 'notified',
+                    admin_note = CASE
+                        WHEN ? = '' THEN admin_note
+                        WHEN admin_note = '' THEN ?
+                        ELSE admin_note || ' / ' || ?
+                    END,
+                    operator_user_id = ?,
+                    notified_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    str(admin_note or "").strip(),
+                    str(admin_note or "").strip(),
+                    str(admin_note or "").strip(),
+                    int(operator_user_id),
+                    now,
+                    now,
+                    int(request_id),
+                ),
+            )
+        row = self.get_billing_request(int(request_id))
+        if not row:
+            raise ValueError(f"billing request not found: {request_id}")
+        return row
+
     def adjust_user_credits(
         self,
         user_id: int,
@@ -1554,19 +2175,47 @@ class Storage:
         entry_type: str,
         source: str = "",
         project_id: Optional[int] = None,
+        payment_amount: str = "",
+        payment_proof_ref: str = "",
         note: str = "",
         operator_user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        entry_type_value = str(entry_type or "").strip().lower()
         with self.conn:
             row = self._apply_credit_delta_in_tx(
                 self.conn,
                 user_id=int(user_id),
                 delta=int(delta),
-                entry_type=entry_type,
+                entry_type=entry_type_value,
                 source=source,
                 project_id=project_id,
+                payment_amount=payment_amount,
+                payment_proof_ref=payment_proof_ref,
                 note=note,
                 operator_user_id=operator_user_id,
+            )
+            project_name = ""
+            if project_id is not None:
+                project_row = self.get_managed_project(int(project_id))
+                project_name = str(project_row.get("name") or "") if project_row else ""
+            notification_content = self.build_credit_notification_content(
+                entry_type=entry_type_value,
+                delta=int(delta),
+                project_name=project_name,
+                payment_amount=payment_amount,
+                note=note,
+            )
+            self._create_user_notification_in_tx(
+                self.conn,
+                user_id=int(user_id),
+                kind=notification_content["kind"],
+                title=notification_content["title"],
+                body=notification_content["body"],
+                action_url=notification_content["action_url"],
+                source_type=f"credit:{entry_type_value}",
+                source_id=int(row.get("credit_ledger_id") or 0) or None,
+                delta=int(delta),
+                project_id=int(project_id) if project_id is not None else None,
             )
         return row
 
@@ -1616,6 +2265,35 @@ class Storage:
                 project_id=int(project_id),
                 note=note,
                 now_ts=now,
+            )
+            notification_content = self.build_credit_notification_content(
+                entry_type="project_unlock",
+                delta=-abs(int(unlock_cost)),
+                project_name=str(project_row.get("name") or ""),
+                note=note,
+            )
+            latest_row = self.conn.execute(
+                """
+                SELECT id
+                FROM credit_ledger
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(user_id),),
+            ).fetchone()
+            self._create_user_notification_in_tx(
+                self.conn,
+                user_id=int(user_id),
+                kind=notification_content["kind"],
+                title=notification_content["title"],
+                body=notification_content["body"],
+                action_url=notification_content["action_url"],
+                source_type="credit:project_unlock",
+                source_id=int(latest_row["id"]) if latest_row else None,
+                delta=-abs(int(unlock_cost)),
+                project_id=int(project_id),
+                created_at=now,
             )
         row = self.get_user_project_access(int(user_id), int(project_id))
         if not row:
@@ -2475,13 +3153,20 @@ class Storage:
         return [dict(r) for r in rows]
 
     def query_minutes(self, project: str, from_ts: int, to_ts: int) -> List[Dict[str, Any]]:
+        from_key = int(from_ts)
+        to_key = int(to_ts)
+        # minute_agg.minute_key stores unix-minute buckets, while callers often pass second timestamps.
+        if from_key > 100_000_000:
+            from_key = from_key // 60
+        if to_key > 100_000_000:
+            to_key = to_key // 60
         rows = self.conn.execute(
             """
             SELECT * FROM minute_agg
             WHERE project = ? AND minute_key >= ? AND minute_key <= ?
             ORDER BY minute_key ASC
             """,
-            (project, from_ts, to_ts),
+            (project, from_key, to_key),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -3071,6 +3756,8 @@ class VirtualsBot:
         self.session_secret = cfg.session_secret
         self.billing_contact_qr_url = cfg.billing_contact_qr_url
         self.billing_contact_hint = cfg.billing_contact_hint
+        self.billing_proof_dir = (Path(cfg.sqlite_path).resolve().parent / "uploads" / "billing-proofs")
+        self.billing_proof_dir.mkdir(parents=True, exist_ok=True)
         self.storage = Storage(cfg.sqlite_path)
         runtime_db_batch_size = self.storage.get_state("runtime_db_batch_size")
         if runtime_db_batch_size:
@@ -3196,6 +3883,145 @@ class VirtualsBot:
     def build_billing_plans_payload(self) -> List[Dict[str, Any]]:
         return [dict(plan) for plan in BILLING_PLANS]
 
+    def billing_request_status_label(self, status: str) -> str:
+        status_value = normalize_billing_request_status(status)
+        if status_value == "pending_review":
+            return "待确认付款"
+        if status_value == "credited":
+            return "已入账"
+        if status_value == "notified":
+            return "已通知用户"
+        return status_value
+
+    def resolve_billing_proof_path(self, storage_key: str) -> Path:
+        candidate = (self.billing_proof_dir / str(storage_key or "").strip()).resolve()
+        base = self.billing_proof_dir.resolve()
+        if candidate != base and base not in candidate.parents:
+            raise ValueError("invalid proof path")
+        return candidate
+
+    def store_billing_proof_attachment(
+        self,
+        *,
+        filename: str,
+        content_type: str,
+        payload: bytes,
+    ) -> Dict[str, Any]:
+        original_name = Path(str(filename or "").strip()).name or "billing-proof"
+        suffix = Path(original_name).suffix.lower()
+        guessed_suffix = (mimetypes.guess_extension(str(content_type or "").strip()) or "").lower()
+        if suffix not in ALLOWED_BILLING_PROOF_EXTENSIONS:
+            suffix = guessed_suffix
+        if suffix not in ALLOWED_BILLING_PROOF_EXTENSIONS:
+            raise ValueError("proof file must be png/jpg/jpeg/webp/gif")
+        if len(payload) <= 0:
+            raise ValueError("proof file is empty")
+        if len(payload) > MAX_BILLING_PROOF_BYTES:
+            raise ValueError("proof file exceeds 8MB limit")
+        storage_key = f"{int(time.time())}-{uuid.uuid4().hex}{suffix}"
+        target = self.resolve_billing_proof_path(storage_key)
+        target.write_bytes(payload)
+        return {
+            "storage_key": storage_key,
+            "original_name": original_name,
+            "content_type": str(content_type or "").strip()
+            or mimetypes.guess_type(target.name)[0]
+            or "application/octet-stream",
+            "size": len(payload),
+        }
+
+    def build_notification_item_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": int(row.get("id") or 0),
+            "title": str(row.get("title") or ""),
+            "body": str(row.get("body") or ""),
+            "kind": normalize_notification_kind(row.get("kind")),
+            "delta": int(row.get("delta") or 0),
+            "type": str(row.get("source_type") or ""),
+            "projectName": str(row.get("project_name") or "").strip() or None,
+            "createdAt": int(row.get("created_at") or 0),
+            "isRead": bool(row.get("is_read")),
+            "readAt": int(row.get("read_at") or 0) or None,
+            "actionUrl": str(row.get("action_url") or "").strip() or None,
+            "sourceId": int(row.get("source_id") or 0) or None,
+        }
+
+    def is_visible_app_notification_type(self, source_type: Any) -> bool:
+        value = str(source_type or "").strip().lower()
+        if not value:
+            return False
+        return value.startswith("credit:") or value == "billing_request_credited"
+
+    def list_visible_user_notification_rows(
+        self,
+        user_id: int,
+        *,
+        limit: int = 12,
+        unread_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        rows = self.storage.list_user_notifications_rows(int(user_id), limit=max(120, int(limit) * 6))
+        visible = [
+            row
+            for row in rows
+            if self.is_visible_app_notification_type(row.get("source_type"))
+            and ((not unread_only) or (not bool(row.get("is_read"))))
+        ]
+        return visible[: max(1, int(limit))]
+
+    def count_visible_user_notifications(self, user_id: int, *, unread_only: bool = False) -> int:
+        rows = self.storage.list_user_notifications_rows(int(user_id), limit=500)
+        return sum(
+            1
+            for row in rows
+            if self.is_visible_app_notification_type(row.get("source_type"))
+            and ((not unread_only) or (not bool(row.get("is_read"))))
+        )
+
+    def build_billing_request_payload(self, row: Dict[str, Any], viewer: str) -> Dict[str, Any]:
+        request_id = int(row.get("id") or 0)
+        is_admin = str(viewer or "").lower() == "admin"
+        proof_url = None
+        if str(row.get("proof_storage_key") or "").strip():
+            proof_url = (
+                f"/api/admin/billing/requests/{request_id}/proof"
+                if is_admin
+                else f"/api/app/billing/requests/{request_id}/proof"
+            )
+        payload = {
+            "id": request_id,
+            "user_id": int(row.get("user_id") or 0),
+            "userNickname": str(row.get("user_nickname") or "").strip() or None,
+            "userEmail": str(row.get("user_email") or "").strip() or None,
+            "plan_id": str(row.get("plan_id") or "").strip(),
+            "requested_credits": int(row.get("requested_credits") or 0),
+            "payment_amount": str(row.get("payment_amount") or "").strip(),
+            "note": str(row.get("note") or "").strip(),
+            "proof_original_name": str(row.get("proof_original_name") or "").strip(),
+            "proof_content_type": str(row.get("proof_content_type") or "").strip(),
+            "proof_size": int(row.get("proof_size") or 0),
+            "proof_url": proof_url,
+            "status": normalize_billing_request_status(row.get("status")),
+            "status_label": self.billing_request_status_label(str(row.get("status") or "")),
+            "admin_note": str(row.get("admin_note") or "").strip(),
+            "credited_credit_ledger_id": int(row.get("credited_credit_ledger_id") or 0) or None,
+            "operator_user_id": int(row.get("operator_user_id") or 0) or None,
+            "operatorNickname": str(row.get("operator_nickname") or "").strip() or None,
+            "operatorEmail": str(row.get("operator_email") or "").strip() or None,
+            "created_at": int(row.get("created_at") or 0),
+            "updated_at": int(row.get("updated_at") or 0),
+            "reviewed_at": int(row.get("reviewed_at") or 0) or None,
+            "credited_at": int(row.get("credited_at") or 0) or None,
+            "notified_at": int(row.get("notified_at") or 0) or None,
+        }
+        if not is_admin:
+            payload.pop("user_id", None)
+            payload.pop("userNickname", None)
+            payload.pop("userEmail", None)
+            payload.pop("operator_user_id", None)
+            payload.pop("operatorNickname", None)
+            payload.pop("operatorEmail", None)
+        return payload
+
     def build_project_access_payload(
         self,
         user_row: Optional[Dict[str, Any]],
@@ -3231,12 +4057,61 @@ class VirtualsBot:
             "credit_spent_total": int(user_row.get("credit_spent_total") or 0),
             "credit_granted_total": int(user_row.get("credit_granted_total") or 0),
             "unlocked_project_count": len(self.storage.list_user_project_access_rows(user_id, limit=1000)),
+            "pending_request_count": 0,
+            "unread_notification_count": self.count_visible_user_notifications(user_id, unread_only=True),
             "plans": self.build_billing_plans_payload(),
             "contact_qr_url": self.billing_contact_qr_url,
             "contact_hint": self.billing_contact_hint,
             "notice": DEFAULT_BILLING_REFERRAL_NOTICE,
             "referral_url": DEFAULT_BILLING_REFERRAL_URL,
         }
+
+    def build_user_notifications_payload(
+        self,
+        user_row: Dict[str, Any],
+        limit: int = 12,
+    ) -> Dict[str, Any]:
+        user_id = int(user_row["id"])
+        rows = self.list_visible_user_notification_rows(user_id, limit=max(1, int(limit)))
+        items = [self.build_notification_item_payload(row) for row in rows]
+        return {
+            "ok": True,
+            "count": len(items),
+            "unreadCount": self.count_visible_user_notifications(user_id, unread_only=True),
+            "items": items,
+        }
+
+    def build_legacy_api_payload(self) -> Dict[str, Any]:
+        items = []
+        for spec in LEGACY_API_SPECS:
+            items.append(
+                {
+                    "path": spec["path"],
+                    "replacement": spec["replacement"],
+                    "access": spec["access"],
+                    "state": spec["state"],
+                }
+            )
+        return {
+            "ok": True,
+            "count": len(items),
+            "items": items,
+        }
+
+    def apply_legacy_response_headers(
+        self,
+        response: web.StreamResponse,
+        *,
+        replacement: str,
+        access: str,
+    ) -> web.StreamResponse:
+        response.headers["X-VWR-Legacy-Api"] = "true"
+        response.headers["X-VWR-Legacy-State"] = "compatible"
+        response.headers["X-VWR-Replacement"] = replacement
+        response.headers["Deprecation"] = "true"
+        response.headers["Warning"] = '299 - "Deprecated legacy API; use replacement endpoint"'
+        response.headers["X-VWR-Legacy-Access"] = access
+        return response
 
     def get_request_user(self, request: web.Request) -> Optional[Dict[str, Any]]:
         raw = request.get("auth_user")
@@ -3443,62 +4318,85 @@ class VirtualsBot:
             "items": items,
         }
 
-    def build_overview_active_payload(
+    def build_overview_empty_payload(
         self,
+        *,
+        requested_project: Optional[str] = None,
+        has_active_project: bool = False,
+        active_projects: Optional[List[Dict[str, Any]]] = None,
+        view_mode: str = "active",
+    ) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "viewMode": view_mode,
+            "requestedProject": str(requested_project or "").strip(),
+            "hasActiveProject": bool(has_active_project),
+            "activeProjects": active_projects or [],
+            "item": None,
+            "minutes": [],
+            "whaleBoard": [],
+            "trackedWallets": [],
+            "delays": [],
+        }
+
+    def build_project_overview_payload(
+        self,
+        managed_row: Optional[Dict[str, Any]],
+        *,
         requested_project: Optional[str] = None,
         tracked_wallet_configs: Optional[List[Dict[str, Any]]] = None,
+        scheduler_status: Optional[Dict[str, Any]] = None,
+        view_mode: str = "project",
     ) -> Dict[str, Any]:
-        scheduler_status = self.build_project_scheduler_status()
+        requested_name = str(requested_project or "").strip()
+        scheduler_status = scheduler_status or self.build_project_scheduler_status()
         active_scheduler_items = [
             item
             for item in scheduler_status.get("items", [])
             if str(item.get("projectedStatus") or "").strip().lower() in {"prelaunch", "live"}
         ]
         active_scheduler_items.sort(key=lambda item: (int(item.get("startAt") or 0), str(item.get("name") or "")))
-        requested_name = str(requested_project or "").strip()
-
-        if not active_scheduler_items:
-            return {
-                "ok": True,
-                "requestedProject": requested_name,
-                "hasActiveProject": False,
-                "activeProjects": [],
-                "item": None,
-                "minutes": [],
-                "whaleBoard": [],
-                "trackedWallets": [],
-                "delays": [],
+        active_projects = [
+            {
+                "id": int(item.get("id") or 0),
+                "name": str(item.get("name") or ""),
+                "status": str(item.get("status") or ""),
+                "projectedStatus": str(item.get("projectedStatus") or ""),
+                "startAt": int(item.get("startAt") or 0),
+                "resolvedEndAt": int(item.get("resolvedEndAt") or 0),
             }
-
-        selected_scheduler = next(
-            (item for item in active_scheduler_items if str(item.get("name") or "") == requested_name),
-            active_scheduler_items[0],
-        )
-        managed_rows = self.storage.list_managed_projects()
-        managed_row = next(
-            (
-                row
-                for row in managed_rows
-                if int(row.get("id") or 0) == int(selected_scheduler.get("id") or 0)
-                or str(row.get("name") or "") == str(selected_scheduler.get("name") or "")
-            ),
-            None,
-        )
+            for item in active_scheduler_items
+        ]
         if not managed_row:
-            return {
-                "ok": True,
-                "requestedProject": requested_name,
-                "hasActiveProject": False,
-                "activeProjects": [],
-                "item": None,
-                "minutes": [],
-                "whaleBoard": [],
-                "trackedWallets": [],
-                "delays": [],
-            }
+            return self.build_overview_empty_payload(
+                requested_project=requested_name,
+                has_active_project=bool(active_projects),
+                active_projects=active_projects,
+                view_mode=view_mode,
+            )
 
         project_name = str(managed_row.get("name") or "").strip()
         project_id = int(managed_row.get("id") or 0)
+        resolved_end_at = resolve_project_end_at(
+            int(managed_row.get("start_at") or 0),
+            parse_optional_int(managed_row.get("signalhub_end_at"), "signalhub_end_at"),
+            parse_optional_int(managed_row.get("manual_end_at"), "manual_end_at"),
+        )
+        managed_row = dict(managed_row)
+        managed_row["resolved_end_at"] = resolved_end_at
+        scheduler_item = next(
+            (
+                item
+                for item in scheduler_status.get("items", [])
+                if int(item.get("id") or 0) == project_id or str(item.get("name") or "") == project_name
+            ),
+            None,
+        )
+        projected_status = (
+            str(scheduler_item.get("projectedStatus") or "").strip()
+            if scheduler_item
+            else self.derive_managed_project_status(managed_row, now_ts=int(time.time()))
+        )
         chart_from_raw = self.storage.get_state(self._managed_project_chart_from_key(project_id))
         chart_to_raw = self.storage.get_state(self._managed_project_chart_to_key(project_id))
         chart_from_at = int(chart_from_raw) if chart_from_raw else int(managed_row.get("start_at") or 0)
@@ -3564,28 +4462,17 @@ class VirtualsBot:
             reverse=True,
         )
 
-        active_projects = [
-            {
-                "id": int(item.get("id") or 0),
-                "name": str(item.get("name") or ""),
-                "status": str(item.get("status") or ""),
-                "projectedStatus": str(item.get("projectedStatus") or ""),
-                "startAt": int(item.get("startAt") or 0),
-                "resolvedEndAt": int(item.get("resolvedEndAt") or 0),
-            }
-            for item in active_scheduler_items
-        ]
-
         return {
             "ok": True,
-            "requestedProject": requested_name,
-            "hasActiveProject": True,
+            "viewMode": view_mode,
+            "requestedProject": requested_name or project_name,
+            "hasActiveProject": bool(active_projects),
             "activeProjects": active_projects,
             "item": {
                 "id": project_id,
                 "name": project_name,
                 "status": str(managed_row.get("status") or ""),
-                "projectedStatus": str(selected_scheduler.get("projectedStatus") or ""),
+                "projectedStatus": projected_status,
                 "startAt": int(managed_row.get("start_at") or 0),
                 "resolvedEndAt": int(managed_row.get("resolved_end_at") or 0),
                 "detailUrl": str(managed_row.get("detail_url") or "").strip(),
@@ -3600,6 +4487,45 @@ class VirtualsBot:
             "trackedWallets": tracked_wallets,
             "delays": delays,
         }
+
+    def build_overview_active_payload(
+        self,
+        requested_project: Optional[str] = None,
+        tracked_wallet_configs: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        scheduler_status = self.build_project_scheduler_status()
+        active_scheduler_items = [
+            item
+            for item in scheduler_status.get("items", [])
+            if str(item.get("projectedStatus") or "").strip().lower() in {"prelaunch", "live"}
+        ]
+        active_scheduler_items.sort(key=lambda item: (int(item.get("startAt") or 0), str(item.get("name") or "")))
+        requested_name = str(requested_project or "").strip()
+
+        if not active_scheduler_items:
+            return self.build_overview_empty_payload(requested_project=requested_name, view_mode="active")
+
+        selected_scheduler = next(
+            (item for item in active_scheduler_items if str(item.get("name") or "") == requested_name),
+            active_scheduler_items[0],
+        )
+        managed_rows = self.storage.list_managed_projects()
+        managed_row = next(
+            (
+                row
+                for row in managed_rows
+                if int(row.get("id") or 0) == int(selected_scheduler.get("id") or 0)
+                or str(row.get("name") or "") == str(selected_scheduler.get("name") or "")
+            ),
+            None,
+        )
+        return self.build_project_overview_payload(
+            managed_row,
+            requested_project=requested_name,
+            tracked_wallet_configs=tracked_wallet_configs,
+            scheduler_status=scheduler_status,
+            view_mode="active",
+        )
 
     def list_public_managed_projects(self, user_row: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         visible_statuses = {"scheduled", "prelaunch", "live", "ended"}
@@ -3641,6 +4567,9 @@ class VirtualsBot:
             "credit_spent_total": int(user_row.get("credit_spent_total") or 0),
             "credit_granted_total": int(user_row.get("credit_granted_total") or 0),
             "unlocked_project_count": len(self.storage.list_user_project_access_rows(int(user_row["id"]), limit=1000)),
+            "unread_notification_count": self.count_visible_user_notifications(
+                int(user_row["id"]), unread_only=True
+            ),
             "visible_project_statuses": ["scheduled", "prelaunch", "live", "ended"],
             "has_active_project": has_active_project,
             "default_path": "/app/overview" if has_unlocked_active_project else "/app/projects",
@@ -4972,6 +5901,166 @@ class VirtualsBot:
         user = self.require_auth(request)
         return web.json_response(self.build_billing_summary_payload(user))
 
+    async def app_notifications_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        limit_raw = str(request.query.get("limit", "")).strip()
+        limit = 12
+        if limit_raw:
+            try:
+                limit = max(1, min(50, int(limit_raw)))
+            except ValueError:
+                return web.json_response({"error": "limit must be integer"}, status=400)
+        return web.json_response(self.build_user_notifications_payload(user, limit=limit))
+
+    async def app_notification_read_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        notification_id_raw = str(request.match_info.get("notification_id", "")).strip()
+        if not notification_id_raw:
+            return web.json_response({"error": "notification_id is required"}, status=400)
+        try:
+            row = self.storage.mark_user_notification_read(int(user["id"]), int(notification_id_raw))
+        except ValueError:
+            return web.json_response({"error": "notification_id must be integer"}, status=400)
+        if not row:
+            return web.json_response({"error": f"notification not found: {notification_id_raw}"}, status=404)
+        return web.json_response(
+            {
+                "ok": True,
+                "item": self.build_notification_item_payload(row),
+                "unreadCount": self.count_visible_user_notifications(int(user["id"]), unread_only=True),
+            }
+        )
+
+    async def app_notifications_read_all_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        updated = self.storage.mark_all_user_notifications_read(int(user["id"]))
+        return web.json_response(
+            {
+                "ok": True,
+                "updated": updated,
+                "unreadCount": self.count_visible_user_notifications(int(user["id"]), unread_only=True),
+            }
+        )
+
+    async def extract_billing_request_submission(
+        self, request: web.Request
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        content_type = str(request.content_type or "").lower()
+        if content_type.startswith("multipart/"):
+            reader = await request.multipart()
+            fields: Dict[str, Any] = {}
+            proof: Optional[Dict[str, Any]] = None
+            async for part in reader:
+                if not part.name:
+                    continue
+                if part.filename:
+                    payload = await part.read(decode=False)
+                    proof = {
+                        "filename": str(part.filename or ""),
+                        "content_type": str(part.headers.get("Content-Type") or part.content_type or ""),
+                        "payload": payload,
+                    }
+                else:
+                    fields[part.name] = await part.text()
+            return fields, proof
+        if content_type.startswith("application/json"):
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("invalid json body")
+            return payload, None
+        raise ValueError("content type must be multipart/form-data or application/json")
+
+    async def app_billing_requests_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        limit_raw = str(request.query.get("limit", "")).strip()
+        limit = 50
+        if limit_raw:
+            try:
+                limit = max(1, min(200, int(limit_raw)))
+            except ValueError:
+                return web.json_response({"error": "limit must be integer"}, status=400)
+        items = [
+            self.build_billing_request_payload(row, "user")
+            for row in self.storage.list_user_billing_requests(int(user["id"]), limit=limit)
+        ]
+        return web.json_response({"ok": True, "count": len(items), "items": items})
+
+    async def app_billing_request_create_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        try:
+            payload, proof = await self.extract_billing_request_submission(request)
+            plan_id = str(payload.get("plan_id") or "").strip()
+            requested_credits = parse_required_int(payload.get("requested_credits"), "requested_credits")
+            if requested_credits <= 0:
+                raise ValueError("requested_credits must be positive")
+            if plan_id:
+                matched_plan = next(
+                    (plan for plan in BILLING_PLANS if str(plan.get("id") or "").strip() == plan_id),
+                    None,
+                )
+                if matched_plan and int(matched_plan.get("credits") or 0) != requested_credits:
+                    raise ValueError("requested_credits does not match selected plan")
+            if not proof:
+                raise ValueError("proof file is required")
+            stored = self.store_billing_proof_attachment(
+                filename=str(proof.get("filename") or ""),
+                content_type=str(proof.get("content_type") or ""),
+                payload=bytes(proof.get("payload") or b""),
+            )
+            item = self.storage.create_billing_request(
+                user_id=int(user["id"]),
+                plan_id=plan_id,
+                requested_credits=requested_credits,
+                payment_amount=str(payload.get("payment_amount") or "").strip(),
+                note=str(payload.get("note") or "").strip(),
+                proof_storage_key=stored["storage_key"],
+                proof_original_name=stored["original_name"],
+                proof_content_type=stored["content_type"],
+                proof_size=int(stored["size"]),
+            )
+            self.storage.create_user_notification(
+                user_id=int(user["id"]),
+                kind="info",
+                title="付款凭证已提交",
+                body=f"你的 {requested_credits} 积分充值申请已提交，当前状态为待确认付款。",
+                action_url="/app/billing",
+                source_type="billing_request_submitted",
+                source_id=int(item["id"]),
+            )
+            created = self.storage.get_billing_request(int(item["id"])) or item
+            return web.json_response(
+                {
+                    "ok": True,
+                    "item": self.build_billing_request_payload(created, "user"),
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def app_billing_request_proof_handler(self, request: web.Request) -> web.StreamResponse:
+        user = self.require_auth(request)
+        request_id_raw = str(request.match_info.get("request_id", "")).strip()
+        if not request_id_raw:
+            return web.json_response({"error": "request_id is required"}, status=400)
+        try:
+            row = self.storage.get_billing_request_for_user(int(user["id"]), int(request_id_raw))
+        except ValueError:
+            return web.json_response({"error": "request_id must be integer"}, status=400)
+        if not row:
+            return web.json_response({"error": f"billing request not found: {request_id_raw}"}, status=404)
+        proof_key = str(row.get("proof_storage_key") or "").strip()
+        if not proof_key:
+            return web.json_response({"error": "proof not found"}, status=404)
+        path = self.resolve_billing_proof_path(proof_key)
+        if not path.is_file():
+            return web.json_response({"error": "proof file missing"}, status=404)
+        response = web.FileResponse(path)
+        response.content_type = str(row.get("proof_content_type") or "application/octet-stream")
+        response.headers["Content-Disposition"] = (
+            f"inline; filename=\"{str(row.get('proof_original_name') or path.name)}\""
+        )
+        return response
+
     async def app_project_access_handler(self, request: web.Request) -> web.Response:
         user = self.require_auth(request)
         project_id_raw = str(request.match_info.get("project_id", "")).strip()
@@ -5081,6 +6170,52 @@ class VirtualsBot:
                         },
                         status=403,
                     )
+            return web.json_response(payload)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def app_project_overview_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        project_id_raw = str(request.match_info.get("project_id", "")).strip()
+        if not project_id_raw:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_id = int(project_id_raw)
+        except ValueError:
+            return web.json_response({"error": "project_id must be integer"}, status=400)
+        project_row = self.storage.get_managed_project(project_id)
+        if not project_row or str(project_row.get("status") or "").lower() not in {"scheduled", "prelaunch", "live", "ended"}:
+            return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+        wallet_rows = [
+            {
+                "wallet": item["wallet"],
+                "name": item.get("name") or "",
+            }
+            for item in self.storage.list_user_wallet_rows(int(user["id"]))
+            if bool(item.get("is_enabled"))
+        ]
+        try:
+            payload = self.build_project_overview_payload(
+                project_row,
+                requested_project=str(project_row.get("name") or ""),
+                tracked_wallet_configs=wallet_rows,
+                view_mode="project",
+            )
+            access = self.build_project_access_payload(user, project_row)
+            if not bool(access.get("isUnlocked")):
+                return web.json_response(
+                    {
+                        "error": "project overview is locked",
+                        "code": "project_locked",
+                        "requestedProject": payload.get("requestedProject") or "",
+                        "hasActiveProject": bool(payload.get("hasActiveProject")),
+                        "activeProjects": payload.get("activeProjects") or [],
+                        "project": payload.get("item"),
+                        "access": access,
+                        "billing": self.build_billing_summary_payload(user),
+                    },
+                    status=403,
+                )
             return web.json_response(payload)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -5264,6 +6399,10 @@ class VirtualsBot:
         items = self.storage.list_user_credit_ledger_rows(int(user_id_raw))
         return web.json_response({"count": len(items), "items": items})
 
+    async def admin_legacy_apis_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        return web.json_response(self.build_legacy_api_payload())
+
     async def admin_user_project_access_handler(self, request: web.Request) -> web.Response:
         self.require_admin(request)
         user_id_raw = str(request.match_info.get("user_id", "")).strip()
@@ -5315,19 +6454,114 @@ class VirtualsBot:
             if credits <= 0:
                 raise ValueError("credits must be positive")
             amount_paid = str(payload.get("amount_paid") or "").strip()
+            payment_proof_ref = str(payload.get("payment_proof_ref") or "").strip()
             note = str(payload.get("note") or "").strip()
-            combined_note = " / ".join([part for part in [f"paid {amount_paid}" if amount_paid else "", note] if part])
             item = self.storage.adjust_user_credits(
                 int(user_id_raw),
                 delta=credits,
                 entry_type="manual_topup",
                 source="admin.credit_topup",
-                note=combined_note or "manual topup",
+                payment_amount=amount_paid,
+                payment_proof_ref=payment_proof_ref,
+                note=note or "manual topup",
                 operator_user_id=int(operator["id"]),
             )
             item["password_set"] = bool(str(item.get("password_hash") or "").strip())
             item.pop("password_hash", None)
             return web.json_response({"ok": True, "item": item})
+        except Exception as e:
+            status = 404 if "not found" in str(e) else 400
+            return web.json_response({"error": str(e)}, status=status)
+
+    async def admin_billing_requests_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        status_filter = str(request.query.get("status", "")).strip().lower()
+        keyword = str(request.query.get("q", "")).strip().lower()
+        limit_raw = str(request.query.get("limit", "")).strip()
+        limit = 200
+        if limit_raw:
+            try:
+                limit = max(1, min(500, int(limit_raw)))
+            except ValueError:
+                return web.json_response({"error": "limit must be integer"}, status=400)
+        try:
+            items = [
+                self.build_billing_request_payload(row, "admin")
+                for row in self.storage.list_billing_requests(
+                    status=status_filter,
+                    query=keyword,
+                    limit=limit,
+                )
+            ]
+            return web.json_response({"ok": True, "count": len(items), "items": items})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def admin_billing_request_proof_handler(self, request: web.Request) -> web.StreamResponse:
+        self.require_admin(request)
+        request_id_raw = str(request.match_info.get("request_id", "")).strip()
+        if not request_id_raw:
+            return web.json_response({"error": "request_id is required"}, status=400)
+        try:
+            row = self.storage.get_billing_request(int(request_id_raw))
+        except ValueError:
+            return web.json_response({"error": "request_id must be integer"}, status=400)
+        if not row:
+            return web.json_response({"error": f"billing request not found: {request_id_raw}"}, status=404)
+        proof_key = str(row.get("proof_storage_key") or "").strip()
+        if not proof_key:
+            return web.json_response({"error": "proof not found"}, status=404)
+        path = self.resolve_billing_proof_path(proof_key)
+        if not path.is_file():
+            return web.json_response({"error": "proof file missing"}, status=404)
+        response = web.FileResponse(path)
+        response.content_type = str(row.get("proof_content_type") or "application/octet-stream")
+        response.headers["Content-Disposition"] = (
+            f"inline; filename=\"{str(row.get('proof_original_name') or path.name)}\""
+        )
+        return response
+
+    async def admin_billing_request_credit_handler(self, request: web.Request) -> web.Response:
+        operator = self.require_admin(request)
+        request_id_raw = str(request.match_info.get("request_id", "")).strip()
+        if not request_id_raw:
+            return web.json_response({"error": "request_id is required"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            credits = parse_optional_int(payload.get("credits"), "credits")
+            amount_paid = str(payload.get("amount_paid") or "").strip() or None
+            admin_note = str(payload.get("admin_note") or "").strip()
+            item = self.storage.credit_billing_request(
+                int(request_id_raw),
+                operator_user_id=int(operator["id"]),
+                credits=credits,
+                amount_paid=amount_paid,
+                admin_note=admin_note,
+            )
+            return web.json_response({"ok": True, "item": self.build_billing_request_payload(item, "admin")})
+        except Exception as e:
+            status = 404 if "not found" in str(e) else 400
+            return web.json_response({"error": str(e)}, status=status)
+
+    async def admin_billing_request_notify_handler(self, request: web.Request) -> web.Response:
+        operator = self.require_admin(request)
+        request_id_raw = str(request.match_info.get("request_id", "")).strip()
+        if not request_id_raw:
+            return web.json_response({"error": "request_id is required"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        try:
+            item = self.storage.mark_billing_request_notified(
+                int(request_id_raw),
+                operator_user_id=int(operator["id"]),
+                admin_note=str(payload.get("admin_note") or "").strip(),
+            )
+            return web.json_response({"ok": True, "item": self.build_billing_request_payload(item, "admin")})
         except Exception as e:
             status = 404 if "not found" in str(e) else 400
             return web.json_response({"error": str(e)}, status=status)
@@ -5772,13 +7006,19 @@ class VirtualsBot:
         return web.FileResponse(index_file)
 
     async def favicon_handler(self, request: web.Request) -> web.Response:
-        return web.FileResponse(self.base_dir / "favicon-vwr.svg")
+        favicon_png = self.base_dir / "favicon" / "favicon-32x32.png"
+        if favicon_png.is_file():
+            return web.FileResponse(favicon_png)
+        return web.FileResponse(self.base_dir / "frontend" / "admin" / "dist" / "brand" / "logo-mark.png")
 
     async def favicon_ico_handler(self, request: web.Request) -> web.Response:
         favicon_ico = self.base_dir / "favicon" / "favicon.ico"
         if favicon_ico.is_file():
             return web.FileResponse(favicon_ico)
-        return web.FileResponse(self.base_dir / "favicon-vwr.svg")
+        fallback_png = self.base_dir / "favicon" / "favicon-32x32.png"
+        if fallback_png.is_file():
+            return web.FileResponse(fallback_png)
+        return web.FileResponse(self.base_dir / "frontend" / "admin" / "dist" / "brand" / "logo-mark.png")
 
     async def wallets_handler(self, request: web.Request) -> web.Response:
         project = request.query.get("project")
@@ -5916,6 +7156,31 @@ class VirtualsBot:
         except ValueError:
             return web.json_response({"error": "limit/within_hours must be integer"}, status=400)
         payload = await self.build_signalhub_upcoming_payload(limit=limit, within_hours=within_hours)
+        user = self.get_request_user(request)
+        if payload.get("items") and user and str(user.get("role") or "").lower() == "admin":
+            managed_projects = self.storage.list_managed_projects()
+            by_signalhub_id = {
+                str(item.get("signalhub_project_id") or "").strip(): item
+                for item in managed_projects
+                if str(item.get("signalhub_project_id") or "").strip()
+            }
+            by_name = {
+                str(item.get("name") or "").strip().upper(): item
+                for item in managed_projects
+                if str(item.get("name") or "").strip()
+            }
+            enriched_items: List[Dict[str, Any]] = []
+            for item in payload.get("items") or []:
+                enriched = dict(item)
+                managed = by_signalhub_id.get(str(item.get("projectId") or "").strip()) or by_name.get(
+                    str(item.get("importName") or "").strip().upper()
+                )
+                enriched["managedProjectId"] = int(managed.get("id") or 0) if managed else None
+                enriched["managedStatus"] = str(managed.get("status") or "") if managed else ""
+                enriched["resolvedEndAt"] = int(managed.get("resolved_end_at") or 0) if managed else None
+                enriched["watchlist"] = bool(managed)
+                enriched_items.append(enriched)
+            payload["items"] = enriched_items
         return web.json_response(payload)
 
     def resolve_cors_origin(self, request_origin: Optional[str]) -> Optional[str]:
@@ -5981,6 +7246,19 @@ class VirtualsBot:
 
             return wrapped
 
+        def legacy_route(handler, *, replacement: str, access: str = "admin"):
+            async def wrapped(request: web.Request) -> web.StreamResponse:
+                if access == "admin":
+                    self.require_admin(request)
+                response = await handler(request)
+                return self.apply_legacy_response_headers(
+                    response,
+                    replacement=replacement,
+                    access=access,
+                )
+
+            return wrapped
+
         middlewares = [auth_middleware]
         if self.cors_allow_origins:
             middlewares.insert(0, cors_middleware)
@@ -6016,8 +7294,15 @@ class VirtualsBot:
         app.router.add_get("/api/auth/me", self.auth_me_handler)
         app.router.add_get("/api/app/meta", self.app_meta_handler)
         app.router.add_get("/api/app/billing/summary", self.app_billing_summary_handler)
+        app.router.add_get("/api/app/billing/requests", self.app_billing_requests_handler)
+        app.router.add_post("/api/app/billing/requests", self.app_billing_request_create_handler)
+        app.router.add_get("/api/app/billing/requests/{request_id}/proof", self.app_billing_request_proof_handler)
+        app.router.add_get("/api/app/notifications", self.app_notifications_handler)
+        app.router.add_post("/api/app/notifications/read-all", self.app_notifications_read_all_handler)
+        app.router.add_post("/api/app/notifications/{notification_id}/read", self.app_notification_read_handler)
         app.router.add_get("/api/app/overview-active", self.app_overview_active_handler)
         app.router.add_get("/api/app/projects", self.app_projects_handler)
+        app.router.add_get("/api/app/projects/{project_id}/overview", self.app_project_overview_handler)
         app.router.add_get("/api/app/projects/{project_id}/access", self.app_project_access_handler)
         app.router.add_post("/api/app/projects/{project_id}/unlock", self.app_project_unlock_handler)
         app.router.add_get("/api/app/signalhub", self.app_signalhub_handler)
@@ -6070,40 +7355,45 @@ class VirtualsBot:
         app.router.add_post("/api/admin/users/{user_id}/credits/topup", self.admin_user_credit_topup_handler)
         app.router.add_post("/api/admin/users/{user_id}/wallets/{wallet_id}/status", self.admin_user_wallet_status_handler)
         app.router.add_delete("/api/admin/users/{user_id}/wallets/{wallet_id}", self.admin_user_wallet_delete_handler)
-        app.router.add_get("/meta", self.meta_handler)
-        app.router.add_get("/signalhub/upcoming", self.signalhub_upcoming_handler)
-        app.router.add_get("/launch-configs", self.launch_configs_handler)
-        app.router.add_post("/launch-configs", self.launch_config_upsert_handler)
-        app.router.add_delete("/launch-configs/{name}", self.launch_config_delete_handler)
-        app.router.add_get("/managed-projects", self.managed_projects_handler)
-        app.router.add_get("/managed-projects/{project_id}", self.managed_project_detail_handler)
-        app.router.add_post("/managed-projects", self.managed_project_upsert_handler)
-        app.router.add_delete("/managed-projects/{project_id}", self.managed_project_delete_handler)
-        app.router.add_get("/project-scheduler/status", self.project_scheduler_status_handler)
-        app.router.add_get("/overview-active", self.overview_active_handler)
-        app.router.add_post("/signalhub/watchlist/add", self.signalhub_watch_add_handler)
-        app.router.add_post("/signalhub/watchlist/remove", self.signalhub_watch_remove_handler)
-        app.router.add_post("/signalhub/watchlist/batch-add", self.signalhub_watch_batch_add_handler)
-        app.router.add_post("/signalhub/watchlist/batch-remove", self.signalhub_watch_batch_remove_handler)
-        app.router.add_get("/wallet-configs", self.monitored_wallets_handler)
-        app.router.add_post("/wallet-configs", self.monitored_wallet_add_handler)
-        app.router.add_delete("/wallet-configs/{wallet}", self.monitored_wallet_delete_handler)
-        app.router.add_post("/wallet-recalc", self.wallet_recalc_handler)
-        app.router.add_get("/runtime/db-batch-size", self.runtime_db_batch_size_get_handler)
-        app.router.add_post("/runtime/db-batch-size", self.runtime_db_batch_size_set_handler)
-        app.router.add_get("/runtime/pause", self.runtime_pause_get_handler)
-        app.router.add_post("/runtime/pause", self.runtime_pause_set_handler)
-        app.router.add_post("/runtime/heartbeat", self.runtime_heartbeat_handler)
-        app.router.add_post("/scan-range", self.scan_range_handler)
-        app.router.add_get("/scan-jobs/{job_id}", self.scan_job_detail_handler)
-        app.router.add_post("/scan-jobs/{job_id}/cancel", self.scan_job_cancel_handler)
-        app.router.add_get("/health", self.health_handler)
-        app.router.add_get("/mywallets", self.wallets_handler)
-        app.router.add_get("/mywallets/{addr}", self.wallet_detail_handler)
-        app.router.add_get("/minutes", self.minutes_handler)
-        app.router.add_get("/leaderboard", self.leaderboard_handler)
-        app.router.add_get("/event-delays", self.event_delays_handler)
-        app.router.add_get("/project-tax", self.project_tax_handler)
+        app.router.add_get("/api/admin/billing/requests", self.admin_billing_requests_handler)
+        app.router.add_get("/api/admin/billing/requests/{request_id}/proof", self.admin_billing_request_proof_handler)
+        app.router.add_post("/api/admin/billing/requests/{request_id}/credit", self.admin_billing_request_credit_handler)
+        app.router.add_post("/api/admin/billing/requests/{request_id}/notify", self.admin_billing_request_notify_handler)
+        app.router.add_get("/api/admin/legacy-apis", self.admin_legacy_apis_handler)
+        app.router.add_get("/meta", legacy_route(self.meta_handler, replacement="/api/admin/meta"))
+        app.router.add_get("/signalhub/upcoming", legacy_route(self.signalhub_upcoming_handler, replacement="/api/admin/signalhub"))
+        app.router.add_get("/launch-configs", legacy_route(self.launch_configs_handler, replacement="/api/admin/launch-configs"))
+        app.router.add_post("/launch-configs", legacy_route(self.launch_config_upsert_handler, replacement="/api/admin/launch-configs"))
+        app.router.add_delete("/launch-configs/{name}", legacy_route(self.launch_config_delete_handler, replacement="/api/admin/launch-configs/{name}"))
+        app.router.add_get("/managed-projects", legacy_route(self.managed_projects_handler, replacement="/api/admin/projects"))
+        app.router.add_get("/managed-projects/{project_id}", legacy_route(self.managed_project_detail_handler, replacement="/api/admin/projects"))
+        app.router.add_post("/managed-projects", legacy_route(self.managed_project_upsert_handler, replacement="/api/admin/projects"))
+        app.router.add_delete("/managed-projects/{project_id}", legacy_route(self.managed_project_delete_handler, replacement="/api/admin/projects/{project_id}"))
+        app.router.add_get("/project-scheduler/status", legacy_route(self.project_scheduler_status_handler, replacement="/api/admin/project-scheduler/status"))
+        app.router.add_get("/overview-active", legacy_route(self.overview_active_handler, replacement="/api/admin/overview-active"))
+        app.router.add_post("/signalhub/watchlist/add", legacy_route(self.signalhub_watch_add_handler, replacement="/api/admin/signalhub/watchlist/add"))
+        app.router.add_post("/signalhub/watchlist/remove", legacy_route(self.signalhub_watch_remove_handler, replacement="/api/admin/signalhub/watchlist/remove"))
+        app.router.add_post("/signalhub/watchlist/batch-add", legacy_route(self.signalhub_watch_batch_add_handler, replacement="/api/admin/signalhub/watchlist/batch-add"))
+        app.router.add_post("/signalhub/watchlist/batch-remove", legacy_route(self.signalhub_watch_batch_remove_handler, replacement="/api/admin/signalhub/watchlist/batch-remove"))
+        app.router.add_get("/wallet-configs", legacy_route(self.monitored_wallets_handler, replacement="/api/admin/wallets"))
+        app.router.add_post("/wallet-configs", legacy_route(self.monitored_wallet_add_handler, replacement="/api/admin/wallets"))
+        app.router.add_delete("/wallet-configs/{wallet}", legacy_route(self.monitored_wallet_delete_handler, replacement="/api/admin/wallets/{wallet}"))
+        app.router.add_post("/wallet-recalc", legacy_route(self.wallet_recalc_handler, replacement="/api/admin/wallet-recalc"))
+        app.router.add_get("/runtime/db-batch-size", legacy_route(self.runtime_db_batch_size_get_handler, replacement="/api/admin/runtime/db-batch-size"))
+        app.router.add_post("/runtime/db-batch-size", legacy_route(self.runtime_db_batch_size_set_handler, replacement="/api/admin/runtime/db-batch-size"))
+        app.router.add_get("/runtime/pause", legacy_route(self.runtime_pause_get_handler, replacement="/api/admin/runtime/pause"))
+        app.router.add_post("/runtime/pause", legacy_route(self.runtime_pause_set_handler, replacement="/api/admin/runtime/pause"))
+        app.router.add_post("/runtime/heartbeat", legacy_route(self.runtime_heartbeat_handler, replacement="/api/admin/runtime/heartbeat"))
+        app.router.add_post("/scan-range", legacy_route(self.scan_range_handler, replacement="/api/admin/scan-range"))
+        app.router.add_get("/scan-jobs/{job_id}", legacy_route(self.scan_job_detail_handler, replacement="/api/admin/scan-jobs/{job_id}"))
+        app.router.add_post("/scan-jobs/{job_id}/cancel", legacy_route(self.scan_job_cancel_handler, replacement="/api/admin/scan-jobs/{job_id}/cancel"))
+        app.router.add_get("/health", legacy_route(self.health_handler, replacement="/api/admin/health", access="public"))
+        app.router.add_get("/mywallets", legacy_route(self.wallets_handler, replacement="/api/admin/mywallets"))
+        app.router.add_get("/mywallets/{addr}", legacy_route(self.wallet_detail_handler, replacement="/api/admin/mywallets/{addr}"))
+        app.router.add_get("/minutes", legacy_route(self.minutes_handler, replacement="/api/admin/minutes"))
+        app.router.add_get("/leaderboard", legacy_route(self.leaderboard_handler, replacement="/api/admin/leaderboard"))
+        app.router.add_get("/event-delays", legacy_route(self.event_delays_handler, replacement="/api/admin/event-delays"))
+        app.router.add_get("/project-tax", legacy_route(self.project_tax_handler, replacement="/api/admin/project-tax"))
         return app
 
     async def run(self) -> None:

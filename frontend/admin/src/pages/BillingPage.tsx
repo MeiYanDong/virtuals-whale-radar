@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Coins, QrCode, Sparkles, WalletCards } from "lucide-react";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, BellDot, Coins, QrCode, Sparkles, WalletCards } from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { dashboardApi } from "@/api/dashboard-api";
 import { queryKeys } from "@/api/query-keys";
@@ -18,29 +19,59 @@ import {
 } from "@/components/ui/dialog";
 import { formatCompactNumber } from "@/lib/format";
 
+const VISIBLE_NOTIFICATION_TYPES = new Set([
+  "credit:signup_bonus",
+  "credit:manual_topup",
+  "credit:manual_adjustment",
+  "credit:project_unlock",
+  "billing_request_credited",
+]);
+
 export function BillingPage() {
+  const queryClient = useQueryClient();
   const [selectedPlanId, setSelectedPlanId] = useState("starter");
   const [contactOpen, setContactOpen] = useState(false);
+
   const billingQuery = useQuery({
     queryKey: queryKeys.appBillingSummary,
     queryFn: () => dashboardApi.app.getBillingSummary(),
   });
+  const activityQuery = useQuery({
+    queryKey: queryKeys.appNotifications(12),
+    queryFn: () => dashboardApi.app.getNotifications(12),
+  });
+  const activityItems = useMemo(
+    () => (activityQuery.data?.items ?? []).filter((item) => VISIBLE_NOTIFICATION_TYPES.has(item.type)),
+    [activityQuery.data?.items],
+  );
+
+  const markNotificationReadMutation = useMutation({
+    mutationFn: async (notificationId: number) => dashboardApi.app.markNotificationRead(notificationId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["app-notifications"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.appBillingSummary }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.appMeta }),
+      ]);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   if (billingQuery.isLoading) {
-    return <LoadingState label="正在加载积分与 Billing 信息..." />;
+    return <LoadingState label="正在加载积分与充值信息..." />;
   }
 
   if (billingQuery.isError || !billingQuery.data) {
     return (
       <div className="space-y-6">
         <PageHeader
-          eyebrow="Billing"
-          title="积分与 Billing"
-          description="当前无法读取积分摘要或联系方式配置。"
+          eyebrow="Recharge"
+          title="积分与充值"
+          description="当前无法读取积分摘要或联系方式。"
         />
         <EmptyState
-          title="Billing 信息加载失败"
-          description="请检查 `/api/app/billing/summary` 是否可用，以及后端是否提供联系方式二维码资源。"
+          title="积分信息加载失败"
+          description="请稍后刷新重试。如果问题持续存在，再联系我处理。"
         />
       </div>
     );
@@ -69,9 +100,9 @@ export function BillingPage() {
       </Alert>
 
       <PageHeader
-        eyebrow="Billing"
-        title="积分与 Billing"
-        description="项目 Overview 详细数据按项目首次解锁扣分。充值先走线下联系，管理员确认后手动补积分。"
+        eyebrow="Recharge"
+        title="积分与充值"
+        description="先看余额，再决定要不要补分。推荐把积分留给你真正想持续观察的项目。"
       />
 
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
@@ -81,13 +112,13 @@ export function BillingPage() {
               <Badge variant="secondary">积分账户</Badge>
               <h2 className="text-3xl font-semibold tracking-[-0.05em]">当前剩余 {summary.credit_balance} 积分</h2>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                每个项目的 Overview 详细数据首次解锁消耗 10 积分。解锁成功后，该项目永久可读。
+                每个项目的实时看板首次解锁消耗 10 积分。解锁成功后，这个项目以后都能继续看。
               </p>
             </div>
             <div className="rounded-[24px] border border-primary/15 bg-white/72 px-5 py-4 text-right">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">推荐套餐</div>
               <div className="mt-2 text-lg font-semibold">{selectedPlan?.label ?? "10 积分 / 10 元"}</div>
-              <div className="mt-1 text-sm text-muted-foreground">付款后联系管理员手动到账</div>
+              <div className="mt-1 text-sm text-muted-foreground">付款确认后会手动补分到账</div>
             </div>
           </div>
 
@@ -95,38 +126,38 @@ export function BillingPage() {
             <MetricCard
               label="当前积分"
               value={String(summary.credit_balance)}
-              hint="可用于解锁新的项目 Overview。"
+              hint="建议只解锁你真正想长期盯的盘面。"
               tone={summary.credit_balance > 0 ? "success" : "warning"}
             />
             <MetricCard
               label="累计消耗"
               value={String(summary.credit_spent_total)}
-              hint="仅统计项目解锁实际消耗的积分。"
+              hint="只统计你真正用来解锁项目的积分。"
             />
             <MetricCard
               label="已解锁项目"
               value={String(summary.unlocked_project_count)}
-              hint="这些项目的 Overview 已永久可读。"
+              hint="这些项目以后都能直接打开实时看板。"
             />
           </div>
         </div>
 
         <SectionCard
           title="积分规则"
-          description="当前只保留最小可售闭环，不接微信支付。"
+          description="先免费体验，再决定把积分花在哪些项目上。"
         >
           <div className="space-y-3">
             <div className="flex items-center gap-3 rounded-[22px] border border-border bg-white/80 px-4 py-4">
               <Coins className="size-5 text-primary" />
-              <div className="text-sm">新用户注册赠送 20 积分。</div>
+              <div className="text-sm">新用户注册默认赠送 20 积分。</div>
             </div>
             <div className="flex items-center gap-3 rounded-[22px] border border-border bg-white/80 px-4 py-4">
               <Sparkles className="size-5 text-primary" />
-              <div className="text-sm">每个项目首次解锁消耗 10 积分，解锁后永久可看。</div>
+              <div className="text-sm">每个项目首次解锁消耗 10 积分，解锁后这个盘面以后都能继续看。</div>
             </div>
             <div className="flex items-center gap-3 rounded-[22px] border border-border bg-white/80 px-4 py-4">
               <WalletCards className="size-5 text-primary" />
-              <div className="text-sm">线下付款完成后，管理员会手动给账号补积分。</div>
+              <div className="text-sm">微信付款后直接联系我，我会手动把积分补到你的账号里。</div>
             </div>
           </div>
         </SectionCard>
@@ -135,7 +166,7 @@ export function BillingPage() {
       <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <SectionCard
           title="充值方案"
-          description="点击任一方案后，右侧会锁定对应的联系方式卡片。"
+          description="先选套餐，再扫码联系。当前不需要你在 App 内额外提交付款截图。"
         >
           <div className="grid gap-4 md:grid-cols-2">
             {summary.plans.map((plan) => {
@@ -200,18 +231,18 @@ export function BillingPage() {
               <div className="flex aspect-square items-center justify-center rounded-[22px] bg-[linear-gradient(180deg,rgba(242,248,243,0.98),rgba(220,232,199,0.72))]">
                 <img
                   src={summary.contact_qr_url}
-                  alt="Billing 联系二维码"
+                  alt="联系二维码"
                   className="size-full rounded-[18px] object-cover"
                 />
               </div>
             </div>
             <div className="space-y-4">
               <div className="inline-flex items-center gap-2 rounded-full border border-border bg-white/80 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                <QrCode className="size-4 text-primary" />
-                扫码联系
+                        <QrCode className="size-4 text-primary" />
+                        扫码联系
               </div>
               <div className="space-y-2">
-                <div className="text-lg font-semibold tracking-[-0.03em]">付款后联系管理员手动补积分</div>
+                <div className="text-lg font-semibold tracking-[-0.03em]">付款后联系我手动补积分</div>
                 <p className="text-sm leading-6 text-muted-foreground">{summary.contact_hint}</p>
               </div>
               <div className="rounded-[24px] border border-border bg-muted/70 px-4 py-4 text-sm text-muted-foreground">
@@ -223,19 +254,97 @@ export function BillingPage() {
         </SectionCard>
       </section>
 
+      <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+        <SectionCard
+          title="到账说明"
+          description="整个流程很轻，不需要你重复上传截图。"
+        >
+          <div className="space-y-3">
+            <div className="rounded-[22px] border border-border bg-white/80 px-4 py-4 text-sm text-muted-foreground">
+              第一步：先看好你要盯的项目，再决定补多少积分。
+            </div>
+            <div className="rounded-[22px] border border-border bg-white/80 px-4 py-4 text-sm text-muted-foreground">
+              第二步：选好套餐后扫码联系，微信付款完成即可。
+            </div>
+            <div className="rounded-[22px] border border-border bg-white/80 px-4 py-4 text-sm text-muted-foreground">
+              第三步：我会手动给你的账号补积分，到账后你就能继续解锁项目。
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          title="最近通知"
+          description="这里只保留和账户直接相关的提醒：注册赠送、积分到账、人工调账和项目解锁。"
+        >
+          {activityItems.length ? (
+            <div className="space-y-3">
+              {activityItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-[22px] border border-border bg-white/80 px-4 py-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <BellDot className="size-4 text-primary" />
+                      <div className="text-sm font-medium">{item.title}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={item.isRead ? "secondary" : "success"}>
+                        {item.isRead ? "已读" : "未读"}
+                      </Badge>
+                      <Badge
+                        variant={
+                          item.kind === "warning"
+                            ? "warning"
+                            : item.kind === "success"
+                              ? "success"
+                              : "secondary"
+                        }
+                      >
+                        {item.delta > 0 ? `+${item.delta}` : item.delta}
+                      </Badge>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.body}</p>
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span>{new Date(item.createdAt * 1000).toLocaleString("zh-CN")}</span>
+                    {!item.isRead ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void markNotificationReadMutation.mutateAsync(item.id)}
+                        disabled={markNotificationReadMutation.isPending}
+                      >
+                        标记已读
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              compact
+              title="当前还没有账户提醒"
+              description="注册赠送、充值到账和项目解锁后，这里会自动出现账户动态。"
+            />
+          )}
+        </SectionCard>
+      </section>
+
       <Dialog open={contactOpen} onOpenChange={setContactOpen}>
         <DialogContent className="max-w-[720px]">
           <DialogHeader>
-            <DialogTitle>联系运营完成线下付款</DialogTitle>
+            <DialogTitle>扫码联系我补积分</DialogTitle>
             <DialogDescription>
-              当前选中：{selectedPlan?.label ?? "10 积分 / 10 元"}。扫码联系后，付款完成由管理员手动补积分。
+              当前选中：{selectedPlan?.label ?? "10 积分 / 10 元"}。付款完成后，我会手动把积分补到你的账号里。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-6 md:grid-cols-[260px_1fr] md:items-center">
             <div className="rounded-[28px] border border-border bg-white/80 p-4 shadow-sm">
               <img
                 src={summary.contact_qr_url}
-                alt="Billing 联系二维码"
+                alt="联系二维码"
                 className="aspect-square w-full rounded-[20px] object-cover"
               />
             </div>

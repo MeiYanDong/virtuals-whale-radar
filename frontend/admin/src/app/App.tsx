@@ -126,22 +126,23 @@ export function App() {
                 <Route path="signalhub" element={<InboxPage />} />
                 <Route path="wallets" element={<WalletsPage />} />
                 <Route path="users" element={<UsersPage />} />
+                <Route path="operations" element={<Navigate to="../users" replace />} />
                 <Route path="settings" element={<SettingsPage />} />
                 <Route path="inbox" element={<Navigate to="../signalhub" replace />} />
-                <Route path="operations" element={<Navigate to="../settings" replace />} />
               </Route>
             </Route>
 
             <Route element={<ProtectedRoute role="user" />}>
               <Route path="/app" element={<UserShell />}>
                 <Route index element={<AppDefaultRoute />} />
-              <Route path="overview" element={<OverviewPage />} />
-              <Route path="projects" element={<ProjectsPage />} />
-              <Route path="signalhub" element={<InboxPage />} />
-              <Route path="wallets" element={<WalletsPage />} />
-              <Route path="billing" element={<BillingPage />} />
+                <Route path="overview" element={<OverviewPage />} />
+                <Route path="projects" element={<ProjectsPage />} />
+                <Route path="projects/:projectId" element={<OverviewPage />} />
+                <Route path="signalhub" element={<InboxPage />} />
+                <Route path="wallets" element={<WalletsPage />} />
+                <Route path="billing" element={<BillingPage />} />
+              </Route>
             </Route>
-          </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

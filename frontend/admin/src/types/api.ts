@@ -67,6 +67,7 @@ export interface AppMetaResponse {
   credit_spent_total: number;
   credit_granted_total: number;
   unlocked_project_count: number;
+  unread_notification_count: number;
   visible_project_statuses: string[];
   has_active_project: boolean;
   default_path: string;
@@ -336,6 +337,7 @@ export interface OverviewActiveProjectItem {
 
 export interface OverviewActiveResponse {
   ok: boolean;
+  viewMode?: "active" | "project";
   requestedProject: string;
   hasActiveProject: boolean;
   activeProjects: OverviewActiveProjectOption[];
@@ -368,11 +370,68 @@ export interface BillingSummaryResponse {
   credit_spent_total: number;
   credit_granted_total: number;
   unlocked_project_count: number;
+  pending_request_count: number;
+  unread_notification_count: number;
   plans: BillingPlan[];
   contact_qr_url: string;
   contact_hint: string;
   notice: string;
   referral_url: string;
+}
+
+export interface AppNotificationItem {
+  id: number;
+  title: string;
+  body: string;
+  kind: "success" | "warning" | "info" | "accent";
+  delta: number;
+  type: string;
+  projectName: string | null;
+  createdAt: number;
+  isRead: boolean;
+  readAt: number | null;
+  actionUrl?: string | null;
+  sourceId?: number | null;
+}
+
+export interface AppNotificationsResponse {
+  ok: boolean;
+  count: number;
+  unreadCount: number;
+  items: AppNotificationItem[];
+}
+
+export interface BillingRequestItem {
+  id: number;
+  user_id?: number;
+  userNickname?: string | null;
+  userEmail?: string | null;
+  plan_id: string;
+  requested_credits: number;
+  payment_amount: string;
+  note: string;
+  proof_original_name: string;
+  proof_content_type: string;
+  proof_size: number;
+  proof_url: string | null;
+  status: "pending_review" | "credited" | "notified";
+  status_label: string;
+  admin_note: string;
+  credited_credit_ledger_id: number | null;
+  operator_user_id?: number | null;
+  operatorNickname?: string | null;
+  operatorEmail?: string | null;
+  created_at: number;
+  updated_at: number;
+  reviewed_at: number | null;
+  credited_at: number | null;
+  notified_at: number | null;
+}
+
+export interface BillingRequestsResponse {
+  ok: boolean;
+  count: number;
+  items: BillingRequestItem[];
 }
 
 export interface ProjectAccessResponse {
@@ -467,11 +526,26 @@ export interface CreditLedgerItem {
   source: string;
   project_id: number | null;
   project_name?: string | null;
+  payment_amount: string;
+  payment_proof_ref: string;
   note: string;
   operator_user_id: number | null;
   operator_nickname?: string | null;
   operator_email?: string | null;
   created_at: number;
+}
+
+export interface LegacyApiItem {
+  path: string;
+  replacement: string;
+  access: "admin" | "public";
+  state: "compatible";
+}
+
+export interface LegacyApisResponse {
+  ok: boolean;
+  count: number;
+  items: LegacyApiItem[];
 }
 
 export interface UserProjectAccessItem {

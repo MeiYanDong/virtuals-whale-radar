@@ -17,6 +17,8 @@
 - 新增管理员 `Users` 页面，用于查看、禁用、重置用户并查看所有用户钱包。
 - 将钱包数据拆成“管理员全局钱包”和“用户私有钱包”两套模型。
 - 新增“积分解锁 + Billing + 管理员手动加减积分”的轻量商业闭环。
+- 保留用户通知中心，但当前充值处理走“微信付款 + 管理员在 Users 内手动入账”的轻流程。
+- 保留 `Projects` 里的 `ended` 项目，并允许用户回看历史项目详情。
 
 ## 2. 已确认决策
 
@@ -69,10 +71,13 @@
 - 新用户注册赠送 `20` 积分。
 - 充值方案固定为：
   - `10 积分 = 10 元`
-  - `100 积分 = 90 元`
+- `50 积分 = 40 元`
 - 用户端 `Projects` 与 `SignalHub` 列表免费可看，但未解锁项目的 `Overview` 详细数据不可看。
 - 用户积分不足时，点击未解锁项目应引导到 `Billing`。
 - `Billing` 页面展示联系方式二维码，不接入在线支付。
+- 用户通知支持 `未读 / 已读 / 全部已读`，并在顶栏显示未读提醒。
+- 当前不单独设置充值申请流程；用户微信付款后，管理员直接在 `Users` 页面手动补积分。
+- `billing_requests` / 付款凭证附件能力保留为备用后端能力，但不是当前产品主流程。
 - `Billing` 顶部固定展示邀请文案与注册链接：
   - 文案：`Virtuals 新用户使用邀请码注册，后续付费一律五折`
   - 链接：`https://app.virtuals.io/referral?code=LFfW5x`
@@ -99,14 +104,15 @@ flowchart LR
 
   C --> K["Admin Wallets<br/>system wallets"]
   C --> L["Users Page<br/>users / user wallets / reset password"]
-  C --> M["Settings<br/>runtime / db batch / scheduler"]
+  C --> R["Settings<br/>runtime / db batch / scheduler"]
 
   D --> N["User Wallets<br/>user private wallets"]
   D --> O["User Overview / Projects / SignalHub<br/>read-only + credit gate"]
-  D --> P["User Billing<br/>credits / plans / contact QR"]
+  D --> P["User Billing<br/>credits / plans / contact QR / notifications"]
 
   Q["Credit Ledger + Project Access"] --> O
   Q --> P
+  S["User Notifications + Hidden Billing Requests"] --> P
 
   K --> J
   N --> O
@@ -313,6 +319,12 @@ Whale Board
 - 用户点击未解锁项目进入 `Overview` 时：
   - 若积分足够，弹确认框后解锁
   - 若积分不足，引导去 `Billing`
+- 对于 `ended` 项目，用户端从 `Projects` 进入的是“历史项目详情”页面，而不是活跃项目 `Overview`
+- 历史项目详情需要展示：
+  - 分钟消耗 `SpentV`
+  - Whale Board
+  - 追踪钱包持仓
+  - 交易录入延迟
 
 ## 5.3 SignalHub
 
@@ -422,7 +434,11 @@ Whale Board
   - 已解锁项目数
 - 套餐卡：
   - `10 积分 / 10 元`
-  - `100 积分 / 90 元`
+- `50 积分 / 40 元`
+- 最近通知区：
+  - 展示未读 / 已读状态
+  - 支持单条已读
+  - 支持全部已读
 - 联系方式二维码：
   - 点击购买只展示二维码与联系说明
   - 管理员线下确认后手动加积分
@@ -726,6 +742,7 @@ sequenceDiagram
   - `app/meta`
   - `app/overview-active`
   - `app/projects`
+  - `app/projects/{id}/overview`
   - `app/signalhub`
 - 用户私有钱包接口：
   - `app/wallets`
@@ -795,6 +812,7 @@ sequenceDiagram
   - `start_at + 99 分钟`
 - 调度器能在开始前 30 分钟自动预热
 - `Overview` 能按活跃项目展示主图、Whale Board、追踪钱包、延迟
+- `ended` 项目会继续保留在 `Projects`，并且用户可打开历史详情回看对应的主图、Whale Board、追踪钱包和延迟
 - 用户端 `Wallets` 只能看到并编辑自己的钱包
 - 管理员端 `Users` 能看到用户摘要、钱包数量、密码状态和用户钱包
 - 用户注册后自动获得 `20` 积分
@@ -950,6 +968,7 @@ CREATE INDEX IF NOT EXISTS idx_user_project_access_project_id
 | `GET` | `/api/app/meta` | User | 无 | `user`, `wallet_count`, `credit_balance`, `default_path`, `has_active_project` |
 | `GET` | `/api/app/overview-active` | User | `project?` | 若已解锁则返回活跃项目头信息、SpentV、Whale Board、当前用户钱包持仓、延迟；若未解锁则返回 `403 project_locked` |
 | `GET` | `/api/app/projects` | User | `status?`, `q?` | `count`, `items`，每项包含 `is_unlocked`, `unlock_cost`, `can_unlock_now` |
+| `GET` | `/api/app/projects/{id}/overview` | User | 无 | 返回指定项目详情聚合；支持 `scheduled / prelaunch / live / ended`，若未解锁则返回 `403 project_locked` |
 | `GET` | `/api/app/signalhub` | User | `limit?`, `within_hours?`, `q?` | `count`, `items`，每项包含 `is_unlocked`, `unlock_cost` |
 | `GET` | `/api/app/wallets` | User | 无 | `count`, `items` |
 | `POST` | `/api/app/wallets` | User | `wallet`, `name` | `ok`, `item`, `count`, `items` |
@@ -1067,6 +1086,7 @@ User Projects
 项目列表
 项目名称 / 开始时间 / 结束时间 / 详情 / 状态 / 解锁状态 / 展开
 展开后仅查看代币地址、内盘地址、更新时间、状态
+`ended` 项目可进入历史详情页查看分钟图、大户榜、追踪钱包和延迟
 无新建、删除、编辑、采集、回扫
 ```
 
@@ -1091,7 +1111,7 @@ User Billing
 [打开注册链接]
 当前积分 / 累计消耗积分 / 已解锁项目数
 10 积分 / 10 元 [联系付款]
-100 积分 / 90 元 [联系付款]
+50 积分 / 40 元 [联系付款]
 联系方式二维码
 付款后联系管理员手动加积分
 ```
@@ -1111,3 +1131,73 @@ Admin Users
 详情抽屉：
 基本资料 / 密码状态 / 当前积分 / 累计消耗 / 积分流水 / 已解锁项目 / 用户钱包列表 / 禁用用户 / 启用用户 / 重置密码 / 加积分 / 扣积分
 ```
+
+## 18. 运营效率补充
+
+### 18.1 新增数据表
+
+```sql
+CREATE TABLE IF NOT EXISTS billing_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    plan_id TEXT NOT NULL DEFAULT '',
+    requested_credits INTEGER NOT NULL,
+    payment_amount TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    proof_storage_key TEXT NOT NULL DEFAULT '',
+    proof_original_name TEXT NOT NULL DEFAULT '',
+    proof_content_type TEXT NOT NULL DEFAULT '',
+    proof_size INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending_review',
+    admin_note TEXT NOT NULL DEFAULT '',
+    credited_credit_ledger_id INTEGER,
+    operator_user_id INTEGER,
+    reviewed_at INTEGER,
+    credited_at INTEGER,
+    notified_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'info',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    delta INTEGER NOT NULL DEFAULT 0,
+    project_id INTEGER,
+    action_url TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL DEFAULT '',
+    source_id INTEGER,
+    is_read INTEGER NOT NULL DEFAULT 0,
+    read_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+```
+
+### 18.2 备用接口
+
+| Method | Route | Auth | 用途 |
+|---|---|---|---|
+| `GET` | `/api/app/billing/requests` | User | 查看自己的充值申请记录 |
+| `POST` | `/api/app/billing/requests` | User | 上传图片凭证并创建充值申请 |
+| `GET` | `/api/app/billing/requests/{request_id}/proof` | User | 查看自己的付款凭证附件 |
+| `GET` | `/api/app/notifications` | User | 拉取站内通知列表 |
+| `POST` | `/api/app/notifications/{notification_id}/read` | User | 将单条通知标记为已读 |
+| `POST` | `/api/app/notifications/read-all` | User | 全部标记为已读 |
+| `GET` | `/api/admin/billing/requests` | Admin | 查看所有充值申请 |
+| `GET` | `/api/admin/billing/requests/{request_id}/proof` | Admin | 查看凭证附件 |
+| `POST` | `/api/admin/billing/requests/{request_id}/credit` | Admin | 将申请推进到 `已入账` |
+| `POST` | `/api/admin/billing/requests/{request_id}/notify` | Admin | 将申请推进到 `已通知用户` |
+
+说明：
+
+- 这组接口和表结构当前保留为备用能力，不作为默认产品流程暴露给用户。
+- 当前默认流程是：用户微信付款 -> 管理员在 `Users` 页面执行手动入账 -> 用户收到到账提醒。
+
+### 18.3 验收链路
+
+- 当前主流程：用户微信付款后，管理员在 `Users` 页面手动入账，用户收到“充值积分已到账”提醒
+- 备用流程：若未来确实需要工单化，再启用 `billing_requests` / proof / notify 这组隐藏能力

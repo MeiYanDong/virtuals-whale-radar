@@ -30,7 +30,7 @@ import {
   parseDatetimeLocalValue,
   toDatetimeLocalValue,
 } from "@/lib/format";
-import type { ManagedProjectItem, ManagedProjectUpsertPayload, SignalHubItem } from "@/types/api";
+import type { AppMetaResponse, ManagedProjectItem, ManagedProjectUpsertPayload, SignalHubItem } from "@/types/api";
 
 type WatchEditorState = {
   existingId?: number;
@@ -142,6 +142,7 @@ export function InboxPage() {
   const navigate = useNavigate();
   const { viewer, meta, refreshAll } = useShell();
   const isAdmin = viewer === "admin";
+  const appMeta = !isAdmin ? (meta as AppMetaResponse | null) : null;
   const adminMeta = meta && "signalHub" in meta ? meta : null;
   const [keyword, setKeyword] = useState("");
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
@@ -250,6 +251,9 @@ export function InboxPage() {
 
   const selectedRows = rows.filter((item) => selectedProjectIds.includes(item.projectId));
   const allSelected = rows.length > 0 && rows.every((item) => selectedProjectIds.includes(item.projectId));
+  const unlockableCount = !isAdmin
+    ? rows.filter((item) => item.managedProjectId && !item.isUnlocked && item.canUnlockNow).length
+    : 0;
 
   const confirmUnwatch = (count: number) => {
     if (count <= 0) return false;
@@ -284,8 +288,8 @@ export function InboxPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="SignalHub"
-        title="关注列表入口"
-        description={isAdmin ? "筛选 upcoming 项目并加入或取消关注。" : "只读查看 upcoming 项目与当前同步状态。"}
+        title={isAdmin ? "关注列表入口" : "即将发射"}
+        description={isAdmin ? "筛选 upcoming 项目并加入或取消关注。" : "先浏览即将发射的项目，挑出真正值得提前盯的候选。"}
         actions={
           isAdmin ? (
             <>
@@ -322,12 +326,19 @@ export function InboxPage() {
         </Alert>
       ) : null}
 
+      {!isAdmin && appMeta ? (
+        <Alert>
+          当前剩余 {appMeta.credit_balance} 积分。已纳入管理且可立即解锁的项目有 {unlockableCount} 个，
+          先从这里挑项目，再回项目列表解锁真正想持续观察的盘面。
+        </Alert>
+      ) : null}
+
       <SectionCard
         title="upcoming 项目"
         description={
           isAdmin
             ? "勾选后立即写入 managed_projects；字段完整项目进入 scheduled，字段缺失项目进入 draft。"
-            : "这里仅展示 upcoming 项目，不提供勾选、关注或取消关注能力。"
+            : "这里先看名字、时间、详情和完整度，适合用来筛一遍值得继续跟的项目。"
         }
         actions={
           <div className="relative w-full min-w-[260px] max-w-[360px]">
@@ -342,11 +353,11 @@ export function InboxPage() {
         }
       >
         {inboxQuery.isLoading ? (
-          <LoadingState label="正在拉取 upcoming 项目..." />
+          <LoadingState label={isAdmin ? "正在拉取 upcoming 项目..." : "正在加载即将发射项目..."} />
         ) : inboxQuery.isError ? (
           <EmptyState
-            title="SignalHub 拉取失败"
-            description="当前无法加载 upcoming 项目，请确认 SignalHub 服务在线并检查 `/signalhub/upcoming` 接口。"
+            title="即将发射项目加载失败"
+            description={isAdmin ? "当前无法加载 upcoming 项目，请确认 SignalHub 服务在线并检查 `/signalhub/upcoming` 接口。" : "现在暂时拉不到新的项目列表，稍后刷新再看。"}
           />
         ) : rows.length ? (
           <div className="overflow-x-auto">
@@ -422,7 +433,7 @@ export function InboxPage() {
                           <Badge variant={watchStateVariant(managed)}>{watchStateLabel(managed)}</Badge>
                           {!isAdmin && item.managedProjectId ? (
                             <Badge variant={item.isUnlocked ? "success" : "warning"}>
-                              {item.isUnlocked ? "Overview 已解锁" : `待解锁 · ${item.unlockCost ?? 10} 积分`}
+                              {item.isUnlocked ? "实时看板已解锁" : `待解锁 · ${item.unlockCost ?? 10} 积分`}
                             </Badge>
                           ) : null}
                         </div>
@@ -466,11 +477,17 @@ export function InboxPage() {
                               variant="outline"
                               size="sm"
                               onClick={() =>
-                                void navigate(item.isUnlocked ? "/app/projects" : "/app/billing")
+                                void navigate(
+                                  item.isUnlocked
+                                    ? `/app/projects?project=${encodeURIComponent(item.importName)}`
+                                    : item.canUnlockNow
+                                      ? `/app/projects?project=${encodeURIComponent(item.importName)}`
+                                      : "/app/billing",
+                                )
                               }
                             >
                               <Link2 className="size-4" />
-                              {item.isUnlocked ? "打开项目" : "去 Billing"}
+                              {item.isUnlocked ? "打开项目" : item.canUnlockNow ? "去项目列表解锁" : "去充值页"}
                             </Button>
                           ) : null}
                         </div>
@@ -514,7 +531,7 @@ export function InboxPage() {
                     <p className="text-sm leading-6 text-muted-foreground">
                       {isAdmin
                         ? "这里可以在加入关注前补充地址、调整时间窗口，保存后项目会直接同步到 Projects 页面。"
-                        : "这里展示项目详情和当前解析结果，用户视图不提供保存、关注或取消关注能力。"}
+                        : "这里先看项目详情和解析结果，判断它值不值得进入你的观察列表。"}
                     </p>
                   </div>
 

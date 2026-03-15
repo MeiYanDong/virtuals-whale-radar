@@ -16,13 +16,14 @@ import { toast } from "sonner";
 import { dashboardApi } from "@/api/dashboard-api";
 import { queryKeys } from "@/api/query-keys";
 import { useShell } from "@/app/shell-context";
+import { Alert } from "@/components/ui/alert";
 import { EmptyState, LoadingState, PageHeader, SectionCard } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { formatAddress, formatDateTime, toDatetimeLocalValue, parseDatetimeLocalValue } from "@/lib/format";
-import type { ManagedProjectItem } from "@/types/api";
+import type { AppMetaResponse, ManagedProjectItem } from "@/types/api";
 
 type EditorState = {
   id?: number;
@@ -84,7 +85,7 @@ function deriveProjectStatus(currentStatus: string, hasPool: boolean) {
 
 function confirmProjectUnlock(item: ManagedProjectItem) {
   return window.confirm(
-    `解锁 ${item.name} 的 Overview 将消耗 ${item.unlock_cost ?? 10} 积分，解锁后永久可读。确认继续吗？`,
+    `解锁 ${item.name} 的项目详情将消耗 ${item.unlock_cost ?? 10} 积分，解锁后以后都能直接查看。确认继续吗？`,
   );
 }
 
@@ -93,6 +94,7 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const { viewer, meta, refreshAll, setSelectedProject } = useShell();
   const isAdmin = viewer === "admin";
+  const appMeta = !isAdmin ? (meta as AppMetaResponse | null) : null;
   const [expandedIds, setExpandedIds] = useState<number[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -109,11 +111,15 @@ export function ProjectsPage() {
   const unlockMutation = useMutation({
     mutationFn: async (item: ManagedProjectItem) => dashboardApi.app.unlockProject(item.id),
     onSuccess: async (_, item) => {
-      const isActiveOverview = ["prelaunch", "live"].includes(String(item.status).toLowerCase());
+      const status = String(item.status).toLowerCase();
+      const isActiveOverview = ["prelaunch", "live"].includes(status);
+      const destination = isActiveOverview
+        ? `/app/overview?project=${encodeURIComponent(item.name)}`
+        : `/app/projects/${item.id}`;
       toast.success(
         isActiveOverview
-          ? `${item.name} 已解锁，当前项目 Overview 可永久查看。`
-          : `${item.name} 已解锁，项目进入预热或发射时即可查看 Overview。`,
+          ? `${item.name} 已解锁，现在就能直接打开实时看板。`
+          : `${item.name} 已解锁，现在就能打开项目详情回看历史盘面。`,
       );
       if (isActiveOverview) {
         setSelectedProject(item.name);
@@ -126,9 +132,7 @@ export function ProjectsPage() {
         queryClient.invalidateQueries({ queryKey: queryKeys.appOverviewActive(item.name) }),
         refreshAll(),
       ]);
-      if (isActiveOverview) {
-        void navigate(`/app/overview?project=${encodeURIComponent(item.name)}`);
-      }
+      void navigate(destination);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -242,6 +246,9 @@ export function ProjectsPage() {
   };
 
   const allSelected = projects.length > 0 && selectedIds.length === projects.length;
+  const unlockableCount = !isAdmin
+    ? projects.filter((item) => !item.is_unlocked && item.can_unlock_now).length
+    : 0;
 
   const confirmDelete = (count: number) => {
     if (count <= 0) return false;
@@ -264,7 +271,7 @@ export function ProjectsPage() {
         description={
           isAdmin
             ? "管理受管项目的新增、删除、编辑、采集和回扫。"
-            : "免费查看项目基础信息；Overview 详细数据按项目首次解锁扣分。"
+            : "先看项目时间、详情和状态，再决定要不要解锁实时看板。"
         }
         actions={
           isAdmin ? (
@@ -289,12 +296,19 @@ export function ProjectsPage() {
         }
       />
 
+      {!isAdmin && appMeta ? (
+        <Alert>
+          当前剩余 {appMeta.credit_balance} 积分，可立即解锁 {unlockableCount} 个项目的实时看板。
+          建议先挑你真正想持续观察的项目，再把积分花出去。
+        </Alert>
+      ) : null}
+
       <SectionCard
         title="项目列表"
         description={
           isAdmin
             ? "每行一个项目；展开后才显示详细字段和运行控制，避免把所有低频表单摊在首屏。"
-            : "每行一个项目；展开后查看基础字段，并决定是否解锁该项目的 Overview。"
+            : "每行一个项目；展开后先看基础信息，觉得值得盯再解锁实时看板。"
         }
         actions={
           isAdmin && projects.length ? (
@@ -340,7 +354,7 @@ export function ProjectsPage() {
                           <Badge variant="secondary">{item.source || "manual"}</Badge>
                           {!isAdmin ? (
                             <Badge variant={item.is_unlocked ? "success" : "warning"}>
-                              {item.is_unlocked ? "Overview 已解锁" : `未解锁 · ${item.unlock_cost ?? 10} 积分`}
+                              {item.is_unlocked ? "实时看板已解锁" : `待解锁 · ${item.unlock_cost ?? 10} 积分`}
                             </Badge>
                           ) : null}
                         </div>
@@ -443,11 +457,19 @@ export function ProjectsPage() {
                                 variant="secondary"
                                 onClick={() => {
                                   setSelectedProject(item.name);
-                                  void navigate(`/app/overview?project=${encodeURIComponent(item.name)}`);
+                                  const status = String(item.status).toLowerCase();
+                                  const destination = ["prelaunch", "live"].includes(status)
+                                    ? `/app/overview?project=${encodeURIComponent(item.name)}`
+                                    : `/app/projects/${item.id}`;
+                                  void navigate(destination);
                                 }}
                               >
                                 <PlayCircle className="size-4" />
-                                打开 Overview
+                                {["prelaunch", "live"].includes(String(item.status).toLowerCase())
+                                  ? "打开实时看板"
+                                  : String(item.status).toLowerCase() === "ended"
+                                    ? "查看历史详情"
+                                    : "查看项目详情"}
                               </Button>
                             ) : (
                               <Button
@@ -458,7 +480,7 @@ export function ProjectsPage() {
                                 disabled={!item.can_unlock_now || unlockMutation.isPending}
                               >
                                 <PlayCircle className="size-4" />
-                                解锁 Overview
+                                解锁项目详情
                               </Button>
                             )}
                             <Button
@@ -466,7 +488,7 @@ export function ProjectsPage() {
                               onClick={() => void navigate("/app/billing")}
                             >
                               <Plus className="size-4" />
-                              去 Billing
+                              去充值页
                             </Button>
                           </>
                         )}
@@ -483,7 +505,7 @@ export function ProjectsPage() {
             description={
               isAdmin
                 ? "先去 SignalHub 勾选关注，或者手动创建一个项目，之后它们会统一出现在这里。"
-                : "当前没有对外展示的项目。"
+                : "当前还没有可看的项目，稍后回来看看，或先去“即将发射”挑候选项目。"
             }
             action={
               isAdmin ? (

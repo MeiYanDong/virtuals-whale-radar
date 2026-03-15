@@ -3,14 +3,17 @@ import type {
   AdminUserDetail,
   AdminUsersResponse,
   AppMetaResponse,
+  AppNotificationsResponse,
   AuthMeResponse,
   AuthSuccessResponse,
+  BillingRequestsResponse,
   BillingSummaryResponse,
   CreditLedgerItem,
   DbBatchResponse,
   EventDelayRow,
   HealthResponse,
   LaunchConfig,
+  LegacyApisResponse,
   LeaderboardRow,
   ManagedProjectItem,
   ManagedProjectUpsertPayload,
@@ -244,6 +247,12 @@ export const dashboardApi = {
         `/api/admin/users/${userId}/project-access`,
       );
     },
+    getLegacyApis() {
+      return requestJson<LegacyApisResponse>("/api/admin/legacy-apis");
+    },
+    getBillingRequests(params?: { status?: string; q?: string; limit?: number }) {
+      return requestJson<BillingRequestsResponse>("/api/admin/billing/requests", { params });
+    },
     setUserStatus(userId: number, status: "active" | "disabled") {
       return requestJson<{ ok: boolean; item: AdminUserDetail }>(`/api/admin/users/${userId}/status`, {
         method: "POST",
@@ -268,9 +277,33 @@ export const dashboardApi = {
         },
       );
     },
-    topupUserCredits(userId: number, payload: { credits: number; amount_paid?: string; note?: string }) {
+    topupUserCredits(
+      userId: number,
+      payload: { credits: number; amount_paid?: string; payment_proof_ref?: string; note?: string },
+    ) {
       return requestJson<{ ok: boolean; item: AdminUserDetail }>(
         `/api/admin/users/${userId}/credits/topup`,
+        {
+          method: "POST",
+          body: payload,
+        },
+      );
+    },
+    creditBillingRequest(
+      requestId: number,
+      payload: { credits?: number; amount_paid?: string; admin_note?: string },
+    ) {
+      return requestJson<{ ok: boolean; item: BillingRequestsResponse["items"][number] }>(
+        `/api/admin/billing/requests/${requestId}/credit`,
+        {
+          method: "POST",
+          body: payload,
+        },
+      );
+    },
+    notifyBillingRequest(requestId: number, payload: { admin_note?: string }) {
+      return requestJson<{ ok: boolean; item: BillingRequestsResponse["items"][number] }>(
+        `/api/admin/billing/requests/${requestId}/notify`,
         {
           method: "POST",
           body: payload,
@@ -303,6 +336,43 @@ export const dashboardApi = {
     getBillingSummary() {
       return requestJson<BillingSummaryResponse>("/api/app/billing/summary");
     },
+    getNotifications(limit = 12) {
+      return requestJson<AppNotificationsResponse>("/api/app/notifications", {
+        params: { limit },
+      });
+    },
+    markNotificationRead(notificationId: number) {
+      return requestJson<{ ok: boolean; item: AppNotificationsResponse["items"][number]; unreadCount: number }>(
+        `/api/app/notifications/${notificationId}/read`,
+        {
+          method: "POST",
+          body: {},
+        },
+      );
+    },
+    markAllNotificationsRead() {
+      return requestJson<{ ok: boolean; updated: number; unreadCount: number }>(
+        "/api/app/notifications/read-all",
+        {
+          method: "POST",
+          body: {},
+        },
+      );
+    },
+    getBillingRequests(limit = 50) {
+      return requestJson<BillingRequestsResponse>("/api/app/billing/requests", {
+        params: { limit },
+      });
+    },
+    createBillingRequest(formData: FormData) {
+      return requestJson<{ ok: boolean; item: BillingRequestsResponse["items"][number] }>(
+        "/api/app/billing/requests",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+    },
     getOverviewActive(project = "") {
       return requestJson<OverviewActiveResponse>("/api/app/overview-active", {
         params: project ? { project } : {},
@@ -310,6 +380,9 @@ export const dashboardApi = {
     },
     getProjects(params?: { status?: string; q?: string }) {
       return requestJson<ManagedProjectsResponse>("/api/app/projects", { params });
+    },
+    getProjectOverview(projectId: number) {
+      return requestJson<OverviewActiveResponse>(`/api/app/projects/${projectId}/overview`);
     },
     getProjectAccess(projectId: number) {
       return requestJson<ProjectAccessResponse>(`/api/app/projects/${projectId}/access`);
