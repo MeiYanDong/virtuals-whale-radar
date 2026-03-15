@@ -246,6 +246,10 @@ server {
 
     client_max_body_size 20m;
 
+    location = / {
+        return 302 /auth/login;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:${APP_PORT};
         proxy_http_version 1.1;
