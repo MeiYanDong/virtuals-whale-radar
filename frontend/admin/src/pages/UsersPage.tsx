@@ -69,14 +69,21 @@ export function UsersPage() {
   const [topupAmount, setTopupAmount] = useState("");
   const [topupNote, setTopupNote] = useState("");
   const [manualAdjustOpen, setManualAdjustOpen] = useState(false);
+  const normalizedKeyword = keyword.trim();
+  const normalizedStatusFilter = statusFilter.trim().toLowerCase();
+  const normalizedRoleFilter = roleFilter.trim().toLowerCase();
 
   const usersQuery = useQuery({
-    queryKey: queryKeys.adminUsers,
+    queryKey: queryKeys.adminUsersList(
+      normalizedKeyword,
+      normalizedStatusFilter,
+      normalizedRoleFilter,
+    ),
     queryFn: () =>
       dashboardApi.admin.getUsers({
-        q: keyword || undefined,
-        status: statusFilter || undefined,
-        role: roleFilter || undefined,
+        q: normalizedKeyword || undefined,
+        status: normalizedStatusFilter || undefined,
+        role: normalizedRoleFilter || undefined,
       }),
   });
 
