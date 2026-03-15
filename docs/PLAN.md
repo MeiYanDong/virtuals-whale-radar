@@ -189,6 +189,9 @@ Whale Board
 - 默认区间：`[项目开始时间, 项目结束时间]`
 - 图表的时间窗口由调度器自动同步
 - 图表位于项目头下面，作为页面主视觉
+- `minute_agg.minute_key` 的定义固定为：`该分钟起点的 Unix 秒级时间戳`
+- 例如 `19:30:17` 的交易会归入 `19:30:00` 对应的 `minute_key`
+- 前后端都必须把它当作“已对齐到分钟的秒级时间戳”使用，不能再额外乘以或除以 `60`
 
 #### C. Whale Board
 
@@ -733,6 +736,7 @@ sequenceDiagram
   - Whale Board
   - 追踪钱包持仓
   - 录入延迟
+- 分钟消耗图数据中的 `minute_key` 语义固定为“分钟起点的 Unix 秒级时间戳”，不是分钟编号
 - 认证接口：
   - `register`
   - `login`
@@ -966,9 +970,9 @@ CREATE INDEX IF NOT EXISTS idx_user_project_access_project_id
 | Method | Route | Auth | Request | Response |
 |---|---|---|---|---|
 | `GET` | `/api/app/meta` | User | 无 | `user`, `wallet_count`, `credit_balance`, `default_path`, `has_active_project` |
-| `GET` | `/api/app/overview-active` | User | `project?` | 若已解锁则返回活跃项目头信息、SpentV、Whale Board、当前用户钱包持仓、延迟；若未解锁则返回 `403 project_locked` |
+| `GET` | `/api/app/overview-active` | User | `project?` | 若已解锁则返回活跃项目头信息、SpentV、Whale Board、当前用户钱包持仓、延迟；其中 `minutes[].minute_key` 表示“分钟起点的 Unix 秒级时间戳”；若未解锁则返回 `403 project_locked` |
 | `GET` | `/api/app/projects` | User | `status?`, `q?` | `count`, `items`，每项包含 `is_unlocked`, `unlock_cost`, `can_unlock_now` |
-| `GET` | `/api/app/projects/{id}/overview` | User | 无 | 返回指定项目详情聚合；支持 `scheduled / prelaunch / live / ended`，若未解锁则返回 `403 project_locked` |
+| `GET` | `/api/app/projects/{id}/overview` | User | 无 | 返回指定项目详情聚合；支持 `scheduled / prelaunch / live / ended`；其中 `minutes[].minute_key` 表示“分钟起点的 Unix 秒级时间戳”；若未解锁则返回 `403 project_locked` |
 | `GET` | `/api/app/signalhub` | User | `limit?`, `within_hours?`, `q?` | `count`, `items`，每项包含 `is_unlocked`, `unlock_cost` |
 | `GET` | `/api/app/wallets` | User | 无 | `count`, `items` |
 | `POST` | `/api/app/wallets` | User | `wallet`, `name` | `ok`, `item`, `count`, `items` |

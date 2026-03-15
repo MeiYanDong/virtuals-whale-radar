@@ -108,15 +108,15 @@ function MinuteBars({
                   <div
                     className="w-full rounded-t-[10px] bg-[linear-gradient(180deg,#77b9af_0%,#248e93_100%)] shadow-[0_10px_28px_rgba(36,142,147,0.18)]"
                     style={{ height }}
-                    title={`${formatDateTime(item.key * 60)} / ${formatCurrency(item.value)}`}
+                    title={`${formatDateTime(item.key)} / ${formatCurrency(item.value)}`}
                   />
                 </div>
               );
             })}
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-            <span>{formatShortDateTime(chartItems[0]?.key * 60)}</span>
-            <span>{formatShortDateTime(chartItems[chartItems.length - 1]?.key * 60)}</span>
+            <span>{formatShortDateTime(chartItems[0]?.key)}</span>
+            <span>{formatShortDateTime(chartItems[chartItems.length - 1]?.key)}</span>
           </div>
         </div>
       </div>

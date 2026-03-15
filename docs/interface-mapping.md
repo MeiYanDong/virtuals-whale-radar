@@ -87,7 +87,7 @@
 | `GET /scan-jobs/{id}` | 保留 | `GET /api/admin/scan-jobs/{id}` | 仅管理员使用 |
 | `POST /scan-jobs/{id}/cancel` | 保留 | `POST /api/admin/scan-jobs/{id}/cancel` | 仅管理员使用 |
 | `GET /mywallets` | 保留 | `GET /api/admin/mywallets` / `GET /api/app/wallets/positions` | 管理员与用户已拆分 |
-| `GET /minutes` | 保留 | `GET /api/admin/minutes` | 当前仅管理员需要 |
+| `GET /minutes` | 保留 | `GET /api/admin/minutes` | 当前仅管理员需要；`minute_key` 表示“分钟起点的 Unix 秒级时间戳” |
 | `GET /leaderboard` | 保留 | `GET /api/admin/leaderboard` | 当前仅管理员需要 |
 | `GET /event-delays` | 保留 | `GET /api/admin/event-delays` | 当前仅管理员需要 |
 | `GET /project-tax` | 保留 | `GET /api/admin/project-tax` | 当前仅管理员需要 |
@@ -109,6 +109,7 @@
 | --- | --- | --- |
 | `/app/overview` | `GET /api/app/overview-active` | `POST /api/app/projects/{id}/unlock` |
 | `/app/projects` | `GET /api/app/projects` | 无 |
+| `/app/projects/:projectId` | `GET /api/app/projects/{id}/overview` | 无 |
 | `/app/signalhub` | `GET /api/app/signalhub` | 无 |
 | `/app/wallets` | `GET /api/app/wallets`、`GET /api/app/wallets/positions` | `POST /api/app/wallets`、`PATCH /api/app/wallets/{id}`、`DELETE /api/app/wallets/{id}` |
 | `/app/billing` | `GET /api/app/billing/summary`、`GET /api/app/notifications` | `POST /api/app/notifications/{id}/read`、`POST /api/app/notifications/read-all` |
@@ -123,6 +124,19 @@
 | `/admin/wallets` | `GET /api/admin/wallets`、`GET /api/admin/mywallets` | `POST /api/admin/wallets`、`DELETE /api/admin/wallets/{wallet}`、`POST /api/admin/wallet-recalc` |
 | `/admin/users` | `GET /api/admin/users`、`GET /api/admin/users/{id}`、`GET /api/admin/users/{id}/wallets`、`GET /api/admin/users/{id}/credit-ledger`、`GET /api/admin/users/{id}/project-access` | `POST /api/admin/users/{id}/status`、`POST /api/admin/users/{id}/reset-password`、`POST /api/admin/users/{id}/credits/adjust`、`POST /api/admin/users/{id}/credits/topup`、`POST /api/admin/users/{id}/wallets/{wallet_id}/status`、`DELETE /api/admin/users/{id}/wallets/{wallet_id}` |
 | `/admin/settings` | `GET /api/admin/meta`、`GET /api/admin/health`、`GET /api/admin/project-scheduler/status`、`GET /api/admin/runtime/pause`、`GET /api/admin/runtime/db-batch-size`、`GET /api/admin/legacy-apis` | `POST /api/admin/runtime/pause`、`POST /api/admin/runtime/heartbeat`、`POST /api/admin/runtime/db-batch-size` |
+
+## 分钟图字段说明
+
+- `minute_agg.minute_key` 不是“第几分钟”的编号。
+- 它表示：`该分钟起点的 Unix 秒级时间戳`。
+- 例子：
+  - 一笔发生在 `19:30:17` 的交易，会被聚合到 `19:30:00` 这一桶
+  - 对应的 `minute_key` 就是 `19:30:00` 的 Unix 秒级时间戳
+- 相关接口：
+  - `GET /api/admin/minutes`
+  - `GET /api/app/overview-active`
+  - `GET /api/app/projects/{id}/overview`
+- 前端展示时，应直接把 `minute_key` 当作秒级时间戳格式化，不应再额外乘以或除以 `60`。
 
 ## Legacy 收口规则
 

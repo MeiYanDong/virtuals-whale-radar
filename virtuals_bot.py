@@ -3153,20 +3153,13 @@ class Storage:
         return [dict(r) for r in rows]
 
     def query_minutes(self, project: str, from_ts: int, to_ts: int) -> List[Dict[str, Any]]:
-        from_key = int(from_ts)
-        to_key = int(to_ts)
-        # minute_agg.minute_key stores unix-minute buckets, while callers often pass second timestamps.
-        if from_key > 100_000_000:
-            from_key = from_key // 60
-        if to_key > 100_000_000:
-            to_key = to_key // 60
         rows = self.conn.execute(
             """
             SELECT * FROM minute_agg
             WHERE project = ? AND minute_key >= ? AND minute_key <= ?
             ORDER BY minute_key ASC
             """,
-            (project, from_key, to_key),
+            (project, from_ts, to_ts),
         ).fetchall()
         return [dict(r) for r in rows]
 
