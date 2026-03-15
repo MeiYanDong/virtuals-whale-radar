@@ -60,12 +60,16 @@ log() {
   echo "[virtuals-prod] $*"
 }
 
+as_app_user() {
+  runuser -u "${APP_USER}" -- "$@"
+}
+
 install_packages() {
   log "Installing apt packages"
   apt-get update -y
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
     git curl ca-certificates gnupg nginx certbot python3-certbot-nginx \
-    python3 python3-venv python3-pip sqlite3
+    python3 python3-venv python3-pip sqlite3 openssl
 }
 
 install_node() {
@@ -117,21 +121,21 @@ sync_repo() {
 
 setup_python() {
   log "Installing Python dependencies for main app"
-  sudo -u "${APP_USER}" python3 -m venv "${APP_DIR}/.venv"
-  sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install --upgrade pip
-  sudo -u "${APP_USER}" "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
+  as_app_user python3 -m venv "${APP_DIR}/.venv"
+  as_app_user "${APP_DIR}/.venv/bin/pip" install --upgrade pip
+  as_app_user "${APP_DIR}/.venv/bin/pip" install -r "${APP_DIR}/requirements.txt"
 
   log "Installing Python dependencies for SignalHub"
-  sudo -u "${APP_USER}" python3 -m venv "${APP_DIR}/SignalHub-main/.venv"
-  sudo -u "${APP_USER}" "${APP_DIR}/SignalHub-main/.venv/bin/pip" install --upgrade pip
-  sudo -u "${APP_USER}" "${APP_DIR}/SignalHub-main/.venv/bin/pip" install -r "${APP_DIR}/SignalHub-main/requirements.txt"
+  as_app_user python3 -m venv "${APP_DIR}/SignalHub-main/.venv"
+  as_app_user "${APP_DIR}/SignalHub-main/.venv/bin/pip" install --upgrade pip
+  as_app_user "${APP_DIR}/SignalHub-main/.venv/bin/pip" install -r "${APP_DIR}/SignalHub-main/requirements.txt"
 }
 
 build_frontend() {
   log "Building frontend"
   pushd "${APP_DIR}/frontend/admin" >/dev/null
-  sudo -u "${APP_USER}" npm ci
-  sudo -u "${APP_USER}" npm run build
+  as_app_user npm ci
+  as_app_user npm run build
   popd >/dev/null
 }
 
