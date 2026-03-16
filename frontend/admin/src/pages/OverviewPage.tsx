@@ -24,6 +24,23 @@ function detailPageTitle(status: string) {
   return String(status || "").toLowerCase() === "ended" ? "历史项目详情" : "项目详情";
 }
 
+function detailStatusLabel(status: string) {
+  const key = String(status || "").toLowerCase();
+  if (key === "prelaunch") return "预热中";
+  if (key === "live") return "发射中";
+  if (key === "ended") return "已结束";
+  if (key === "scheduled") return "待开始";
+  return "待补全";
+}
+
+function detailStatusVariant(status: string) {
+  const key = String(status || "").toLowerCase();
+  if (key === "live") return "success" as const;
+  if (key === "prelaunch") return "warning" as const;
+  if (key === "ended") return "secondary" as const;
+  return "default" as const;
+}
+
 function confirmProjectUnlock(projectName: string, unlockCost: number) {
   return window.confirm(
     `解锁 ${projectName} 的项目详情将消耗 ${unlockCost} 积分，解锁后以后都能直接查看。确认继续吗？`,
@@ -148,7 +165,11 @@ export function OverviewPage() {
       <div className="space-y-6">
         <PageHeader
           eyebrow={isProjectDetailView ? "Projects" : "Overview"}
-          title={isProjectDetailView ? "解锁后查看项目详情" : "解锁后查看实时看板"}
+          title={
+            isProjectDetailView
+              ? `${lockedProject.name} · 解锁后查看项目详情`
+              : `${lockedProject.name} · 解锁后查看实时看板`
+          }
           description={
             isProjectDetailView
               ? "这个项目的历史盘面已经准备好了，但完整详情还没解锁。"
@@ -308,11 +329,21 @@ export function OverviewPage() {
       <div className="space-y-6">
         <PageHeader
           eyebrow="Projects"
-          title={detailPageTitle(currentItem.projectedStatus || currentItem.status)}
+          title={`${currentItem.name} · ${detailPageTitle(currentItem.projectedStatus || currentItem.status)}`}
           description={
             viewer === "admin"
               ? "这里保留项目在整个发射窗口内的分钟消耗、大户榜、追踪钱包和录入延迟，方便管理员复盘。"
               : "这里保留项目在整个发射窗口内的分钟消耗、大户榜、追踪钱包和录入延迟，方便第二天回看。"
+          }
+          actions={
+            <>
+              <Badge variant={detailStatusVariant(currentItem.projectedStatus || currentItem.status)}>
+                {detailStatusLabel(currentItem.projectedStatus || currentItem.status)}
+              </Badge>
+              <span className="self-center text-sm text-muted-foreground">
+                发射窗口 {formatDateTime(currentItem.startAt)} - {formatDateTime(currentItem.resolvedEndAt)}
+              </span>
+            </>
           }
         />
 
@@ -376,10 +407,13 @@ export function OverviewPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Overview"
-        title="实时发射看板"
+        title={`${currentItem.name} · 实时发射看板`}
         description="这里集中看正在发射项目的资金变化、大户榜和你的钱包持仓。"
         actions={
           <>
+            <Badge variant={detailStatusVariant(currentItem.projectedStatus || currentItem.status)}>
+              {detailStatusLabel(currentItem.projectedStatus || currentItem.status)}
+            </Badge>
             <div className="min-w-[240px]">
               <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 活跃项目

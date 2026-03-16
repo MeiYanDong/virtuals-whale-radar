@@ -9,8 +9,9 @@ import {
   ScanSearch,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -40,6 +41,8 @@ type EditorState = {
   source: string;
   status: string;
 };
+
+const PROJECTS_ENDED_COLLAPSED_STORAGE_KEY = "vwr-projects-ended-collapsed";
 
 function projectStatusLabel(status: string) {
   const key = String(status || "").toLowerCase();
@@ -113,7 +116,11 @@ export function ProjectsPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editorState, setEditorState] = useState<EditorState>(buildEditorState());
   const [keyword, setKeyword] = useState("");
-  const [endedCollapsed, setEndedCollapsed] = useState(true);
+  const [endedCollapsed, setEndedCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const stored = window.localStorage.getItem(PROJECTS_ENDED_COLLAPSED_STORAGE_KEY);
+    return stored === null ? true : stored !== "false";
+  });
 
   const managedProjectsQuery = useQuery({
     queryKey: isAdmin ? queryKeys.managedProjects : queryKeys.appProjects,
@@ -133,6 +140,12 @@ export function ProjectsPage() {
     () => filteredProjects.filter((item) => isEndedProject(item)),
     [filteredProjects],
   );
+  const hasSearchKeyword = keyword.trim().length > 0;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PROJECTS_ENDED_COLLAPSED_STORAGE_KEY, String(endedCollapsed));
+  }, [endedCollapsed]);
 
   const unlockMutation = useMutation({
     mutationFn: async (item: ManagedProjectItem) => dashboardApi.app.unlockProject(item.id),
@@ -520,37 +533,67 @@ export function ProjectsPage() {
         }
         actions={
           <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative w-full min-w-[260px] max-w-[360px]">
+            <div className="relative w-full min-w-[260px] max-w-[380px]">
               <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                className="pl-10"
+                className="pl-10 pr-10"
                 value={keyword}
                 onChange={(event) => setKeyword(event.target.value)}
                 placeholder="搜索项目名、详情链接、代币地址或内盘地址"
               />
+              {hasSearchKeyword ? (
+                <button
+                  type="button"
+                  className="absolute right-3 top-1/2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition hover:bg-[color:var(--surface-soft-strong)] hover:text-foreground"
+                  aria-label="清空搜索"
+                  onClick={() => setKeyword("")}
+                >
+                  <X className="size-4" />
+                </button>
+              ) : null}
             </div>
-            {isAdmin && filteredProjects.length ? (
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={() =>
-                    setSelectedIds((current) =>
-                      allSelected
-                        ? current.filter((id) => !filteredProjects.some((item) => item.id === id))
-                        : Array.from(new Set([...current, ...filteredProjects.map((item) => item.id)])),
-                    )
-                  }
-                />
-                全选当前结果
-              </label>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+              <span>
+                当前筛选命中 {filteredProjects.length} 个项目，其中 {activeProjects.length} 个待执行/进行中，
+                {endedProjects.length} 个已结束
+              </span>
+              {isAdmin && filteredProjects.length ? (
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={() =>
+                      setSelectedIds((current) =>
+                        allSelected
+                          ? current.filter((id) => !filteredProjects.some((item) => item.id === id))
+                          : Array.from(new Set([...current, ...filteredProjects.map((item) => item.id)])),
+                      )
+                    }
+                  />
+                  全选当前结果{selectedIds.length ? `（已选 ${selectedIds.length}）` : ""}
+                </label>
+              ) : null}
+            </div>
           </div>
         }
       >
         {projects.length ? (
           filteredProjects.length ? (
             <div className="space-y-6">
+              {hasSearchKeyword && activeProjects.length === 0 && endedProjects.length > 0 && endedCollapsed ? (
+                <Alert>
+                  当前关键词只命中了历史项目。已结束项目默认折叠，展开后就能直接查看这些历史结果。
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="ml-3 h-auto px-2 py-1 text-primary"
+                    onClick={() => setEndedCollapsed(false)}
+                  >
+                    立即展开历史项目
+                  </Button>
+                </Alert>
+              ) : null}
+
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>

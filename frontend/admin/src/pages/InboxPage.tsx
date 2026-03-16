@@ -9,6 +9,7 @@ import {
   Search,
   Square,
   Trash2,
+  X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -261,6 +262,9 @@ export function InboxPage() {
   const selectedRows = rows.filter((item) => selectedProjectIds.includes(item.projectId));
   const visibleRows = rows.slice(0, visibleCount);
   const allSelected = rows.length > 0 && rows.every((item) => selectedProjectIds.includes(item.projectId));
+  const watchedRowsCount = rows.filter((item) => Boolean(resolveManaged(item))).length;
+  const completeRowsCount = rows.filter((item) => isItemComplete(item, resolveManaged(item))).length;
+  const hasActiveFilters = keyword.trim().length > 0 || timeFilterHours !== 72 || watchedOnly;
   const unlockableCount = !isAdmin
     ? rows.filter((item) => item.managedProjectId && !item.isUnlocked && item.canUnlockNow).length
     : 0;
@@ -288,6 +292,26 @@ export function InboxPage() {
     if (!ids.length) return;
     if (!confirmUnwatch(ids.length)) return;
     await unwatchMutation.mutateAsync(ids);
+  };
+
+  const resetFilters = () => {
+    setKeyword("");
+    setTimeFilterHours(72);
+    setWatchedOnly(false);
+    setVisibleCount(12);
+    setSelectedProjectIds([]);
+  };
+
+  const openManagedProject = (managed: ManagedProjectItem) => {
+    if (isAdmin) {
+      void navigate(`/admin/projects/${managed.id}`);
+      return;
+    }
+
+    const destination = ["prelaunch", "live"].includes(String(managed.status).toLowerCase())
+      ? `/app/overview?project=${encodeURIComponent(managed.name)}`
+      : `/app/projects/${managed.id}`;
+    void navigate(destination);
   };
 
   if (!meta || managedProjectsQuery.isLoading) {
@@ -352,7 +376,7 @@ export function InboxPage() {
         }
         actions={
           <div className="flex w-full flex-col gap-3">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {[
                 { label: "24h", value: 24 },
                 { label: "72h", value: 72 },
@@ -382,18 +406,45 @@ export function InboxPage() {
               >
                 已关注
               </Button>
+              {hasActiveFilters ? (
+                <Button type="button" size="sm" variant="ghost" onClick={resetFilters}>
+                  <X className="size-4" />
+                  重置筛选
+                </Button>
+              ) : null}
             </div>
-            <div className="relative w-full min-w-[260px] max-w-[360px]">
-              <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-10"
-                value={keyword}
-                onChange={(event) => {
-                  setKeyword(event.target.value);
-                  setVisibleCount(12);
-                }}
-                placeholder="搜索项目名、标题或 symbol"
-              />
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="relative w-full min-w-[260px] max-w-[380px]">
+                <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="pl-10 pr-10"
+                  value={keyword}
+                  onChange={(event) => {
+                    setKeyword(event.target.value);
+                    setVisibleCount(12);
+                  }}
+                  placeholder="搜索项目名、标题或 symbol"
+                />
+                {keyword.trim() ? (
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition hover:bg-[color:var(--surface-soft-strong)] hover:text-foreground"
+                    aria-label="清空搜索"
+                    onClick={() => {
+                      setKeyword("");
+                      setVisibleCount(12);
+                    }}
+                  >
+                    <X className="size-4" />
+                  </button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                <span>
+                  当前窗口命中 {rows.length} 个项目，已关注 {watchedRowsCount} 个，字段完整 {completeRowsCount} 个
+                </span>
+                {isAdmin && selectedRows.length ? <span>已选 {selectedRows.length} 个待批量操作</span> : null}
+              </div>
             </div>
           </div>
         }
@@ -561,7 +612,11 @@ export function InboxPage() {
         ) : (
           <EmptyState
             title="当前没有符合条件的项目"
-            description="SignalHub 当前窗口内没有 upcoming 数据，或当前关键词没有命中任何项目。"
+            description={
+              watchedOnly
+                ? "当前筛选窗口里还没有已关注项目，试试取消“已关注”或切到更长时间窗口。"
+                : "SignalHub 当前窗口内没有 upcoming 数据，或当前关键词没有命中任何项目。"
+            }
           />
         )}
       </SectionCard>
@@ -723,6 +778,20 @@ export function InboxPage() {
 
               <div className="border-t border-border bg-card/96 px-6 py-4 backdrop-blur">
                 <div className="flex justify-end gap-3">
+                  {isAdmin && resolveManaged(sheetItem) ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const managed = resolveManaged(sheetItem);
+                        if (!managed) return;
+                        setSheetOpen(false);
+                        openManagedProject(managed);
+                      }}
+                    >
+                      <Link2 className="size-4" />
+                      打开项目页
+                    </Button>
+                  ) : null}
                   <Button variant="ghost" onClick={() => setSheetOpen(false)}>
                     关闭
                   </Button>
