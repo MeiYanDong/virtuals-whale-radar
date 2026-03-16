@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckSquare,
+  ChevronDown,
   ExternalLink,
   Eye,
   Link2,
@@ -145,13 +146,16 @@ export function InboxPage() {
   const appMeta = !isAdmin ? (meta as AppMetaResponse | null) : null;
   const adminMeta = meta && "signalHub" in meta ? meta : null;
   const [keyword, setKeyword] = useState("");
+  const [timeFilterHours, setTimeFilterHours] = useState(72);
+  const [watchedOnly, setWatchedOnly] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(12);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetItem, setSheetItem] = useState<SignalHubItem | null>(null);
   const [editorState, setEditorState] = useState<WatchEditorState | null>(null);
 
-  const signalHubLimit = (adminMeta?.signalHub.upcoming_limit ?? 12) * 2;
-  const signalHubWithinHours = adminMeta?.signalHub.within_hours ?? 72;
+  const signalHubLimit = 50;
+  const signalHubWithinHours = timeFilterHours;
   const signalHubQueryKey = queryKeys.signalHub(signalHubLimit, signalHubWithinHours);
 
   const managedProjectsQuery = useQuery({
@@ -193,12 +197,17 @@ export function InboxPage() {
   const rows = useMemo(() => {
     const search = keyword.trim().toLowerCase();
     return (inboxQuery.data?.items ?? []).filter((item) => {
+      const managed =
+        managedBySignalHubId.get(item.projectId) ?? managedByName.get(item.importName.toUpperCase()) ?? null;
+      if (watchedOnly && !managed) {
+        return false;
+      }
       if (!search) return true;
       return [item.importName, item.name, item.displayTitle, item.symbol]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(search));
     });
-  }, [inboxQuery.data?.items, keyword]);
+  }, [inboxQuery.data?.items, keyword, watchedOnly, managedByName, managedBySignalHubId]);
 
   const watchMutation = useMutation({
     mutationFn: async (payloads: ManagedProjectUpsertPayload[]) => {
@@ -250,6 +259,7 @@ export function InboxPage() {
   };
 
   const selectedRows = rows.filter((item) => selectedProjectIds.includes(item.projectId));
+  const visibleRows = rows.slice(0, visibleCount);
   const allSelected = rows.length > 0 && rows.every((item) => selectedProjectIds.includes(item.projectId));
   const unlockableCount = !isAdmin
     ? rows.filter((item) => item.managedProjectId && !item.isUnlocked && item.canUnlockNow).length
@@ -337,18 +347,54 @@ export function InboxPage() {
         title="upcoming 项目"
         description={
           isAdmin
-            ? "勾选后立即写入 managed_projects；字段完整项目进入 scheduled，字段缺失项目进入 draft。"
-            : "这里先看名字、时间、详情和完整度，适合用来筛一遍值得继续跟的项目。"
+            ? "默认展示 72 小时内的 upcoming 项目；首屏先看 12 条，需要时再继续展开。"
+            : "默认先看 72 小时内的 upcoming 项目；你可以按时间窗口筛一遍，再决定要不要继续跟。"
         }
         actions={
-          <div className="relative w-full min-w-[260px] max-w-[360px]">
-            <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-10"
-              value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
-              placeholder="搜索项目名、标题或 symbol"
-            />
+          <div className="flex w-full flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: "24h", value: 24 },
+                { label: "72h", value: 72 },
+                { label: "7天", value: 168 },
+              ].map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={timeFilterHours === option.value ? "default" : "secondary"}
+                  onClick={() => {
+                    setTimeFilterHours(option.value);
+                    setVisibleCount(12);
+                  }}
+                >
+                  {option.label}
+                </Button>
+              ))}
+              <Button
+                type="button"
+                size="sm"
+                variant={watchedOnly ? "default" : "secondary"}
+                onClick={() => {
+                  setWatchedOnly((current) => !current);
+                  setVisibleCount(12);
+                }}
+              >
+                已关注
+              </Button>
+            </div>
+            <div className="relative w-full min-w-[260px] max-w-[360px]">
+              <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-10"
+                value={keyword}
+                onChange={(event) => {
+                  setKeyword(event.target.value);
+                  setVisibleCount(12);
+                }}
+                placeholder="搜索项目名、标题或 symbol"
+              />
+            </div>
           </div>
         }
       >
@@ -375,7 +421,7 @@ export function InboxPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((item) => {
+                {visibleRows.map((item) => {
                   const managed = resolveManaged(item);
                   const complete = isItemComplete(item, managed);
                   return (
@@ -497,6 +543,20 @@ export function InboxPage() {
                 })}
               </TableBody>
             </Table>
+            {rows.length > visibleRows.length ? (
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/70 pt-4">
+                <div className="text-sm text-muted-foreground">
+                  已显示 {visibleRows.length} / {rows.length} 个项目
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() => setVisibleCount((current) => Math.min(current + 12, rows.length))}
+                >
+                  <ChevronDown className="size-4" />
+                  查看更多
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <EmptyState

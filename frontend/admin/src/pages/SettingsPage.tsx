@@ -55,14 +55,10 @@ export function SettingsPage() {
 
       <section className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <SectionCard title="Runtime" description="控制全局采集状态，并查看当前运行摘要。">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-3">
             <Alert>
               运行状态：
               <span className="ml-2 font-medium">{health.runtimePaused ? "Paused" : "Live"}</span>
-            </Alert>
-            <Alert>
-              UI 心跳：
-              <span className="ml-2 font-medium">{health.runtimeUiOnline ? "Online" : "Offline"}</span>
             </Alert>
             <Alert>
               Scan Jobs：

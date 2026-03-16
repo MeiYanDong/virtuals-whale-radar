@@ -192,6 +192,9 @@ export const dashboardApi = {
         params: project ? { project } : {},
       });
     },
+    getProjectOverview(projectId: number) {
+      return requestJson<OverviewActiveResponse>(`/api/admin/projects/${projectId}/overview`);
+    },
     createScanJob(project: string | null, startTs: number, endTs: number) {
       return requestJson<{ ok: boolean; jobId: string }>("/api/admin/scan-range", {
         method: "POST",

@@ -602,3 +602,23 @@
 - [x] 生产配置中的 `APP_PUBLIC_BASE_URL` 切换到 `https://virtuals.club`。
 - [x] 验证 `https://virtuals.club/auth/login` 与 `https://www.virtuals.club/auth/login` 返回正常。
 - [x] 验证邮箱注册链接在生产环境改为 HTTPS 域名。
+
+## Phase 29：列表与历史详情收尾
+
+- [x] `Projects` 页面新增关键词搜索。
+- [x] `Projects` 搜索覆盖项目名称、详情链接、代币地址和内盘地址。
+- [x] `Projects` 页面按状态固定分组为：
+  - `待执行与进行中`
+  - `已结束`
+- [x] `已结束` 项目默认折叠。
+- [x] 管理员为项目列表新增“查看仪表盘/历史详情”入口。
+- [x] 新增管理员历史详情路由 `/admin/projects/{id}`。
+- [x] 新增管理员历史详情接口 `/api/admin/projects/{id}/overview`。
+- [x] 管理员可查看 `ended` 项目的分钟图、大户榜、追踪钱包和延迟。
+- [x] `SignalHub` 页面新增快捷时间筛选：`24h / 72h / 7天 / 已关注`。
+- [x] `SignalHub` 页面默认首屏只展示 12 条项目。
+- [x] `SignalHub` 页面新增 `查看更多` 逐步展开更多 upcoming 项目。
+- [x] 从常规 `Settings` 视图移除 `UI 心跳：Online`。
+- [x] 修复 `Billing` 页面二维码顶部被裁切的问题。
+- [x] 修复二维码弹窗中的图片裁切问题。
+- [x] 将深色模式记录为后续独立主题迭代，不在本轮直接上线。

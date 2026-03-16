@@ -232,7 +232,7 @@ export function BillingPage() {
                 <img
                   src={summary.contact_qr_url}
                   alt="联系二维码"
-                  className="size-full rounded-[18px] object-cover"
+                  className="max-h-full max-w-full rounded-[18px] object-contain"
                 />
               </div>
             </div>
@@ -342,11 +342,13 @@ export function BillingPage() {
           </DialogHeader>
           <div className="grid gap-6 md:grid-cols-[260px_1fr] md:items-center">
             <div className="rounded-[28px] border border-border bg-white/80 p-4 shadow-sm">
-              <img
-                src={summary.contact_qr_url}
-                alt="联系二维码"
-                className="aspect-square w-full rounded-[20px] object-cover"
-              />
+              <div className="flex aspect-square items-center justify-center rounded-[22px] bg-[linear-gradient(180deg,rgba(242,248,243,0.98),rgba(220,232,199,0.72))] p-2">
+                <img
+                  src={summary.contact_qr_url}
+                  alt="联系二维码"
+                  className="max-h-full max-w-full rounded-[20px] object-contain"
+                />
+              </div>
             </div>
             <div className="space-y-4">
               <div className="rounded-[24px] border border-border bg-muted/70 px-4 py-4 text-sm text-muted-foreground">

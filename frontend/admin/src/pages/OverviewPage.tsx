@@ -41,21 +41,24 @@ export function OverviewPage() {
     setSelectedProject,
     refreshAll,
   } = useShell();
-  const detailProjectId =
-    viewer === "user" && projectId && /^\d+$/.test(projectId) ? Number.parseInt(projectId, 10) : null;
-  const isProjectDetailView = viewer === "user" && detailProjectId !== null;
-  const hasInvalidProjectId = viewer === "user" && Boolean(projectId) && detailProjectId === null;
+  const detailProjectId = projectId && /^\d+$/.test(projectId) ? Number.parseInt(projectId, 10) : null;
+  const isProjectDetailView = detailProjectId !== null;
+  const hasInvalidProjectId = Boolean(projectId) && detailProjectId === null;
   const projectsHref = viewer === "admin" ? "/admin/projects" : "/app/projects";
 
   const overviewQuery = useQuery({
     queryKey: isProjectDetailView
-      ? queryKeys.appProjectOverview(detailProjectId)
+      ? viewer === "admin"
+        ? queryKeys.adminProjectOverview(detailProjectId)
+        : queryKeys.appProjectOverview(detailProjectId)
       : viewer === "admin"
         ? queryKeys.overviewActive(selectedProject)
         : queryKeys.appOverviewActive(selectedProject),
     queryFn: () => {
       if (isProjectDetailView && detailProjectId !== null) {
-        return dashboardApi.app.getProjectOverview(detailProjectId);
+        return viewer === "admin"
+          ? dashboardApi.admin.getProjectOverview(detailProjectId)
+          : dashboardApi.app.getProjectOverview(detailProjectId);
       }
       return viewer === "admin"
         ? dashboardApi.admin.getOverviewActive(selectedProject)
@@ -267,7 +270,9 @@ export function OverviewPage() {
           title={isProjectDetailView ? "项目详情接口异常" : "实时看板接口异常"}
           description={
             isProjectDetailView
-              ? "请检查 `/api/app/projects/{id}/overview` 是否可访问，以及当前项目是否仍在公开可读列表中。"
+              ? viewer === "admin"
+                ? "请检查 `/api/admin/projects/{id}/overview` 是否可访问，以及该项目是否仍存在于受管项目列表中。"
+                : "请检查 `/api/app/projects/{id}/overview` 是否可访问，以及当前项目是否仍在公开可读列表中。"
               : viewer === "admin"
                 ? "请检查 `/api/admin/overview-active` 是否可访问，以及当前 writer 实例是否正常返回活跃项目聚合数据。"
                 : "请检查 `/api/app/overview-active` 是否可访问，以及当前用户是否已有可读项目。"
@@ -304,7 +309,11 @@ export function OverviewPage() {
         <PageHeader
           eyebrow="Projects"
           title={detailPageTitle(currentItem.projectedStatus || currentItem.status)}
-          description="这里保留项目在整个发射窗口内的分钟消耗、大户榜、追踪钱包和录入延迟，方便第二天回看。"
+          description={
+            viewer === "admin"
+              ? "这里保留项目在整个发射窗口内的分钟消耗、大户榜、追踪钱包和录入延迟，方便管理员复盘。"
+              : "这里保留项目在整个发射窗口内的分钟消耗、大户榜、追踪钱包和录入延迟，方便第二天回看。"
+          }
         />
 
         <ProjectOverviewSections
@@ -317,7 +326,15 @@ export function OverviewPage() {
             <>
               {isRealtimeStatus(currentItem.projectedStatus || currentItem.status) ? (
                 <Button asChild variant="outline">
-                  <Link to={`/app/overview?project=${encodeURIComponent(currentItem.name)}`}>切回实时看板</Link>
+                  <Link
+                    to={
+                      viewer === "admin"
+                        ? `/admin/overview?project=${encodeURIComponent(currentItem.name)}`
+                        : `/app/overview?project=${encodeURIComponent(currentItem.name)}`
+                    }
+                  >
+                    切回实时看板
+                  </Link>
                 </Button>
               ) : null}
               <Button asChild variant="secondary">

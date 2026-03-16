@@ -27,6 +27,7 @@ export const queryKeys = {
   dbBatch: ["runtime-db-batch"] as const,
   projectScheduler: ["project-scheduler-status"] as const,
   overviewActive: (project: string) => ["overview-active", project] as const,
+  adminProjectOverview: (projectId: number) => ["admin-project-overview", projectId] as const,
   appOverviewActive: (project: string) => ["app-overview-active", project] as const,
   scanJob: (jobId: string) => ["scan-job", jobId] as const,
   adminUsers: ["admin-users"] as const,

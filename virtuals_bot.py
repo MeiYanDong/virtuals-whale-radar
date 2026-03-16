@@ -6378,6 +6378,29 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def admin_project_overview_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_id = int(raw_project_id)
+        except ValueError:
+            return web.json_response({"error": "project_id must be integer"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(project_id)
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+            payload = await self.build_project_overview_payload(
+                project_row,
+                requested_project=str(project_row.get("name") or ""),
+                tracked_wallet_configs=self.storage.list_monitored_wallet_rows(),
+                view_mode="project",
+            )
+            return web.json_response(payload)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def auth_me_handler(self, request: web.Request) -> web.Response:
         user = self.get_request_user(request)
         if not user:
@@ -7998,6 +8021,7 @@ class VirtualsBot:
         app.router.add_get("/api/admin/meta", self.admin_meta_handler)
         app.router.add_get("/api/admin/overview-active", admin_only(self.overview_active_handler))
         app.router.add_get("/api/admin/projects", admin_only(self.managed_projects_handler))
+        app.router.add_get("/api/admin/projects/{project_id}/overview", admin_only(self.admin_project_overview_handler))
         app.router.add_post("/api/admin/projects", admin_only(self.managed_project_upsert_handler))
         app.router.add_delete("/api/admin/projects/{project_id}", admin_only(self.managed_project_delete_handler))
         app.router.add_get("/api/admin/signalhub", admin_only(self.signalhub_upcoming_handler))

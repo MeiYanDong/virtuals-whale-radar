@@ -125,6 +125,7 @@ export function App() {
                 <Route index element={<AdminDefaultRoute />} />
                 <Route path="overview" element={<OverviewPage />} />
                 <Route path="projects" element={<ProjectsPage />} />
+                <Route path="projects/:projectId" element={<OverviewPage />} />
                 <Route path="signalhub" element={<InboxPage />} />
                 <Route path="wallets" element={<WalletsPage />} />
                 <Route path="users" element={<UsersPage />} />
