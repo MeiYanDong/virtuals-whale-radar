@@ -244,8 +244,23 @@ export const dashboardApi = {
         params: { project },
       });
     },
-    getUsers(params?: { q?: string; status?: string; role?: string }) {
+    getUsers(params?: { q?: string; status?: string; role?: string; source?: string }) {
       return requestJson<AdminUsersResponse>("/api/admin/users", { params });
+    },
+    createUser(payload: {
+      nickname: string;
+      email: string;
+      password: string;
+      initial_credits?: number;
+      note?: string;
+    }) {
+      return requestJson<{ ok: boolean; item: AdminUserDetail; count: number; items: AdminUsersResponse["items"] }>(
+        "/api/admin/users",
+        {
+          method: "POST",
+          body: payload,
+        },
+      );
     },
     getUserDetail(userId: number) {
       return requestJson<{ ok: boolean; item: AdminUserDetail }>(`/api/admin/users/${userId}`);
@@ -269,10 +284,34 @@ export const dashboardApi = {
     getBillingRequests(params?: { status?: string; q?: string; limit?: number }) {
       return requestJson<BillingRequestsResponse>("/api/admin/billing/requests", { params });
     },
-    setUserStatus(userId: number, status: "active" | "disabled") {
+    setUserStatus(userId: number, status: "active" | "disabled" | "archived") {
       return requestJson<{ ok: boolean; item: AdminUserDetail }>(`/api/admin/users/${userId}/status`, {
         method: "POST",
         body: { status },
+      });
+    },
+    batchSetUsersStatus(userIds: number[], status: "disabled" | "archived") {
+      return requestJson<{
+        ok: boolean;
+        updatedCount: number;
+        updatedUserIds: number[];
+        count: number;
+        items: AdminUsersResponse["items"];
+      }>("/api/admin/users/batch-status", {
+        method: "POST",
+        body: { user_ids: userIds, status },
+      });
+    },
+    batchDeleteUsers(userIds: number[]) {
+      return requestJson<{
+        ok: boolean;
+        deletedCount: number;
+        deletedUserIds: number[];
+        count: number;
+        items: AdminUsersResponse["items"];
+      }>("/api/admin/users/batch-delete", {
+        method: "POST",
+        body: { user_ids: userIds },
       });
     },
     resetUserPassword(userId: number, newPassword: string) {

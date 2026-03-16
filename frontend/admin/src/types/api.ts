@@ -5,7 +5,7 @@ export interface AuthUser {
   nickname: string;
   email: string;
   role: "admin" | "user";
-  status: "active" | "disabled";
+  status: "active" | "disabled" | "archived";
 }
 
 export interface AuthMeResponse {
@@ -516,7 +516,8 @@ export interface AdminUserSummary {
   nickname: string;
   email: string;
   role: "admin" | "user";
-  status: "active" | "disabled";
+  status: "active" | "disabled" | "archived";
+  source: "self_signup" | "admin_created";
   wallet_count: number;
   credit_balance: number;
   credit_spent_total: number;
@@ -524,6 +525,7 @@ export interface AdminUserSummary {
   unlocked_project_count: number;
   password_set: boolean;
   password_updated_at: number;
+  email_verified_at: number | null;
   last_login_at: number | null;
   created_at: number;
   updated_at: number;

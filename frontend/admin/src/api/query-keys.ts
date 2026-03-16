@@ -31,8 +31,8 @@ export const queryKeys = {
   appOverviewActive: (project: string) => ["app-overview-active", project] as const,
   scanJob: (jobId: string) => ["scan-job", jobId] as const,
   adminUsers: ["admin-users"] as const,
-  adminUsersList: (q: string, status: string, role: string) =>
-    ["admin-users", q, status, role] as const,
+  adminUsersList: (q: string, status: string, role: string, source: string) =>
+    ["admin-users", q, status, role, source] as const,
   adminUserDetail: (userId: number) => ["admin-user", userId] as const,
   adminUserWallets: (userId: number) => ["admin-user-wallets", userId] as const,
   adminUserCreditLedger: (userId: number) => ["admin-user-credit-ledger", userId] as const,

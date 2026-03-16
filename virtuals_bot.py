@@ -188,8 +188,9 @@ EVENT_BOOL_FIELDS = {"is_my_wallet", "anomaly", "is_price_stale"}
 MANAGED_PROJECT_STATUSES = {"draft", "scheduled", "prelaunch", "live", "ended", "removed"}
 PROJECT_PRELAUNCH_LEAD_SEC = 30 * 60
 PROJECT_SCHEDULER_INTERVAL_SEC = 30
-USER_STATUSES = {"active", "disabled"}
+USER_STATUSES = {"active", "disabled", "archived"}
 USER_ROLES = {"admin", "user"}
+USER_SOURCES = {"self_signup", "admin_created"}
 DEFAULT_SESSION_COOKIE_NAME = "vwr_session"
 DEFAULT_SESSION_TTL_SEC = 14 * 24 * 60 * 60
 DEFAULT_SESSION_SECRET = "virtuals-whale-radar-dev-session-secret"
@@ -1015,6 +1016,7 @@ class Storage:
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 status TEXT NOT NULL DEFAULT 'active',
+                source TEXT NOT NULL DEFAULT 'self_signup',
                 credit_balance INTEGER NOT NULL DEFAULT 0,
                 credit_spent_total INTEGER NOT NULL DEFAULT 0,
                 credit_granted_total INTEGER NOT NULL DEFAULT 0,
@@ -1213,6 +1215,7 @@ class Storage:
         self._ensure_column("users", "credit_balance", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "credit_spent_total", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "credit_granted_total", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("users", "source", "TEXT NOT NULL DEFAULT 'self_signup'")
         self._ensure_column("users", "email_verified_at", "INTEGER")
         self._ensure_column("users", "signup_ip", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("users", "signup_device_fingerprint", "TEXT NOT NULL DEFAULT ''")
@@ -1849,6 +1852,7 @@ class Storage:
         password_hash: str,
         role: str = "user",
         status: str = "active",
+        source: str = "self_signup",
         signup_bonus_credits: int = 0,
         email_verified_at: Optional[int] = None,
         signup_ip: str = "",
@@ -1859,10 +1863,13 @@ class Storage:
         email_value = normalize_email(email)
         role_value = str(role or "user").strip().lower()
         status_value = str(status or "active").strip().lower()
+        source_value = str(source or "self_signup").strip().lower()
         if role_value not in USER_ROLES:
             raise ValueError(f"invalid role: {role_value}")
         if status_value not in USER_STATUSES:
             raise ValueError(f"invalid status: {status_value}")
+        if source_value not in USER_SOURCES:
+            raise ValueError(f"invalid source: {source_value}")
         now = int(time.time())
         bonus_credits = max(0, int(signup_bonus_credits or 0))
         email_verified_ts = (
@@ -1879,11 +1886,11 @@ class Storage:
             cur = self.conn.execute(
                 """
                 INSERT INTO users(
-                    nickname, email, password_hash, role, status,
+                    nickname, email, password_hash, role, status, source,
                     credit_balance, credit_spent_total, credit_granted_total,
                     password_updated_at, last_login_at, created_at, updated_at,
                     email_verified_at, signup_ip, signup_device_fingerprint, signup_bonus_granted_at
-                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, NULL, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, NULL, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     nickname_value,
@@ -1891,6 +1898,7 @@ class Storage:
                     require_nonempty_text(password_hash, "password_hash"),
                     role_value,
                     status_value,
+                    source_value,
                     now,
                     now,
                     now,
@@ -1977,6 +1985,7 @@ class Storage:
             password_hash=password_hash,
             role="admin",
             status="active",
+            source="admin_created",
         )
 
     def update_user_last_login(self, user_id: int) -> None:
@@ -2010,6 +2019,36 @@ class Storage:
         if not row:
             raise ValueError(f"user not found: {user_id}")
         return row
+
+    def update_users_status(self, user_ids: List[int], status: str) -> List[Dict[str, Any]]:
+        unique_ids = sorted({int(user_id) for user_id in user_ids if int(user_id) > 0})
+        if not unique_ids:
+            return []
+        status_value = str(status or "").strip().lower()
+        if status_value not in USER_STATUSES:
+            raise ValueError(f"invalid status: {status_value}")
+        now = int(time.time())
+        placeholders = ",".join("?" for _ in unique_ids)
+        params: List[Any] = [status_value, now, *unique_ids]
+        self.conn.execute(
+            f"""
+            UPDATE users
+            SET status = ?, updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            params,
+        )
+        self.conn.commit()
+        rows = self.conn.execute(
+            f"""
+            SELECT *
+            FROM users
+            WHERE id IN ({placeholders})
+            ORDER BY created_at DESC, id DESC
+            """,
+            tuple(unique_ids),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def update_user_password(self, user_id: int, password_hash: str) -> Dict[str, Any]:
         now = int(time.time())
@@ -2053,6 +2092,20 @@ class Storage:
             item["password_set"] = bool(str(item.get("password_hash") or "").strip())
             items.append(item)
         return items
+
+    def delete_user(self, user_id: int) -> Dict[str, Any]:
+        row = self.get_user_by_id(int(user_id))
+        if not row:
+            raise ValueError(f"user not found: {user_id}")
+        with self.conn:
+            self.conn.execute(
+                """
+                DELETE FROM users
+                WHERE id = ?
+                """,
+                (int(user_id),),
+            )
+        return row
 
     def get_user_project_access(self, user_id: int, project_id: int) -> Optional[Dict[str, Any]]:
         row = self.conn.execute(
@@ -4549,6 +4602,44 @@ class VirtualsBot:
         if str(user.get("role") or "").lower() != "admin":
             raise web.HTTPForbidden(text=json.dumps({"error": "admin required"}), content_type="application/json")
         return user
+
+    def parse_user_ids_payload(self, payload: Any) -> List[int]:
+        if not isinstance(payload, dict):
+            raise ValueError("invalid json body")
+        raw_ids = payload.get("user_ids")
+        if not isinstance(raw_ids, list):
+            raise ValueError("user_ids must be array")
+        user_ids: List[int] = []
+        for raw in raw_ids:
+            try:
+                parsed = int(raw)
+            except Exception as exc:
+                raise ValueError("user_ids must contain integers") from exc
+            if parsed > 0:
+                user_ids.append(parsed)
+        unique_ids = sorted(set(user_ids))
+        if not unique_ids:
+            raise ValueError("user_ids must not be empty")
+        return unique_ids
+
+    def ensure_admin_user_ids_mutable(
+        self,
+        *,
+        operator_user_id: int,
+        user_ids: List[int],
+        allow_admin_targets: bool = False,
+    ) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for user_id in user_ids:
+            row = self.storage.get_user_by_id(int(user_id))
+            if not row:
+                raise ValueError(f"user not found: {user_id}")
+            if int(row["id"]) == int(operator_user_id):
+                raise ValueError("cannot modify current admin account")
+            if (not allow_admin_targets) and str(row.get("role") or "").lower() == "admin":
+                raise ValueError("admin accounts cannot be modified in batch")
+            rows.append(row)
+        return rows
 
     def build_auth_session(self, user_row: Dict[str, Any], request: web.Request) -> Tuple[str, Dict[str, Any]]:
         token = secrets.token_urlsafe(32)
@@ -7277,6 +7368,7 @@ class VirtualsBot:
         query = str(request.query.get("q", "")).strip().lower()
         status_filter = str(request.query.get("status", "")).strip().lower()
         role_filter = str(request.query.get("role", "")).strip().lower()
+        source_filter = str(request.query.get("source", "")).strip().lower()
         items = self.storage.list_users()
         if query:
             items = [
@@ -7289,9 +7381,56 @@ class VirtualsBot:
             items = [item for item in items if str(item.get("status") or "").lower() == status_filter]
         if role_filter:
             items = [item for item in items if str(item.get("role") or "").lower() == role_filter]
+        if source_filter:
+            items = [item for item in items if str(item.get("source") or "").lower() == source_filter]
         for item in items:
             item.pop("password_hash", None)
         return web.json_response({"count": len(items), "items": items})
+
+    async def admin_user_create_handler(self, request: web.Request) -> web.Response:
+        operator = self.require_admin(request)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            nickname = require_nonempty_text(payload.get("nickname"), "nickname")
+            email = normalize_email(payload.get("email"))
+            password = require_nonempty_text(payload.get("password"), "password")
+            initial_credits = parse_optional_int(payload.get("initial_credits"), "initial_credits") or 0
+            if initial_credits < 0:
+                raise ValueError("initial_credits must not be negative")
+            note = str(payload.get("note") or "").strip()
+            if self.storage.get_user_by_email(email):
+                return web.json_response({"error": "email already registered"}, status=409)
+            user = self.storage.create_user(
+                nickname=nickname,
+                email=email,
+                password_hash=hash_password(password),
+                role="user",
+                status="active",
+                source="admin_created",
+                email_verified_at=int(time.time()),
+            )
+            if initial_credits > 0:
+                user = self.storage.adjust_user_credits(
+                    int(user["id"]),
+                    delta=initial_credits,
+                    entry_type="manual_adjustment",
+                    source="admin.user_create",
+                    note=note or "admin created user initial credits",
+                    operator_user_id=int(operator["id"]),
+                )
+            user["wallet_count"] = 0
+            user["unlocked_project_count"] = 0
+            user["password_set"] = bool(str(user.get("password_hash") or "").strip())
+            user.pop("password_hash", None)
+            items = self.storage.list_users()
+            for item in items:
+                item.pop("password_hash", None)
+            return web.json_response({"ok": True, "item": user, "count": len(items), "items": items})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
 
     async def admin_user_detail_handler(self, request: web.Request) -> web.Response:
         self.require_admin(request)
@@ -7513,6 +7652,75 @@ class VirtualsBot:
             if "not found" in str(e):
                 return web.json_response({"error": str(e)}, status=404)
             return web.json_response({"error": str(e)}, status=400)
+
+    async def admin_users_batch_status_handler(self, request: web.Request) -> web.Response:
+        operator = self.require_admin(request)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            user_ids = self.parse_user_ids_payload(payload)
+            status_value = str(payload.get("status") or "").strip().lower()
+            if status_value not in {"disabled", "archived"}:
+                raise ValueError("status must be disabled or archived")
+            rows = self.ensure_admin_user_ids_mutable(
+                operator_user_id=int(operator["id"]),
+                user_ids=user_ids,
+                allow_admin_targets=False,
+            )
+            updated_items = self.storage.update_users_status([int(row["id"]) for row in rows], status_value)
+            for row in updated_items:
+                self.storage.revoke_user_sessions(int(row["id"]))
+            items = self.storage.list_users()
+            for item in items:
+                item.pop("password_hash", None)
+            return web.json_response(
+                {
+                    "ok": True,
+                    "updatedCount": len(updated_items),
+                    "updatedUserIds": [int(row["id"]) for row in updated_items],
+                    "count": len(items),
+                    "items": items,
+                }
+            )
+        except Exception as e:
+            status = 404 if "not found" in str(e) else 400
+            return web.json_response({"error": str(e)}, status=status)
+
+    async def admin_users_batch_delete_handler(self, request: web.Request) -> web.Response:
+        operator = self.require_admin(request)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            user_ids = self.parse_user_ids_payload(payload)
+            rows = self.ensure_admin_user_ids_mutable(
+                operator_user_id=int(operator["id"]),
+                user_ids=user_ids,
+                allow_admin_targets=False,
+            )
+            deleted_user_ids: List[int] = []
+            for row in rows:
+                self.storage.revoke_user_sessions(int(row["id"]))
+                self.storage.delete_user(int(row["id"]))
+                deleted_user_ids.append(int(row["id"]))
+            items = self.storage.list_users()
+            for item in items:
+                item.pop("password_hash", None)
+            return web.json_response(
+                {
+                    "ok": True,
+                    "deletedCount": len(deleted_user_ids),
+                    "deletedUserIds": deleted_user_ids,
+                    "count": len(items),
+                    "items": items,
+                }
+            )
+        except Exception as e:
+            status = 404 if "not found" in str(e) else 400
+            return web.json_response({"error": str(e)}, status=status)
 
     async def admin_user_reset_password_handler(self, request: web.Request) -> web.Response:
         self.require_admin(request)
@@ -8275,6 +8483,9 @@ class VirtualsBot:
         app.router.add_get("/api/admin/event-delays", admin_only(self.event_delays_handler))
         app.router.add_get("/api/admin/project-tax", admin_only(self.project_tax_handler))
         app.router.add_get("/api/admin/users", self.admin_users_handler)
+        app.router.add_post("/api/admin/users", self.admin_user_create_handler)
+        app.router.add_post("/api/admin/users/batch-status", self.admin_users_batch_status_handler)
+        app.router.add_post("/api/admin/users/batch-delete", self.admin_users_batch_delete_handler)
         app.router.add_get("/api/admin/users/{user_id}", self.admin_user_detail_handler)
         app.router.add_get("/api/admin/users/{user_id}/wallets", self.admin_user_wallets_handler)
         app.router.add_get("/api/admin/users/{user_id}/credit-ledger", self.admin_user_credit_ledger_handler)
