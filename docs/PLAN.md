@@ -1631,8 +1631,10 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - `data/virtuals_bus.db`
   - `SignalHub-main/signalhub.db`
   - `data/events.jsonl`
+  - `data/uploads/`
   - `config.json`
   - `SignalHub-main/.env`
+  - `ssl/`
   - 当前 nginx / systemd / logrotate 配置副本
 - 备份产物为 `tar.gz`
 - 默认输出目录：`/opt/virtuals-whale-radar/backups`

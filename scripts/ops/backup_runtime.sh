@@ -30,6 +30,15 @@ copy_file_if_exists() {
   fi
 }
 
+copy_dir_if_exists() {
+  local src="$1"
+  local dest="$2"
+  if [[ -d "${src}" ]]; then
+    mkdir -p "${dest}"
+    cp -a "${src}/." "${dest}/"
+  fi
+}
+
 backup_sqlite "${APP_DIR}/data/virtuals_v11.db" "${STAGE_DIR}/data/virtuals_v11.db"
 backup_sqlite "${APP_DIR}/data/virtuals_bus.db" "${STAGE_DIR}/data/virtuals_bus.db"
 backup_sqlite "${APP_DIR}/SignalHub-main/signalhub.db" "${STAGE_DIR}/data/signalhub.db"
@@ -43,6 +52,8 @@ copy_file_if_exists "/etc/systemd/system/vwr-signalhub.service" "${STAGE_DIR}/sy
 copy_file_if_exists "/etc/systemd/system/vwr-backup.service" "${STAGE_DIR}/system/vwr-backup.service"
 copy_file_if_exists "/etc/systemd/system/vwr-backup.timer" "${STAGE_DIR}/system/vwr-backup.timer"
 copy_file_if_exists "/etc/logrotate.d/virtuals-whale-radar" "${STAGE_DIR}/system/logrotate-virtuals-whale-radar"
+copy_dir_if_exists "${APP_DIR}/data/uploads" "${STAGE_DIR}/data/uploads"
+copy_dir_if_exists "${APP_DIR}/ssl" "${STAGE_DIR}/system/ssl"
 
 python3 - <<PY
 import json
