@@ -201,6 +201,14 @@ DEFAULT_EMAIL_FROM_NAME = "Virtuals Whale Radar"
 DEFAULT_EMAIL_VERIFY_TOKEN_TTL_SEC = 30 * 60
 DEFAULT_SIGNUP_BONUS_CREDITS = 20
 DEFAULT_PROJECT_UNLOCK_CREDITS = 10
+AUTH_REGISTER_IP_SHORT_WINDOW_SEC = 15 * 60
+AUTH_REGISTER_IP_SHORT_MAX_ATTEMPTS = 2
+AUTH_REGISTER_IP_LONG_WINDOW_SEC = 24 * 60 * 60
+AUTH_REGISTER_IP_LONG_MAX_ATTEMPTS = 5
+AUTH_RESEND_IP_WINDOW_SEC = 60 * 60
+AUTH_RESEND_IP_MAX_ATTEMPTS = 5
+AUTH_LOGIN_FAIL_IP_WINDOW_SEC = 15 * 60
+AUTH_LOGIN_FAIL_IP_MAX_ATTEMPTS = 10
 DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
 DEFAULT_BILLING_CONTACT_HINT = "扫码添加运营联系方式，付款后联系管理员手动补积分。"
 DEFAULT_BILLING_REFERRAL_NOTICE = "Virtuals 新用户使用邀请码注册，后续付费一律五折"
@@ -210,6 +218,29 @@ BILLING_REQUEST_STATUSES = {"pending_review", "credited", "notified"}
 USER_NOTIFICATION_KINDS = {"success", "warning", "info", "accent"}
 MAX_BILLING_PROOF_BYTES = 8 * 1024 * 1024
 ALLOWED_BILLING_PROOF_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+DISPOSABLE_EMAIL_DOMAINS = {
+    "10minutemail.com",
+    "10minutemail.net",
+    "dispostable.com",
+    "fakeinbox.com",
+    "getairmail.com",
+    "getnada.com",
+    "guerrillamail.com",
+    "maildrop.cc",
+    "mailinator.com",
+    "mailnesia.com",
+    "moakt.com",
+    "sharklasers.com",
+    "sharebot.net",
+    "temp-mail.io",
+    "temp-mail.org",
+    "tempail.com",
+    "tempmail.com",
+    "throwawaymail.com",
+    "trashmail.com",
+    "yopmail.com",
+    "yopmail.net",
+}
 BILLING_PLANS = [
     {"id": "starter", "credits": 10, "priceCny": 10, "label": "10 积分 / 10 元"},
     {"id": "value", "credits": 50, "priceCny": 40, "label": "50 积分 / 40 元"},
@@ -267,6 +298,11 @@ def normalize_email(email: Any) -> str:
     if not raw or "@" not in raw or raw.startswith("@") or raw.endswith("@"):
         raise ValueError("invalid email")
     return raw
+
+
+def extract_email_domain(email: str) -> str:
+    normalized = normalize_email(email)
+    return normalized.split("@", 1)[1]
 
 
 def require_nonempty_text(value: Any, field_name: str) -> str:
@@ -402,6 +438,20 @@ class AppConfig:
     email_verify_token_ttl_sec: int
     billing_contact_qr_url: str
     billing_contact_hint: str
+
+
+class RateLimitExceeded(Exception):
+    def __init__(self, message: str, *, code: str, retry_after_sec: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.retry_after_sec = retry_after_sec
+
+
+class DisposableEmailBlocked(Exception):
+    def __init__(self, message: str = "请使用常用邮箱完成注册。") -> None:
+        super().__init__(message)
+        self.message = message
 
 
 def load_config(path: str) -> AppConfig:
@@ -1133,6 +1183,16 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread
                 ON user_notifications(user_id, is_read, created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS auth_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_auth_attempts_lookup
+                ON auth_attempts(event_type, subject, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS dead_letters (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_hash TEXT NOT NULL,
@@ -1200,6 +1260,44 @@ class Storage:
                 updated_at = excluded.updated_at
             """,
             (key, value, now),
+        )
+        self.conn.commit()
+
+    def record_auth_attempt(
+        self, event_type: str, subject: str, created_at: Optional[int] = None
+    ) -> None:
+        event_type_value = require_nonempty_text(event_type, "event_type")
+        subject_value = require_nonempty_text(subject, "subject")
+        now = int(created_at or time.time())
+        self.conn.execute(
+            """
+            INSERT INTO auth_attempts(event_type, subject, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (event_type_value, subject_value, now),
+        )
+        self.conn.commit()
+
+    def count_auth_attempts(self, event_type: str, subject: str, since_ts: int) -> int:
+        event_type_value = require_nonempty_text(event_type, "event_type")
+        subject_value = require_nonempty_text(subject, "subject")
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM auth_attempts
+            WHERE event_type = ? AND subject = ? AND created_at >= ?
+            """,
+            (event_type_value, subject_value, int(since_ts)),
+        ).fetchone()
+        return int(row["c"] or 0) if row else 0
+
+    def prune_auth_attempts(self, before_ts: int) -> None:
+        self.conn.execute(
+            """
+            DELETE FROM auth_attempts
+            WHERE created_at < ?
+            """,
+            (int(before_ts),),
         )
         self.conn.commit()
 
@@ -4072,6 +4170,9 @@ class VirtualsBot:
         self.session_cookie_name = cfg.session_cookie_name
         self.session_ttl_sec = cfg.session_ttl_sec
         self.session_secret = cfg.session_secret
+        self.session_cookie_secure = str(cfg.app_public_base_url or "").strip().lower().startswith(
+            "https://"
+        )
         self.billing_contact_qr_url = cfg.billing_contact_qr_url
         self.billing_contact_hint = cfg.billing_contact_hint
         self.billing_proof_dir = (Path(cfg.sqlite_path).resolve().parent / "uploads" / "billing-proofs")
@@ -4468,12 +4569,18 @@ class VirtualsBot:
             max_age=int(self.session_ttl_sec),
             httponly=True,
             samesite="Lax",
-            secure=False,
+            secure=self.session_cookie_secure,
             path="/",
         )
 
     def clear_session_cookie(self, response: web.StreamResponse) -> None:
-        response.del_cookie(self.session_cookie_name, path="/")
+        response.del_cookie(
+            self.session_cookie_name,
+            path="/",
+            httponly=True,
+            samesite="Lax",
+            secure=self.session_cookie_secure,
+        )
 
     def public_app_base_url(self, request: web.Request) -> str:
         configured = str(self.cfg.app_public_base_url or "").strip().rstrip("/")
@@ -4488,6 +4595,90 @@ class VirtualsBot:
         body_value = str(payload.get("device_fingerprint") or "").strip()
         header_value = str(request.headers.get("X-Device-Fingerprint") or "").strip()
         return body_value or header_value
+
+    def request_client_ip(self, request: web.Request) -> str:
+        forwarded_for = str(request.headers.get("X-Forwarded-For") or "").strip()
+        if forwarded_for:
+            first = forwarded_for.split(",", 1)[0].strip()
+            if first and first.lower() != "unknown":
+                return first
+        real_ip = str(request.headers.get("X-Real-IP") or "").strip()
+        if real_ip and real_ip.lower() != "unknown":
+            return real_ip
+        return str(request.remote or "").strip()
+
+    def maybe_prune_auth_attempts(self) -> None:
+        cutoff = int(time.time()) - max(AUTH_REGISTER_IP_LONG_WINDOW_SEC, 7 * 24 * 60 * 60)
+        with contextlib.suppress(Exception):
+            self.storage.prune_auth_attempts(cutoff)
+
+    def enforce_rate_limit(
+        self,
+        *,
+        event_type: str,
+        subject: str,
+        window_sec: int,
+        max_attempts: int,
+        message: str,
+        code: str,
+    ) -> None:
+        subject_value = str(subject or "").strip()
+        if not subject_value:
+            return
+        since_ts = int(time.time()) - int(window_sec)
+        count = self.storage.count_auth_attempts(event_type, subject_value, since_ts)
+        if count >= int(max_attempts):
+            raise RateLimitExceeded(message, code=code, retry_after_sec=int(window_sec))
+
+    def record_auth_attempt(self, event_type: str, subject: str) -> None:
+        subject_value = str(subject or "").strip()
+        if not subject_value:
+            return
+        self.storage.record_auth_attempt(event_type, subject_value)
+        self.maybe_prune_auth_attempts()
+
+    def ensure_register_ip_allowed(self, client_ip: str) -> None:
+        self.enforce_rate_limit(
+            event_type="register_ip",
+            subject=client_ip,
+            window_sec=AUTH_REGISTER_IP_SHORT_WINDOW_SEC,
+            max_attempts=AUTH_REGISTER_IP_SHORT_MAX_ATTEMPTS,
+            message="注册过于频繁，请 15 分钟后再试。",
+            code="register_rate_limited",
+        )
+        self.enforce_rate_limit(
+            event_type="register_ip",
+            subject=client_ip,
+            window_sec=AUTH_REGISTER_IP_LONG_WINDOW_SEC,
+            max_attempts=AUTH_REGISTER_IP_LONG_MAX_ATTEMPTS,
+            message="今天的注册次数已到上限，请明天再试。",
+            code="register_daily_limited",
+        )
+
+    def ensure_resend_ip_allowed(self, client_ip: str) -> None:
+        self.enforce_rate_limit(
+            event_type="resend_ip",
+            subject=client_ip,
+            window_sec=AUTH_RESEND_IP_WINDOW_SEC,
+            max_attempts=AUTH_RESEND_IP_MAX_ATTEMPTS,
+            message="验证邮件发送过于频繁，请稍后再试。",
+            code="resend_rate_limited",
+        )
+
+    def ensure_login_fail_ip_allowed(self, client_ip: str) -> None:
+        self.enforce_rate_limit(
+            event_type="login_fail_ip",
+            subject=client_ip,
+            window_sec=AUTH_LOGIN_FAIL_IP_WINDOW_SEC,
+            max_attempts=AUTH_LOGIN_FAIL_IP_MAX_ATTEMPTS,
+            message="登录尝试过于频繁，请 15 分钟后再试。",
+            code="login_rate_limited",
+        )
+
+    def ensure_allowed_registration_email(self, email: str) -> None:
+        domain = extract_email_domain(email)
+        if domain in DISPOSABLE_EMAIL_DOMAINS:
+            raise DisposableEmailBlocked()
 
     def ensure_email_delivery_enabled(self) -> None:
         if not self.cfg.email_enabled:
@@ -6418,10 +6609,14 @@ class VirtualsBot:
             payload = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json body"}, status=400)
+        client_ip = self.request_client_ip(request)
         try:
             nickname = require_nonempty_text(payload.get("nickname"), "nickname")
             email = normalize_email(payload.get("email"))
             password = require_nonempty_text(payload.get("password"), "password")
+            self.ensure_register_ip_allowed(client_ip)
+            self.record_auth_attempt("register_ip", client_ip)
+            self.ensure_allowed_registration_email(email)
             if self.storage.get_user_by_email(email):
                 return web.json_response({"error": "email already registered"}, status=409)
             raw_token = secrets.token_urlsafe(32)
@@ -6430,7 +6625,7 @@ class VirtualsBot:
                 email=email,
                 password_hash=hash_password(password),
                 verify_token_hash=hash_session_token(raw_token, self.session_secret),
-                request_ip=str(request.remote or ""),
+                request_ip=client_ip,
                 user_agent=str(request.headers.get("User-Agent") or ""),
                 device_fingerprint=self.request_device_fingerprint(request, payload),
                 expires_at=self.email_verification_expires_at(),
@@ -6449,6 +6644,16 @@ class VirtualsBot:
                     "expires_at": int(pending.get("expires_at") or 0),
                 }
             )
+        except RateLimitExceeded as e:
+            return web.json_response(
+                {"error": e.message, "code": e.code, "retry_after_sec": e.retry_after_sec},
+                status=429,
+            )
+        except DisposableEmailBlocked as e:
+            return web.json_response(
+                {"error": e.message, "code": "disposable_email_blocked"},
+                status=400,
+            )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -6457,8 +6662,10 @@ class VirtualsBot:
             payload = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json body"}, status=400)
+        client_ip = self.request_client_ip(request)
         try:
             email = normalize_email(payload.get("email"))
+            self.ensure_resend_ip_allowed(client_ip)
             if self.storage.get_user_by_email(email):
                 return web.json_response({"error": "email already verified"}, status=409)
             pending = self.storage.get_pending_registration_by_email(email)
@@ -6472,7 +6679,7 @@ class VirtualsBot:
                 email=email,
                 password_hash=str(pending.get("password_hash") or ""),
                 verify_token_hash=hash_session_token(raw_token, self.session_secret),
-                request_ip=str(request.remote or pending.get("request_ip") or ""),
+                request_ip=client_ip or str(pending.get("request_ip") or ""),
                 user_agent=str(request.headers.get("User-Agent") or pending.get("user_agent") or ""),
                 device_fingerprint=self.request_device_fingerprint(request, payload)
                 or str(pending.get("device_fingerprint") or ""),
@@ -6485,12 +6692,18 @@ class VirtualsBot:
                 nickname=str(pending.get("nickname") or ""),
                 token=raw_token,
             )
+            self.record_auth_attempt("resend_ip", client_ip)
             return web.json_response(
                 {
                     "ok": True,
                     "email": email,
                     "expires_at": int(pending.get("expires_at") or 0),
                 }
+            )
+        except RateLimitExceeded as e:
+            return web.json_response(
+                {"error": e.message, "code": e.code, "retry_after_sec": e.retry_after_sec},
+                status=429,
             )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -6550,12 +6763,15 @@ class VirtualsBot:
             payload = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json body"}, status=400)
+        client_ip = self.request_client_ip(request)
         try:
             email = normalize_email(payload.get("email"))
             password = require_nonempty_text(payload.get("password"), "password")
+            self.ensure_login_fail_ip_allowed(client_ip)
             user = self.storage.get_user_by_email(email)
             if user:
                 if not verify_password(password, str(user.get("password_hash") or "")):
+                    self.record_auth_attempt("login_fail_ip", client_ip)
                     return web.json_response({"error": "invalid email or password"}, status=401)
                 if not int(user.get("email_verified_at") or 0):
                     return web.json_response(
@@ -6580,10 +6796,16 @@ class VirtualsBot:
                         },
                         status=403,
                     )
+                self.record_auth_attempt("login_fail_ip", client_ip)
                 return web.json_response({"error": "invalid email or password"}, status=401)
             if str(user.get("status") or "").lower() != "active":
                 return web.json_response({"error": "user is disabled"}, status=403)
             return self.build_auth_success_response(user, request)
+        except RateLimitExceeded as e:
+            return web.json_response(
+                {"error": e.message, "code": e.code, "retry_after_sec": e.retry_after_sec},
+                status=429,
+            )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
