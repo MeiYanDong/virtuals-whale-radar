@@ -5,6 +5,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "rea
 import { dashboardApi } from "@/api/dashboard-api";
 import { queryKeys } from "@/api/query-keys";
 import { AdminShell, UserShell } from "@/app/shell";
+import { ThemeProvider } from "@/app/theme-provider";
 import { AuthProvider } from "@/auth/auth-context";
 import { resolvePostAuthRedirect } from "@/auth/redirect";
 import { useAuth } from "@/auth/use-auth";
@@ -109,60 +110,64 @@ function ProtectedRoute({ role }: { role: "admin" | "user" }) {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<RootRedirect />} />
+      <ThemeProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<RootRedirect />} />
 
-            <Route element={<AuthRoute />}>
-              <Route path="/auth/login" element={<LoginPage />} />
-              <Route path="/auth/register" element={<RegisterPage />} />
-            </Route>
-            <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
-
-            <Route element={<ProtectedRoute role="admin" />}>
-              <Route path="/admin" element={<AdminShell />}>
-                <Route index element={<AdminDefaultRoute />} />
-                <Route path="overview" element={<OverviewPage />} />
-                <Route path="projects" element={<ProjectsPage />} />
-                <Route path="projects/:projectId" element={<OverviewPage />} />
-                <Route path="signalhub" element={<InboxPage />} />
-                <Route path="wallets" element={<WalletsPage />} />
-                <Route path="users" element={<UsersPage />} />
-                <Route path="operations" element={<Navigate to="../users" replace />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="inbox" element={<Navigate to="../signalhub" replace />} />
+              <Route element={<AuthRoute />}>
+                <Route path="/auth/login" element={<LoginPage />} />
+                <Route path="/auth/register" element={<RegisterPage />} />
               </Route>
-            </Route>
+              <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
 
-            <Route element={<ProtectedRoute role="user" />}>
-              <Route path="/app" element={<UserShell />}>
-                <Route index element={<AppDefaultRoute />} />
-                <Route path="overview" element={<OverviewPage />} />
-                <Route path="projects" element={<ProjectsPage />} />
-                <Route path="projects/:projectId" element={<OverviewPage />} />
-                <Route path="signalhub" element={<InboxPage />} />
-                <Route path="wallets" element={<WalletsPage />} />
-                <Route path="billing" element={<BillingPage />} />
+              <Route element={<ProtectedRoute role="admin" />}>
+                <Route path="/admin" element={<AdminShell />}>
+                  <Route index element={<AdminDefaultRoute />} />
+                  <Route path="overview" element={<OverviewPage />} />
+                  <Route path="projects" element={<ProjectsPage />} />
+                  <Route path="projects/:projectId" element={<OverviewPage />} />
+                  <Route path="signalhub" element={<InboxPage />} />
+                  <Route path="wallets" element={<WalletsPage />} />
+                  <Route path="users" element={<UsersPage />} />
+                  <Route path="operations" element={<Navigate to="../users" replace />} />
+                  <Route path="settings" element={<SettingsPage />} />
+                  <Route path="inbox" element={<Navigate to="../signalhub" replace />} />
+                </Route>
               </Route>
-            </Route>
 
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-        <Toaster
-          position="top-right"
-          richColors
-          closeButton
-          toastOptions={{
-            style: {
-              background: "rgba(255,255,255,0.95)",
-              border: "1px solid rgba(199,221,215,0.9)",
-              color: "#184b52",
-            },
-          }}
-        />
-      </AuthProvider>
+              <Route element={<ProtectedRoute role="user" />}>
+                <Route path="/app" element={<UserShell />}>
+                  <Route index element={<AppDefaultRoute />} />
+                  <Route path="overview" element={<OverviewPage />} />
+                  <Route path="projects" element={<ProjectsPage />} />
+                  <Route path="projects/:projectId" element={<OverviewPage />} />
+                  <Route path="signalhub" element={<InboxPage />} />
+                  <Route path="wallets" element={<WalletsPage />} />
+                  <Route path="billing" element={<BillingPage />} />
+                </Route>
+              </Route>
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+          <Toaster
+            position="top-right"
+            richColors
+            closeButton
+            toastOptions={{
+              style: {
+                background: "var(--popover-elevated)",
+                border: "1px solid var(--border-strong)",
+                color: "var(--foreground)",
+                boxShadow: "var(--shadow-soft)",
+                backdropFilter: "blur(18px)",
+              },
+            }}
+          />
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

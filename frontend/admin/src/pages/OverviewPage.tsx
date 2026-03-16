@@ -174,30 +174,30 @@ export function OverviewPage() {
           }
         />
 
-        <section className="overflow-hidden rounded-[32px] border border-white/60 bg-[radial-gradient(circle_at_top_left,rgba(36,142,147,0.18),transparent_40%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(235,245,241,0.94))] p-6 shadow-[0_28px_60px_rgba(36,142,147,0.12)]">
+        <section className="surface-hero-strong overflow-hidden rounded-[32px] border border-white/60 p-6">
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant="warning">未解锁</Badge>
             <Badge variant="secondary">首次解锁扣 {lockedDetails.access.unlockCost} 积分</Badge>
           </div>
           <h2 className="mt-4 text-3xl font-semibold tracking-[-0.05em]">{lockedProject.name}</h2>
           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+            <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">开始时间</div>
               <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatDateTime(lockedProject.startAt)}</div>
             </div>
-            <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+            <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">结束时间</div>
               <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">
                 {formatDateTime(lockedProject.resolvedEndAt)}
               </div>
             </div>
-            <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+            <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">当前积分</div>
               <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">
                 {lockedDetails.access.creditBalance}
               </div>
             </div>
-            <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+            <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">详情链接</div>
               <div className="mt-2 truncate text-sm">
                 {lockedProject.detailUrl ? (

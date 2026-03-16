@@ -6,9 +6,11 @@ import {
   Gauge,
   LogOut,
   Menu,
+  MoonStar,
   RefreshCcw,
   Settings2,
   ShieldUser,
+  SunMedium,
   Users,
   Wallet,
 } from "lucide-react";
@@ -19,6 +21,7 @@ import { resolveProjectCandidates, resolveSelectedProject } from "@/adapters/das
 import { dashboardApi } from "@/api/dashboard-api";
 import { queryKeys } from "@/api/query-keys";
 import { ShellContext, type ShellContextValue, type WorkspaceViewer, useShell } from "@/app/shell-context";
+import { useTheme } from "@/app/use-theme";
 import { useAuth } from "@/auth/use-auth";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -326,7 +329,7 @@ function BrandBlock({
 
   return (
     <div className={cn("flex items-center gap-4", compact && "justify-center")}>
-      <div className="flex size-14 shrink-0 items-center justify-center rounded-[20px] bg-white shadow-[0_20px_40px_rgba(36,142,147,0.18)]">
+      <div className="theme-brand-badge flex size-14 shrink-0 items-center justify-center rounded-[20px]">
         <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-10 rounded-[12px] object-cover" />
       </div>
       {compact ? null : (
@@ -366,8 +369,8 @@ function NavList({
                 "group flex items-center rounded-[22px] text-sm font-medium transition",
                 compact ? "justify-center px-3 py-3" : "justify-between px-4 py-3",
                 isActive
-                  ? "bg-white text-foreground shadow-sm"
-                  : "text-muted-foreground hover:bg-white/70 hover:text-foreground",
+                  ? "bg-[color:var(--surface-soft-strong)] text-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-[color:var(--surface-soft)] hover:text-foreground",
               )
             }
           >
@@ -395,6 +398,7 @@ function SidebarPanel({
     <aside
       className={cn(
         "flex h-full flex-col gap-6 rounded-[30px] border border-white/50 bg-sidebar/80 shadow-[0_28px_60px_rgba(108,140,126,0.12)]",
+        "surface-panel shadow-[var(--shadow-strong)]",
         mode === "expanded" ? "p-5" : "items-center p-3",
       )}
     >
@@ -433,6 +437,7 @@ function TopBar({
     isRuntimeMutating,
     logout,
   } = useShell();
+  const { theme, toggleTheme } = useTheme();
   const queryClient = useQueryClient();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
@@ -505,7 +510,7 @@ function TopBar({
           <Button className="lg:hidden" variant="secondary" size="icon" onClick={onOpenMobileNav}>
             <Menu className="size-4" />
           </Button>
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-[18px] bg-white shadow-sm">
+          <div className="theme-brand-badge flex size-11 shrink-0 items-center justify-center rounded-[18px]">
             <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-7 rounded-[10px] object-cover" />
           </div>
           <div className="hidden min-w-0 sm:block">
@@ -554,6 +559,15 @@ function TopBar({
             <div>{authUser ? authUser.nickname : "未登录"}</div>
             <div>上次刷新 {formatDateTime(Math.floor(lastRefreshAt / 1000))}</div>
           </div>
+          <Button
+            variant="outline"
+            className="theme-toggle-button"
+            onClick={toggleTheme}
+            title={theme === "light" ? "切换到深色模式" : "切换到浅色模式"}
+          >
+            {theme === "light" ? <MoonStar className="size-4" /> : <SunMedium className="size-4" />}
+            {theme === "light" ? "深色模式" : "浅色模式"}
+          </Button>
           <Button variant="outline" onClick={() => void refreshAll()} disabled={isRefreshing}>
             <RefreshCcw className={cn("size-4", isRefreshing && "animate-spin")} />
             刷新
@@ -607,8 +621,8 @@ function TopBar({
                         className={cn(
                           "rounded-[22px] border px-4 py-4 shadow-sm",
                           item.isRead
-                            ? "border-border bg-white/75"
-                            : "border-primary/30 bg-[linear-gradient(180deg,rgba(36,142,147,0.10),rgba(255,255,255,0.94))]",
+                            ? "border-border bg-[color:var(--surface-soft)]"
+                            : "theme-status-unread border-primary/30",
                         )}
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -638,7 +652,7 @@ function TopBar({
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-[22px] border border-dashed border-border bg-white/75 px-4 py-6 text-sm text-muted-foreground">
+                  <div className="rounded-[22px] border border-dashed border-border surface-empty px-4 py-6 text-sm text-muted-foreground">
                     当前没有新的账户提醒。
                   </div>
                 )}

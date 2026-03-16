@@ -21,7 +21,7 @@ export function SheetContent({
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-[rgba(18,35,39,0.24)] backdrop-blur-sm" />
       <DialogPrimitive.Content
         className={cn(
-          "fixed top-0 z-50 h-full w-[min(92vw,560px)] overflow-hidden overscroll-contain border-border bg-card px-6 py-6 shadow-[0_28px_70px_rgba(36,52,48,0.18)]",
+          "fixed top-0 z-50 h-full w-[min(92vw,560px)] overflow-hidden overscroll-contain border-border bg-card px-6 py-6 shadow-[var(--shadow-strong)]",
           side === "right"
             ? "right-0 border-l"
             : "left-0 border-r",

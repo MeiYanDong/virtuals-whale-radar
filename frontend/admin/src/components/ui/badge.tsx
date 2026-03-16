@@ -10,9 +10,12 @@ const badgeVariants = cva(
       variant: {
         default: "bg-primary/12 text-primary ring-1 ring-primary/15",
         secondary: "bg-muted text-muted-foreground ring-1 ring-border",
-        success: "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200",
-        warning: "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
-        danger: "bg-rose-100 text-rose-700 ring-1 ring-rose-200",
+        success:
+          "bg-[color:var(--success-soft)] text-[color:var(--success-foreground)] ring-1 ring-[color:var(--success-soft)]",
+        warning:
+          "bg-[color:var(--warning-soft)] text-[color:var(--warning-foreground)] ring-1 ring-[color:var(--warning-soft)]",
+        danger:
+          "bg-[color:var(--danger-soft)] text-[color:var(--danger-foreground)] ring-1 ring-[color:var(--danger-soft)]",
       },
     },
     defaultVariants: {

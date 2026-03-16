@@ -80,7 +80,7 @@ export function RegisterPage() {
               </p>
             </div>
 
-            <div className="rounded-[24px] border border-border/80 bg-white/78 px-5 py-4 text-sm leading-6 text-muted-foreground">
+            <div className="rounded-[24px] border border-border/80 bg-[color:var(--surface-soft)] px-5 py-4 text-sm leading-6 text-muted-foreground">
               验证链接默认在{" "}
               <span className="font-medium text-foreground">
                 {new Intl.DateTimeFormat("zh-CN", {

@@ -9,10 +9,10 @@ export function Alert({
 }: React.HTMLAttributes<HTMLDivElement> & { variant?: "default" | "warning" | "danger" }) {
   const styles =
     variant === "warning"
-      ? "border-amber-200 bg-amber-50 text-amber-900"
+      ? "border-[color:var(--warning-soft)] bg-[color:var(--warning-soft)] text-[color:var(--warning-foreground)]"
       : variant === "danger"
-        ? "border-rose-200 bg-rose-50 text-rose-900"
-        : "border-border bg-white/70 text-foreground";
+        ? "border-[color:var(--danger-soft)] bg-[color:var(--danger-soft)] text-[color:var(--danger-foreground)]"
+        : "border-border bg-[color:var(--surface-soft)] text-foreground";
   return (
     <div
       className={cn("rounded-[22px] border px-4 py-3 text-sm shadow-sm", styles, className)}

@@ -62,12 +62,12 @@ export function MetricCard({
 }) {
   const accentClass =
     tone === "success"
-      ? "from-emerald-100 to-emerald-50 text-emerald-800"
+      ? "from-[color:var(--metric-success-from)] to-[color:var(--metric-success-to)] text-[color:var(--metric-success-text)]"
       : tone === "warning"
-        ? "from-amber-100 to-amber-50 text-amber-800"
+        ? "from-[color:var(--metric-warning-from)] to-[color:var(--metric-warning-to)] text-[color:var(--metric-warning-text)]"
         : tone === "danger"
-          ? "from-rose-100 to-rose-50 text-rose-800"
-          : "from-[rgba(36,142,147,0.14)] to-[rgba(255,255,255,0.72)] text-foreground";
+          ? "from-[color:var(--metric-danger-from)] to-[color:var(--metric-danger-to)] text-[color:var(--metric-danger-text)]"
+          : "from-primary/14 to-[color:var(--surface-soft-strong)] text-foreground";
 
   return (
     <Card className={cn("overflow-hidden", tone === "default" ? "" : "border-transparent")}>
@@ -119,12 +119,14 @@ export function StatusBadge({
   hint: string;
 }) {
   return (
-    <div className="rounded-[22px] border border-border bg-white/70 p-4">
+    <div className="rounded-[22px] border border-border bg-[color:var(--surface-soft)] p-4">
       <div className="flex items-center gap-3">
         <span
           className={cn(
             "flex size-10 items-center justify-center rounded-full",
-            ok ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700",
+            ok
+              ? "bg-[color:var(--success-soft)] text-[color:var(--success-foreground)]"
+              : "bg-[color:var(--danger-soft)] text-[color:var(--danger-foreground)]",
           )}
         >
           {ok ? <CheckCircle2 className="size-4" /> : <ShieldAlert className="size-4" />}
@@ -155,11 +157,11 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "rounded-[26px] border border-dashed border-border bg-white/55 px-6 py-8 text-center",
+        "rounded-[26px] border border-dashed border-border surface-empty px-6 py-8 text-center",
         compact ? "py-6" : "py-10",
       )}
     >
-      <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-white text-primary shadow-sm">
+      <div className="mx-auto flex size-12 items-center justify-center rounded-full surface-contrast text-primary shadow-sm">
         <AlertCircle className="size-5" />
       </div>
       <h3 className="mt-4 text-lg font-semibold tracking-[-0.02em]">{title}</h3>
@@ -200,7 +202,7 @@ export function QuickLink({
   return (
     <Link
       to={to}
-      className="group flex items-center justify-between rounded-[22px] border border-border bg-white/70 px-4 py-4 transition hover:-translate-y-0.5 hover:bg-white"
+      className="group flex items-center justify-between rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 transition hover:-translate-y-0.5 hover:bg-[color:var(--surface-soft-strong)]"
     >
       <div>
         <div className="font-medium">{title}</div>

@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ArrowRight, KeyRound, Mail } from "lucide-react";
+import { ArrowRight, KeyRound, Mail, MoonStar, SunMedium } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { dashboardApi } from "@/api/dashboard-api";
 import { ApiError } from "@/api/client";
+import { useTheme } from "@/app/use-theme";
 import { buildAuthSwitchHref, resolvePostAuthRedirect } from "@/auth/redirect";
 import { useAuth } from "@/auth/use-auth";
 import { Button } from "@/components/ui/button";
@@ -23,24 +24,38 @@ export function AuthFrame({
   description: string;
   children: ReactNode;
 }) {
+  const { theme, toggleTheme } = useTheme();
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(119,185,175,0.42),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(185,215,176,0.34),transparent_30%),linear-gradient(180deg,#f6fbf8_0%,#eef7f2_100%)] px-4 py-8">
+    <div className="theme-auth-shell min-h-screen px-4 py-8">
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-6xl items-center">
-        <div className="grid w-full gap-8 overflow-hidden rounded-[40px] border border-white/60 bg-white/72 shadow-[0_40px_120px_rgba(36,142,147,0.16)] backdrop-blur xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="theme-auth-frame grid w-full gap-8 overflow-hidden rounded-[40px] border border-white/60 backdrop-blur xl:grid-cols-[0.9fr_1.1fr]">
           <div className="relative overflow-hidden px-8 py-10 sm:px-10 sm:py-12">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(36,142,147,0.22),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.86),rgba(243,250,246,0.94))]" />
+            <div className="theme-auth-panel absolute inset-0" />
             <div className="relative flex h-full flex-col justify-between">
               <div className="space-y-6">
-                <div className="flex items-center gap-4">
-                  <div className="flex size-16 items-center justify-center rounded-[22px] bg-white shadow-[0_24px_60px_rgba(36,142,147,0.18)]">
-                    <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-11 rounded-[14px] object-cover" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.24em] text-primary/80">
-                      Virtuals Whale Radar
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="theme-brand-badge flex size-16 items-center justify-center rounded-[22px]">
+                      <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-11 rounded-[14px] object-cover" />
                     </div>
-                    <div className="text-2xl font-semibold tracking-[-0.04em]">项目观察台</div>
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.24em] text-primary/80">
+                        Virtuals Whale Radar
+                      </div>
+                      <div className="text-2xl font-semibold tracking-[-0.04em]">项目观察台</div>
+                    </div>
                   </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="theme-toggle-button"
+                    onClick={toggleTheme}
+                    title={theme === "light" ? "切换到深色模式" : "切换到浅色模式"}
+                  >
+                    {theme === "light" ? <MoonStar className="size-4" /> : <SunMedium className="size-4" />}
+                    {theme === "light" ? "深色模式" : "浅色模式"}
+                  </Button>
                 </div>
 
                 <div className="space-y-3">
@@ -55,13 +70,13 @@ export function AuthFrame({
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-[24px] border border-border/80 bg-white/78 px-5 py-4">
+                <div className="rounded-[24px] border border-border/80 bg-[color:var(--surface-soft)] px-5 py-4">
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">看发射</div>
                   <div className="mt-2 text-sm leading-6 text-foreground">
                     盯正在发射的项目，快速看分钟消耗、税收和大户有没有进场。
                   </div>
                 </div>
-                <div className="rounded-[24px] border border-border/80 bg-white/78 px-5 py-4">
+                <div className="rounded-[24px] border border-border/80 bg-[color:var(--surface-soft)] px-5 py-4">
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">跟钱包</div>
                   <div className="mt-2 text-sm leading-6 text-foreground">
                     先加自己的钱包，再去挑项目。真正想盯的盘面再用积分解锁。
@@ -202,7 +217,7 @@ export function LoginPage() {
           </Button>
 
           {verificationState ? (
-            <div className="rounded-[24px] border border-border/80 bg-white/78 px-5 py-4">
+            <div className="rounded-[24px] border border-border/80 bg-[color:var(--surface-soft)] px-5 py-4">
               <div className="text-sm font-medium text-foreground">
                 {verificationState.expired ? "验证链接已过期" : "邮箱还没验证"}
               </div>

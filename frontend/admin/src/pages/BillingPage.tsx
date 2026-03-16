@@ -82,7 +82,7 @@ export function BillingPage() {
 
   return (
     <div className="space-y-6">
-      <Alert className="overflow-hidden border-primary/20 bg-[linear-gradient(135deg,rgba(36,142,147,0.12),rgba(220,232,199,0.42))]">
+      <Alert className="surface-hero overflow-hidden border-primary/20">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-1">
             <div className="text-xs font-semibold uppercase tracking-[0.22em] text-primary/80">
@@ -106,7 +106,7 @@ export function BillingPage() {
       />
 
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-[32px] border border-white/60 bg-[radial-gradient(circle_at_top_left,rgba(36,142,147,0.22),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(232,245,240,0.92))] p-6 shadow-[0_28px_60px_rgba(36,142,147,0.12)]">
+        <div className="surface-hero-strong rounded-[32px] border border-white/60 p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-2">
               <Badge variant="secondary">积分账户</Badge>
@@ -115,7 +115,7 @@ export function BillingPage() {
                 每个项目的实时看板首次解锁消耗 10 积分。解锁成功后，这个项目以后都能继续看。
               </p>
             </div>
-            <div className="rounded-[24px] border border-primary/15 bg-white/72 px-5 py-4 text-right">
+            <div className="rounded-[24px] border border-primary/15 bg-[color:var(--surface-soft)] px-5 py-4 text-right">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">推荐套餐</div>
               <div className="mt-2 text-lg font-semibold">{selectedPlan?.label ?? "10 积分 / 10 元"}</div>
               <div className="mt-1 text-sm text-muted-foreground">付款确认后会手动补分到账</div>
@@ -147,15 +147,15 @@ export function BillingPage() {
           description="先免费体验，再决定把积分花在哪些项目上。"
         >
           <div className="space-y-3">
-            <div className="flex items-center gap-3 rounded-[22px] border border-border bg-white/80 px-4 py-4">
+              <div className="flex items-center gap-3 rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
               <Coins className="size-5 text-primary" />
               <div className="text-sm">新用户注册默认赠送 20 积分。</div>
             </div>
-            <div className="flex items-center gap-3 rounded-[22px] border border-border bg-white/80 px-4 py-4">
+              <div className="flex items-center gap-3 rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
               <Sparkles className="size-5 text-primary" />
               <div className="text-sm">每个项目首次解锁消耗 10 积分，解锁后这个盘面以后都能继续看。</div>
             </div>
-            <div className="flex items-center gap-3 rounded-[22px] border border-border bg-white/80 px-4 py-4">
+              <div className="flex items-center gap-3 rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
               <WalletCards className="size-5 text-primary" />
               <div className="text-sm">微信付款后直接联系我，我会手动把积分补到你的账号里。</div>
             </div>
@@ -178,8 +178,8 @@ export function BillingPage() {
                   className={[
                     "group rounded-[28px] border px-5 py-5 text-left transition",
                     active
-                      ? "border-primary bg-[linear-gradient(180deg,rgba(36,142,147,0.12),rgba(255,255,255,0.92))] shadow-[0_18px_34px_rgba(36,142,147,0.14)]"
-                      : "border-border bg-white/80 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-white",
+                      ? "border-primary bg-[color:var(--surface-soft-strong)] shadow-[var(--shadow-primary)]"
+                      : "border-border bg-[color:var(--surface-soft)] hover:-translate-y-0.5 hover:border-primary/40 hover:bg-[color:var(--surface-soft-strong)]",
                   ].join(" ")}
                   role="button"
                   tabIndex={0}
@@ -227,8 +227,8 @@ export function BillingPage() {
           description={selectedPlan ? `当前选中：${selectedPlan.label}` : "扫码联系运营。"}
         >
           <div className="grid gap-5 md:grid-cols-[220px_1fr] md:items-center">
-            <div className="rounded-[28px] border border-border bg-white/80 p-4 shadow-sm">
-              <div className="flex aspect-square items-center justify-center rounded-[22px] bg-[linear-gradient(180deg,rgba(242,248,243,0.98),rgba(220,232,199,0.72))]">
+            <div className="rounded-[28px] border border-border bg-[color:var(--surface-soft)] p-4 shadow-sm">
+              <div className="surface-chart flex aspect-square items-center justify-center rounded-[22px]">
                 <img
                   src={summary.contact_qr_url}
                   alt="联系二维码"
@@ -245,7 +245,7 @@ export function BillingPage() {
                 <div className="text-lg font-semibold tracking-[-0.03em]">付款后联系我手动补积分</div>
                 <p className="text-sm leading-6 text-muted-foreground">{summary.contact_hint}</p>
               </div>
-              <div className="rounded-[24px] border border-border bg-muted/70 px-4 py-4 text-sm text-muted-foreground">
+              <div className="rounded-[24px] border border-border bg-[color:var(--surface-muted)] px-4 py-4 text-sm text-muted-foreground">
                 当前积分：{summary.credit_balance}，累计消耗：{summary.credit_spent_total}，已解锁项目：
                 {formatCompactNumber(summary.unlocked_project_count)}。
               </div>
@@ -260,13 +260,13 @@ export function BillingPage() {
           description="整个流程很轻，不需要你重复上传截图。"
         >
           <div className="space-y-3">
-            <div className="rounded-[22px] border border-border bg-white/80 px-4 py-4 text-sm text-muted-foreground">
+            <div className="rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 text-sm text-muted-foreground">
               第一步：先看好你要盯的项目，再决定补多少积分。
             </div>
-            <div className="rounded-[22px] border border-border bg-white/80 px-4 py-4 text-sm text-muted-foreground">
+            <div className="rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 text-sm text-muted-foreground">
               第二步：选好套餐后扫码联系，微信付款完成即可。
             </div>
-            <div className="rounded-[22px] border border-border bg-white/80 px-4 py-4 text-sm text-muted-foreground">
+            <div className="rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 text-sm text-muted-foreground">
               第三步：我会手动给你的账号补积分，到账后你就能继续解锁项目。
             </div>
           </div>
@@ -281,7 +281,7 @@ export function BillingPage() {
               {activityItems.map((item) => (
                 <div
                   key={item.id}
-                  className="rounded-[22px] border border-border bg-white/80 px-4 py-4 shadow-sm"
+                  className="rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 shadow-sm"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -341,8 +341,8 @@ export function BillingPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-6 md:grid-cols-[260px_1fr] md:items-center">
-            <div className="rounded-[28px] border border-border bg-white/80 p-4 shadow-sm">
-              <div className="flex aspect-square items-center justify-center rounded-[22px] bg-[linear-gradient(180deg,rgba(242,248,243,0.98),rgba(220,232,199,0.72))] p-2">
+            <div className="rounded-[28px] border border-border bg-[color:var(--surface-soft)] p-4 shadow-sm">
+              <div className="surface-chart flex aspect-square items-center justify-center rounded-[22px] p-2">
                 <img
                   src={summary.contact_qr_url}
                   alt="联系二维码"
@@ -351,15 +351,15 @@ export function BillingPage() {
               </div>
             </div>
             <div className="space-y-4">
-              <div className="rounded-[24px] border border-border bg-muted/70 px-4 py-4 text-sm text-muted-foreground">
+              <div className="rounded-[24px] border border-border bg-[color:var(--surface-muted)] px-4 py-4 text-sm text-muted-foreground">
                 {summary.contact_hint}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-[20px] border border-border bg-white/80 px-4 py-4">
+                <div className="rounded-[20px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
                   <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">当前积分</div>
                   <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{summary.credit_balance}</div>
                 </div>
-                <div className="rounded-[20px] border border-border bg-white/80 px-4 py-4">
+                <div className="rounded-[20px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
                   <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">已解锁项目</div>
                   <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">
                     {summary.unlocked_project_count}

@@ -89,15 +89,15 @@ function MinuteBars({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-[20px] border border-border bg-muted/70 px-4 py-3">
+        <div className="rounded-[20px] border border-border bg-[color:var(--surface-muted)] px-4 py-3">
           <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">分钟条数</div>
           <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{chartItems.length}</div>
         </div>
-        <div className="rounded-[20px] border border-border bg-muted/70 px-4 py-3">
+        <div className="rounded-[20px] border border-border bg-[color:var(--surface-muted)] px-4 py-3">
           <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">累计 SpentV</div>
           <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{formatCurrency(total)}</div>
         </div>
-        <div className="rounded-[20px] border border-border bg-muted/70 px-4 py-3">
+        <div className="rounded-[20px] border border-border bg-[color:var(--surface-muted)] px-4 py-3">
           <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">峰值分钟</div>
           <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{formatCurrency(peak)}</div>
         </div>
@@ -105,7 +105,7 @@ function MinuteBars({
 
       <div className="overflow-x-auto pb-2">
         <div className="min-w-[780px]">
-          <div className="flex h-64 items-end gap-2 rounded-[28px] border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(232,245,240,0.92))] px-4 pb-4 pt-6">
+          <div className="surface-chart flex h-64 items-end gap-2 rounded-[28px] border border-border px-4 pb-4 pt-6">
             {chartItems.map((item) => {
               const height = peak > 0 ? Math.max(8, (item.value / peak) * 180) : 8;
               return (
@@ -210,7 +210,7 @@ export function ProjectOverviewSections({
 
   return (
     <>
-      <section className="overflow-hidden rounded-[32px] border border-white/60 bg-[radial-gradient(circle_at_top_left,rgba(119,185,175,0.34),transparent_36%),linear-gradient(180deg,rgba(255,255,255,0.96),rgba(235,245,241,0.94))] p-6 shadow-[0_28px_60px_rgba(36,142,147,0.12)]">
+      <section className="surface-hero overflow-hidden rounded-[32px] border border-white/60 p-6">
         <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -235,23 +235,23 @@ export function ProjectOverviewSections({
         </div>
 
         <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">开始时间</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatDateTime(item.startAt)}</div>
           </div>
-          <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">结束时间</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatDateTime(item.resolvedEndAt)}</div>
           </div>
-          <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">代币地址</div>
             <div className="mt-2 font-mono text-sm">{formatAddress(item.tokenAddr, 8)}</div>
           </div>
-          <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4">
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">内盘地址</div>
             <div className="mt-2 font-mono text-sm">{formatAddress(item.internalPoolAddr, 8)}</div>
           </div>
-          <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4 md:col-span-2">
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4 md:col-span-2">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">项目详情链接</div>
             <div className="mt-2 truncate text-sm">
               {item.detailUrl ? (
@@ -263,7 +263,7 @@ export function ProjectOverviewSections({
               )}
             </div>
           </div>
-          <div className="rounded-[22px] border border-border/80 bg-white/72 px-4 py-4 xl:col-span-2">
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4 xl:col-span-2">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">当前项目累计税收</div>
             <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{formatCurrency(item.sumTaxV)}</div>
           </div>
@@ -293,7 +293,7 @@ export function ProjectOverviewSections({
         />
       </SectionCard>
 
-      <details className="group rounded-[28px] border border-border bg-white/78 px-6 py-5 shadow-sm">
+      <details className="group rounded-[28px] border border-border bg-[color:var(--surface-soft)] px-6 py-5 shadow-sm">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
           <div>
             <div className="text-lg font-semibold tracking-[-0.03em]">交易录入延迟</div>
