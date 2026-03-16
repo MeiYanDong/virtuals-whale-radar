@@ -308,6 +308,7 @@ export interface OverviewBoardItem {
   name: string;
   spentV: string;
   tokenBought: string;
+  breakevenFdvUsd?: string | null;
   updatedAt: number;
 }
 

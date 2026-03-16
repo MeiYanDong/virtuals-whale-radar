@@ -10,6 +10,7 @@ import {
   formatCurrency,
   formatDateTime,
   formatDecimal,
+  formatInteger,
   formatShortDateTime,
 } from "@/lib/format";
 import type { MinuteRow, OverviewActiveProjectItem, OverviewBoardItem, EventDelayRow } from "@/types/api";
@@ -19,6 +20,7 @@ type BoardRow = {
   name?: string;
   spentV: number;
   tokenBought: number;
+  breakevenFdvUsd: number | null;
   updatedAt: number;
 };
 
@@ -31,9 +33,13 @@ function tokenWan(value: number) {
   return value / 10000;
 }
 
-function costPerWan(spentV: number, tokenBought: number) {
-  if (tokenBought <= 0) return null;
-  return spentV / (tokenBought / 10000);
+function formatSpentVInteger(value: number) {
+  return `${formatInteger(Math.round(value))} V`;
+}
+
+function formatBreakevenFdvUsd(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return formatDecimal(value, 2);
 }
 
 function projectStatusLabel(status: string) {
@@ -144,13 +150,12 @@ function BoardTable({
           <TableHead>钱包地址</TableHead>
           <TableHead>累计花费 V</TableHead>
           <TableHead>累计代币数量（万）</TableHead>
-          <TableHead>成本（万）</TableHead>
+          <TableHead>买入市值（USD）</TableHead>
           <TableHead>更新时间</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {rows.map((row) => {
-          const cost = costPerWan(row.spentV, row.tokenBought);
           return (
             <TableRow key={row.wallet}>
               <TableCell>
@@ -159,9 +164,9 @@ function BoardTable({
                   <div className="font-mono text-xs text-muted-foreground">{row.wallet}</div>
                 </div>
               </TableCell>
-              <TableCell>{formatCurrency(row.spentV)}</TableCell>
+              <TableCell>{formatSpentVInteger(row.spentV)}</TableCell>
               <TableCell>{formatDecimal(tokenWan(row.tokenBought), 2)}</TableCell>
-              <TableCell>{cost === null ? "-" : formatCurrency(cost)}</TableCell>
+              <TableCell>{formatBreakevenFdvUsd(row.breakevenFdvUsd)}</TableCell>
               <TableCell>{row.updatedAt ? formatDateTime(row.updatedAt) : "-"}</TableCell>
             </TableRow>
           );
@@ -177,6 +182,10 @@ function toBoardRows(items: OverviewBoardItem[]) {
     name: item.name || undefined,
     spentV: toNumber(item.spentV),
     tokenBought: toNumber(item.tokenBought),
+    breakevenFdvUsd:
+      item.breakevenFdvUsd === null || item.breakevenFdvUsd === undefined
+        ? null
+        : toNumber(item.breakevenFdvUsd),
     updatedAt: item.updatedAt,
   }));
 }

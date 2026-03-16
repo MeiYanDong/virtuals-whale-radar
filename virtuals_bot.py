@@ -4429,7 +4429,37 @@ class VirtualsBot:
             "delays": [],
         }
 
-    def build_project_overview_payload(
+    async def enrich_overview_board_items(
+        self,
+        project_name: str,
+        items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        launch_cfg = self.storage.get_launch_config_by_name(project_name)
+        total_supply = (
+            launch_cfg.token_total_supply if launch_cfg is not None else self.fixed_token_total_supply
+        )
+        virtual_price_usd, _ = await self.price_service.get_price()
+
+        enriched: List[Dict[str, Any]] = []
+        for item in items:
+            row = dict(item)
+            existing_fdv_usd = row.get("breakevenFdvUsd")
+            if existing_fdv_usd not in (None, ""):
+                row["breakevenFdvUsd"] = str(existing_fdv_usd)
+                enriched.append(row)
+                continue
+
+            spent = Decimal(str(row.get("spentV") or "0"))
+            token = Decimal(str(row.get("tokenBought") or "0"))
+            avg_cost_v = (spent / token) if token > 0 else Decimal(0)
+            fdv_v = avg_cost_v * total_supply
+            fdv_usd = (fdv_v * virtual_price_usd) if virtual_price_usd is not None else None
+            row["breakevenFdvUsd"] = decimal_to_str(fdv_usd, 18) if fdv_usd is not None else None
+            enriched.append(row)
+
+        return enriched
+
+    async def build_project_overview_payload(
         self,
         managed_row: Optional[Dict[str, Any]],
         *,
@@ -4521,6 +4551,7 @@ class VirtualsBot:
                     "name": wallet_names.get(wallet, ""),
                     "spentV": str(row.get("sum_spent_v_est") or "0"),
                     "tokenBought": str(row.get("sum_token_bought") or "0"),
+                    "breakevenFdvUsd": row.get("breakeven_fdv_usd"),
                     "updatedAt": int(row.get("last_tx_time") or row.get("updated_at") or 0),
                 }
             )
@@ -4540,6 +4571,7 @@ class VirtualsBot:
                     "name": str(row.get("name") or "").strip(),
                     "spentV": str(position.get("sum_spent_v_est") or "0"),
                     "tokenBought": str(position.get("sum_token_bought") or "0"),
+                    "breakevenFdvUsd": position.get("breakeven_fdv_usd"),
                     "updatedAt": int(position.get("updated_at") or 0),
                 }
             )
@@ -4551,6 +4583,8 @@ class VirtualsBot:
             ),
             reverse=True,
         )
+        whale_board = await self.enrich_overview_board_items(project_name, whale_board)
+        tracked_wallets = await self.enrich_overview_board_items(project_name, tracked_wallets)
 
         return {
             "ok": True,
@@ -4578,7 +4612,7 @@ class VirtualsBot:
             "delays": delays,
         }
 
-    def build_overview_active_payload(
+    async def build_overview_active_payload(
         self,
         requested_project: Optional[str] = None,
         tracked_wallet_configs: Optional[List[Dict[str, Any]]] = None,
@@ -4609,7 +4643,7 @@ class VirtualsBot:
             ),
             None,
         )
-        return self.build_project_overview_payload(
+        return await self.build_project_overview_payload(
             managed_row,
             requested_project=requested_name,
             tracked_wallet_configs=tracked_wallet_configs,
@@ -5919,7 +5953,7 @@ class VirtualsBot:
     async def overview_active_handler(self, request: web.Request) -> web.Response:
         requested_project = str(request.query.get("project", "")).strip() or None
         try:
-            return web.json_response(self.build_overview_active_payload(requested_project))
+            return web.json_response(await self.build_overview_active_payload(requested_project))
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -6258,7 +6292,10 @@ class VirtualsBot:
             if bool(item.get("is_enabled"))
         ]
         try:
-            payload = self.build_overview_active_payload(requested_project, tracked_wallet_configs=wallet_rows)
+            payload = await self.build_overview_active_payload(
+                requested_project,
+                tracked_wallet_configs=wallet_rows,
+            )
             active_item = payload.get("item") or {}
             project_id = int(active_item.get("id") or 0)
             if payload.get("hasActiveProject") and project_id > 0:
@@ -6303,7 +6340,7 @@ class VirtualsBot:
             if bool(item.get("is_enabled"))
         ]
         try:
-            payload = self.build_project_overview_payload(
+            payload = await self.build_project_overview_payload(
                 project_row,
                 requested_project=str(project_row.get("name") or ""),
                 tracked_wallet_configs=wallet_rows,
