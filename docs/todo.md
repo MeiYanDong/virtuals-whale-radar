@@ -591,3 +591,14 @@
 - [x] 新增邮箱验证结果页或结果态。
 - [x] 验证注册链接打开成功后跳转 `/app`。
 - [x] 补邮件文案与用户提示，明确“验证成功后才会到账 20 积分”。
+
+## Phase 28：生产 HTTPS 与邮件链接切换
+
+- [x] 使用阿里云免费测试证书为 `virtuals.club` 申请 DV 证书。
+- [x] 证书签发后将证书文件保存在本地 `secrets/ssl/`，并避免被 Git 跟踪。
+- [x] 生产服务器部署 `virtuals.club.pem` 与 `virtuals.club.key`。
+- [x] Nginx 新增 `443` 监听，并对 `virtuals.club` 与 `www.virtuals.club` 开启 HTTPS。
+- [x] `80` 端口自动跳转到 `https://virtuals.club`。
+- [x] 生产配置中的 `APP_PUBLIC_BASE_URL` 切换到 `https://virtuals.club`。
+- [x] 验证 `https://virtuals.club/auth/login` 与 `https://www.virtuals.club/auth/login` 返回正常。
+- [x] 验证邮箱注册链接在生产环境改为 HTTPS 域名。

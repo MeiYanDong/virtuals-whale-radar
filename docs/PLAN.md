@@ -1302,3 +1302,13 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 
 - 本轮先完成邮箱验证闭环。
 - `Turnstile / IP 限流 / 临时邮箱拦截` 作为下一阶段风险控制项，不阻塞当前实现。
+
+### 19.9 生产部署现状
+
+- 生产站点已经切换为 `https://virtuals.club` 作为公开基地址。
+- Nginx 已部署阿里云免费 DV 测试证书，并同时覆盖：
+  - `virtuals.club`
+  - `www.virtuals.club`
+- `80` 端口统一跳转到 `https://virtuals.club`，避免注册、登录、邮箱验证继续走明文 HTTP。
+- 证书文件不进入 Git 仓库，本地统一放在 `secrets/ssl/`，服务器部署路径独立于代码仓库追踪。
+- 邮箱验证邮件中的公开链接已随 `APP_PUBLIC_BASE_URL` 更新为 HTTPS。
