@@ -223,6 +223,15 @@ reload_nginx() {
   fi
 }
 
+install_runtime_maintenance() {
+  if [[ -f "$APP_DIR/deploy/install_runtime_maintenance.sh" ]]; then
+    log "Installing runtime maintenance assets"
+    run_root env APP_DIR="$APP_DIR" bash "$APP_DIR/deploy/install_runtime_maintenance.sh"
+  else
+    warn "maintenance installer not found, skipped"
+  fi
+}
+
 main() {
   need_cmd git
   need_cmd "$PYTHON_BIN"
@@ -233,6 +242,7 @@ main() {
   update_python_deps
   publish_frontend
   restart_services
+  install_runtime_maintenance
   reload_nginx
   log "Update finished successfully"
 }

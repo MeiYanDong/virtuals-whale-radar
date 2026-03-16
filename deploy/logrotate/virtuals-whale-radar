@@ -1,0 +1,11 @@
+/opt/virtuals-whale-radar/data/*.jsonl
+/opt/virtuals-whale-radar/SignalHub-main/logs/*.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    create 0640 vwr vwr
+}

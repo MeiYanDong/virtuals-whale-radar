@@ -1612,3 +1612,66 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 - 邮箱默认视为已验证
 - 状态默认 `active`
 - 如果填写初始积分，需要写入积分流水，便于后续对账
+
+## 25. 生产运维基础能力（2026-03-16）
+
+### 25.1 目标
+
+- 为当前生产环境补齐最小可用的运维三件套：
+  - SQLite 备份
+  - 日志轮转
+  - 一键诊断
+- 不引入额外监控平台，优先采用服务器本地脚本与 systemd timer。
+
+### 25.2 备份策略
+
+- 新增服务器脚本：`scripts/ops/backup_runtime.sh`
+- 默认备份内容：
+  - `data/virtuals_v11.db`
+  - `data/virtuals_bus.db`
+  - `SignalHub-main/signalhub.db`
+  - `data/events.jsonl`
+  - `config.json`
+  - `SignalHub-main/.env`
+  - 当前 nginx / systemd / logrotate 配置副本
+- 备份产物为 `tar.gz`
+- 默认输出目录：`/opt/virtuals-whale-radar/backups`
+- 默认保留：最近 `7` 天
+- 默认定时：每天 `04:15`
+
+### 25.3 日志轮转策略
+
+- 新增 `deploy/logrotate/virtuals-whale-radar`
+- 首批纳入轮转：
+  - `/opt/virtuals-whale-radar/data/*.jsonl`
+  - `/opt/virtuals-whale-radar/SignalHub-main/logs/*.log`
+- 规则：
+  - 每日轮转
+  - 保留 7 份
+  - 压缩
+  - `copytruncate`
+
+说明：
+
+- `nginx` 访问日志与错误日志继续使用系统默认 logrotate
+- `journalctl` 仍使用系统现有策略，不在本轮单独改动全局 journald 配置
+
+### 25.4 一键诊断
+
+- 新增服务器脚本：`scripts/ops/diagnose_runtime.sh`
+- 诊断包默认输出到：`/opt/virtuals-whale-radar/diagnostics`
+- 内容包含：
+  - `writer / realtime / backfill / SignalHub / backup timer` 的 `systemctl status`
+  - 最近 `journalctl` 输出
+  - `health` 与 `SignalHub` 状态接口
+  - SQLite 核心计数
+  - 最近 `scan_jobs`
+  - `managed_projects`
+  - nginx 日志尾部
+  - 当前 logrotate 与 timer 状态
+
+### 25.5 安装与更新接线
+
+- 新增 `deploy/install_runtime_maintenance.sh`
+- 生产安装脚本 `deploy/install_virtuals_production.sh` 需要自动执行该维护安装脚本
+- 更新脚本 `deploy/update_server_oneclick.sh` 需要在代码更新后补装 / 刷新维护资产

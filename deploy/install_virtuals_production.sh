@@ -271,6 +271,16 @@ EOF
   systemctl reload nginx
 }
 
+install_runtime_maintenance() {
+  log "Installing runtime maintenance"
+  BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-7}" \
+  BACKUP_ON_CALENDAR="${BACKUP_ON_CALENDAR:-*-*-* 04:15:00}" \
+  APP_DIR="${APP_DIR}" \
+  APP_USER="${APP_USER}" \
+  APP_GROUP="${APP_GROUP}" \
+  bash "${APP_DIR}/deploy/install_runtime_maintenance.sh"
+}
+
 maybe_issue_cert() {
   if [[ -z "${LETSENCRYPT_EMAIL:-}" ]]; then
     log "Skipping HTTPS certificate because LETSENCRYPT_EMAIL is empty"
@@ -307,6 +317,7 @@ main() {
   write_main_config
   install_services
   install_nginx
+  install_runtime_maintenance
   maybe_issue_cert
   show_status
   log "Done. If DNS already points to this server, open: http://${DOMAIN}/"
