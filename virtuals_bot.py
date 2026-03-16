@@ -4150,6 +4150,24 @@ class VirtualsBot:
     def clear_session_cookie(self, response: web.StreamResponse) -> None:
         response.del_cookie(self.session_cookie_name, path="/")
 
+    def build_launch_config_from_managed_project(
+        self, project_row: Optional[Dict[str, Any]]
+    ) -> Optional[LaunchConfig]:
+        if not project_row:
+            return None
+        name = str(project_row.get("name") or "").strip()
+        internal_pool_addr = str(project_row.get("internal_pool_addr") or "").strip()
+        if not name or not internal_pool_addr:
+            return None
+        return LaunchConfig(
+            name=name,
+            internal_pool_addr=internal_pool_addr,
+            fee_addr=self.fixed_fee_addr,
+            tax_addr=self.fixed_tax_addr,
+            token_total_supply=self.fixed_token_total_supply,
+            fee_rate=self.fixed_fee_rate,
+        )
+
     def sync_launch_config_for_managed_project(self, project_row: Dict[str, Any]) -> None:
         name = str(project_row.get("name") or "").strip()
         if not name:
@@ -4233,6 +4251,71 @@ class VirtualsBot:
     def _managed_project_last_scan_at_key(self, project_id: int) -> str:
         return f"managed_project_last_scan_at:{int(project_id)}"
 
+    def _managed_project_scan_cursor_key(self, project_id: int) -> str:
+        return f"managed_project_scan_cursor:{int(project_id)}"
+
+    def _managed_project_scan_signature_key(self, project_id: int) -> str:
+        return f"managed_project_scan_signature:{int(project_id)}"
+
+    def _ensure_managed_project_scan_state(self, project_row: Dict[str, Any]) -> None:
+        project_id = int(project_row.get("id") or 0)
+        if project_id <= 0:
+            return
+        start_at = int(project_row.get("start_at") or 0)
+        resolved_end_at = int(project_row.get("resolved_end_at") or 0)
+        signature = f"{start_at}:{resolved_end_at}"
+        sig_key = self._managed_project_scan_signature_key(project_id)
+        if (self.storage.get_state(sig_key) or "") == signature:
+            return
+        self.storage.set_state(sig_key, signature)
+        self.storage.set_state(self._managed_project_scan_cursor_key(project_id), str(start_at))
+        self.storage.set_state(self._managed_project_last_scan_job_key(project_id), "")
+        self.storage.set_state(self._managed_project_last_scan_at_key(project_id), "")
+
+    def _get_managed_project_scan_cursor(self, project_row: Dict[str, Any]) -> int:
+        project_id = int(project_row.get("id") or 0)
+        start_at = int(project_row.get("start_at") or 0)
+        if project_id <= 0:
+            return start_at
+        raw = self.storage.get_state(self._managed_project_scan_cursor_key(project_id))
+        try:
+            cursor = int(raw) if raw not in {None, ""} else start_at
+        except Exception:
+            cursor = start_at
+        return max(start_at, cursor)
+
+    def _set_managed_project_scan_cursor(self, project_row: Dict[str, Any], cursor_ts: int) -> None:
+        project_id = int(project_row.get("id") or 0)
+        if project_id <= 0:
+            return
+        start_at = int(project_row.get("start_at") or 0)
+        resolved_end_at = int(project_row.get("resolved_end_at") or 0)
+        bounded = max(start_at, int(cursor_ts))
+        if resolved_end_at >= start_at:
+            bounded = min(bounded, resolved_end_at)
+        self.storage.set_state(self._managed_project_scan_cursor_key(project_id), str(bounded))
+
+    def _find_managed_project_by_name(self, name: Optional[str]) -> Optional[Dict[str, Any]]:
+        project_name = str(name or "").strip()
+        if not project_name:
+            return None
+        for row in self.storage.list_managed_projects():
+            if str(row.get("name") or "").strip() == project_name:
+                return dict(row)
+        return None
+
+    def _managed_project_has_active_scan_job(self, project_row: Dict[str, Any]) -> bool:
+        project_id = int(project_row.get("id") or 0)
+        if project_id <= 0:
+            return False
+        last_job_id = self.storage.get_state(self._managed_project_last_scan_job_key(project_id))
+        if not last_job_id:
+            return False
+        job = self.event_bus.get_scan_job(last_job_id)
+        if not job:
+            return False
+        return str(job.get("status") or "").strip().lower() in {"queued", "running"}
+
     def set_managed_project_chart_window(self, project_row: Dict[str, Any]) -> None:
         project_id = int(project_row.get("id") or 0)
         if project_id <= 0:
@@ -4251,20 +4334,32 @@ class VirtualsBot:
             return None
         if not self.managed_project_is_complete(project_row):
             return None
+        status = str(project_row.get("status") or "").strip().lower()
+        if status not in {"prelaunch", "live", "ended"}:
+            return None
         start_at = int(project_row.get("start_at") or 0)
         resolved_end_at = int(project_row.get("resolved_end_at") or 0)
         if start_at <= 0 or resolved_end_at < start_at:
             return None
-        state_key = self._managed_project_scan_state_key(project_row)
-        if self.storage.get_state(state_key):
+        self._ensure_managed_project_scan_state(project_row)
+        if self._managed_project_has_active_scan_job(project_row):
+            return None
+        now = int(time.time())
+        scan_end_ts = min(now, resolved_end_at)
+        if scan_end_ts <= start_at:
+            return None
+        scan_cursor = self._get_managed_project_scan_cursor(project_row)
+        if scan_cursor >= resolved_end_at:
+            return None
+        scan_start_ts = max(start_at, scan_cursor)
+        if scan_end_ts <= scan_start_ts:
             return None
         project_name = str(project_row.get("name") or "").strip() or None
-        job_id = self.event_bus.create_scan_job(project_name, start_at, resolved_end_at)
+        job_id = self.event_bus.create_scan_job(project_name, scan_start_ts, scan_end_ts)
         project_id = int(project_row.get("id") or 0)
-        self.storage.set_state(state_key, job_id)
         if project_id > 0:
             self.storage.set_state(self._managed_project_last_scan_job_key(project_id), job_id)
-            self.storage.set_state(self._managed_project_last_scan_at_key(project_id), str(int(time.time())))
+            self.storage.set_state(self._managed_project_last_scan_at_key(project_id), str(now))
         return job_id
 
     def build_project_scheduler_status(self) -> Dict[str, Any]:
@@ -4277,6 +4372,7 @@ class VirtualsBot:
             chart_to_raw = self.storage.get_state(self._managed_project_chart_to_key(project_id))
             last_scan_job_id = self.storage.get_state(self._managed_project_last_scan_job_key(project_id))
             last_scan_at_raw = self.storage.get_state(self._managed_project_last_scan_at_key(project_id))
+            scan_cursor_raw = self.storage.get_state(self._managed_project_scan_cursor_key(project_id))
             projected_status = self.derive_managed_project_status(row, now_ts=now)
             if projected_status in {"prelaunch", "live"}:
                 active_count += 1
@@ -4292,6 +4388,7 @@ class VirtualsBot:
                     "chartToAt": int(chart_to_raw) if chart_to_raw else None,
                     "lastScanJobId": last_scan_job_id,
                     "lastScanQueuedAt": int(last_scan_at_raw) if last_scan_at_raw else None,
+                    "lastScanCoveredToAt": int(scan_cursor_raw) if scan_cursor_raw not in {None, ""} else None,
                     "isWatched": bool(row.get("is_watched")),
                     "collectEnabled": bool(row.get("collect_enabled")),
                     "backfillEnabled": bool(row.get("backfill_enabled")),
@@ -4583,6 +4680,8 @@ class VirtualsBot:
                 changed += 1
             if target_status in {"prelaunch", "live"}:
                 active += 1
+                self.set_managed_project_chart_window(row)
+            if target_status in {"prelaunch", "live", "ended"}:
                 self.set_managed_project_chart_window(row)
                 if self.queue_managed_project_scan_job(row):
                     queued_jobs += 1
@@ -5357,6 +5456,10 @@ class VirtualsBot:
 
                 if project:
                     selected = self.storage.get_launch_config_by_name(project)
+                    if not selected:
+                        selected = self.build_launch_config_from_managed_project(
+                            self._find_managed_project_by_name(project)
+                        )
                     launch_configs = [selected] if selected else []
                 else:
                     launch_configs = self.get_launch_configs()
@@ -5428,6 +5531,10 @@ class VirtualsBot:
 
                 parsed_after = int(self.stats.get("parsed_events", 0))
                 inserted_after = self.storage.count_events(project=project)
+                if (not canceled) and project:
+                    managed_row = self._find_managed_project_by_name(project)
+                    if managed_row:
+                        self._set_managed_project_scan_cursor(managed_row, end_ts)
                 job["parsedDelta"] = max(0, parsed_after - parsed_before)
                 job["insertedDelta"] = max(0, inserted_after - inserted_before)
                 if canceled:
@@ -5455,6 +5562,10 @@ class VirtualsBot:
                     return
                 if project:
                     selected = self.storage.get_launch_config_by_name(project)
+                    if not selected:
+                        selected = self.build_launch_config_from_managed_project(
+                            self._find_managed_project_by_name(project)
+                        )
                     launch_configs = [selected] if selected else []
                 else:
                     launch_configs = self.get_launch_configs()
@@ -5542,6 +5653,10 @@ class VirtualsBot:
 
                 parsed_after = int(self.stats.get("parsed_events", 0))
                 inserted_after = self.storage.count_events(project=project)
+                if (not canceled) and project:
+                    managed_row = self._find_managed_project_by_name(project)
+                    if managed_row:
+                        self._set_managed_project_scan_cursor(managed_row, end_ts)
                 done_status = "canceled" if canceled else "done"
                 done_error = "canceled by user" if canceled else None
                 self.event_bus.update_scan_job(
