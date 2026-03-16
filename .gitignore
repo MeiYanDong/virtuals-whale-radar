@@ -12,3 +12,6 @@ output/
 *.log
 *.zip
 secrets/
+backups/
+diagnostics/
+ssl/
