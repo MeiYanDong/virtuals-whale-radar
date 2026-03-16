@@ -17,6 +17,7 @@ import { ProjectsPage } from "@/pages/ProjectsPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { UsersPage } from "@/pages/UsersPage";
+import { VerifyEmailPage } from "@/pages/VerifyEmailPage";
 import { WalletsPage } from "@/pages/WalletsPage";
 
 const queryClient = new QueryClient({
@@ -117,6 +118,7 @@ export function App() {
               <Route path="/auth/login" element={<LoginPage />} />
               <Route path="/auth/register" element={<RegisterPage />} />
             </Route>
+            <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
 
             <Route element={<ProtectedRoute role="admin" />}>
               <Route path="/admin" element={<AdminShell />}>

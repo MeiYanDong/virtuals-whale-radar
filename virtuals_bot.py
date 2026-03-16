@@ -10,11 +10,16 @@ import os
 import secrets
 import signal
 import sqlite3
+import smtplib
+import ssl
 import time
+import urllib.parse
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, getcontext
+from email.message import EmailMessage
+from email.utils import formataddr
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -188,6 +193,12 @@ USER_ROLES = {"admin", "user"}
 DEFAULT_SESSION_COOKIE_NAME = "vwr_session"
 DEFAULT_SESSION_TTL_SEC = 14 * 24 * 60 * 60
 DEFAULT_SESSION_SECRET = "virtuals-whale-radar-dev-session-secret"
+DEFAULT_APP_PUBLIC_BASE_URL = ""
+DEFAULT_EMAIL_ENABLED = False
+DEFAULT_EMAIL_SMTP_PORT = 587
+DEFAULT_EMAIL_SMTP_USE_TLS = True
+DEFAULT_EMAIL_FROM_NAME = "Virtuals Whale Radar"
+DEFAULT_EMAIL_VERIFY_TOKEN_TTL_SEC = 30 * 60
 DEFAULT_SIGNUP_BONUS_CREDITS = 20
 DEFAULT_PROJECT_UNLOCK_CREDITS = 10
 DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
@@ -379,6 +390,16 @@ class AppConfig:
     session_cookie_name: str
     session_ttl_sec: int
     session_secret: str
+    app_public_base_url: str
+    email_enabled: bool
+    email_smtp_host: str
+    email_smtp_port: int
+    email_smtp_username: str
+    email_smtp_password: str
+    email_smtp_use_tls: bool
+    email_from_address: str
+    email_from_name: str
+    email_verify_token_ttl_sec: int
     billing_contact_qr_url: str
     billing_contact_hint: str
 
@@ -505,6 +526,59 @@ def load_config(path: str) -> AppConfig:
     session_secret = str(
         raw.get("SESSION_SECRET") or os.getenv("SESSION_SECRET") or DEFAULT_SESSION_SECRET
     ).strip()
+    app_public_base_url = str(
+        raw.get("APP_PUBLIC_BASE_URL")
+        or os.getenv("APP_PUBLIC_BASE_URL")
+        or DEFAULT_APP_PUBLIC_BASE_URL
+    ).strip().rstrip("/")
+    email_enabled = parse_bool_like(
+        raw.get("EMAIL_ENABLED")
+        or os.getenv("EMAIL_ENABLED")
+        or DEFAULT_EMAIL_ENABLED
+    )
+    email_smtp_host = str(
+        raw.get("EMAIL_SMTP_HOST")
+        or os.getenv("EMAIL_SMTP_HOST")
+        or ""
+    ).strip()
+    email_smtp_port = int(
+        raw.get("EMAIL_SMTP_PORT")
+        or os.getenv("EMAIL_SMTP_PORT")
+        or DEFAULT_EMAIL_SMTP_PORT
+    )
+    email_smtp_username = str(
+        raw.get("EMAIL_SMTP_USERNAME")
+        or os.getenv("EMAIL_SMTP_USERNAME")
+        or ""
+    ).strip()
+    email_smtp_password = str(
+        raw.get("EMAIL_SMTP_PASSWORD")
+        or os.getenv("EMAIL_SMTP_PASSWORD")
+        or ""
+    )
+    email_smtp_use_tls = parse_bool_like(
+        raw.get("EMAIL_SMTP_USE_TLS")
+        or os.getenv("EMAIL_SMTP_USE_TLS")
+        or DEFAULT_EMAIL_SMTP_USE_TLS
+    )
+    email_from_address = str(
+        raw.get("EMAIL_FROM_ADDRESS")
+        or os.getenv("EMAIL_FROM_ADDRESS")
+        or ""
+    ).strip()
+    email_from_name = str(
+        raw.get("EMAIL_FROM_NAME")
+        or os.getenv("EMAIL_FROM_NAME")
+        or DEFAULT_EMAIL_FROM_NAME
+    ).strip() or DEFAULT_EMAIL_FROM_NAME
+    email_verify_token_ttl_sec = max(
+        300,
+        int(
+            raw.get("EMAIL_VERIFY_TOKEN_TTL_SEC")
+            or os.getenv("EMAIL_VERIFY_TOKEN_TTL_SEC")
+            or DEFAULT_EMAIL_VERIFY_TOKEN_TTL_SEC
+        ),
+    )
     billing_contact_qr_url = str(
         raw.get("BILLING_CONTACT_QR_URL")
         or os.getenv("BILLING_CONTACT_QR_URL")
@@ -558,6 +632,16 @@ def load_config(path: str) -> AppConfig:
         session_cookie_name=session_cookie_name,
         session_ttl_sec=session_ttl_sec,
         session_secret=session_secret,
+        app_public_base_url=app_public_base_url,
+        email_enabled=email_enabled,
+        email_smtp_host=email_smtp_host,
+        email_smtp_port=email_smtp_port,
+        email_smtp_username=email_smtp_username,
+        email_smtp_password=email_smtp_password,
+        email_smtp_use_tls=email_smtp_use_tls,
+        email_from_address=email_from_address,
+        email_from_name=email_from_name,
+        email_verify_token_ttl_sec=email_verify_token_ttl_sec,
         billing_contact_qr_url=billing_contact_qr_url,
         billing_contact_hint=billing_contact_hint,
     )
@@ -893,6 +977,29 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_users_role_status
                 ON users(role, status);
 
+            CREATE TABLE IF NOT EXISTS pending_registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nickname TEXT NOT NULL,
+                email TEXT NOT NULL COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                verify_token_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                request_ip TEXT NOT NULL DEFAULT '',
+                user_agent TEXT NOT NULL DEFAULT '',
+                device_fingerprint TEXT NOT NULL DEFAULT '',
+                risk_level TEXT NOT NULL DEFAULT 'normal',
+                expires_at INTEGER NOT NULL,
+                verified_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pending_registrations_email_status
+                ON pending_registrations(email, status);
+
+            CREATE INDEX IF NOT EXISTS idx_pending_registrations_expires_at
+                ON pending_registrations(expires_at);
+
             CREATE TABLE IF NOT EXISTS user_sessions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -1046,6 +1153,10 @@ class Storage:
         self._ensure_column("users", "credit_balance", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "credit_spent_total", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "credit_granted_total", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("users", "email_verified_at", "INTEGER")
+        self._ensure_column("users", "signup_ip", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("users", "signup_device_fingerprint", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("users", "signup_bonus_granted_at", "INTEGER")
         self._ensure_column("credit_ledger", "payment_amount", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("credit_ledger", "payment_proof_ref", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
@@ -1055,6 +1166,14 @@ class Storage:
         self._ensure_column("billing_requests", "credited_at", "INTEGER")
         self._ensure_column("billing_requests", "notified_at", "INTEGER")
         self._ensure_column("user_notifications", "delta", "INTEGER NOT NULL DEFAULT 0")
+        self.conn.execute(
+            """
+            UPDATE users
+            SET email_verified_at = COALESCE(email_verified_at, created_at)
+            WHERE email_verified_at IS NULL
+            """
+        )
+        self.conn.commit()
         self._ensure_column("user_notifications", "project_id", "INTEGER")
         self.conn.commit()
 
@@ -1342,6 +1461,193 @@ class Storage:
         ).fetchone()
         return dict(row) if row else None
 
+    def _normalize_pending_registration_row(
+        self, row: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        if not row:
+            return None
+        item = dict(row)
+        status_value = str(item.get("status") or "").strip().lower()
+        expires_at = int(item.get("expires_at") or 0)
+        now = int(time.time())
+        if status_value == "pending" and expires_at and expires_at <= now:
+            self.conn.execute(
+                """
+                UPDATE pending_registrations
+                SET status = 'expired', updated_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (now, int(item["id"])),
+            )
+            self.conn.commit()
+            item["status"] = "expired"
+            item["updated_at"] = now
+        return item
+
+    def get_pending_registration_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM pending_registrations
+            WHERE email = ?
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (normalize_email(email),),
+        ).fetchone()
+        return self._normalize_pending_registration_row(dict(row)) if row else None
+
+    def get_pending_registration_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM pending_registrations
+            WHERE verify_token_hash = ?
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (require_nonempty_text(token_hash, "token_hash"),),
+        ).fetchone()
+        return self._normalize_pending_registration_row(dict(row)) if row else None
+
+    def upsert_pending_registration(
+        self,
+        *,
+        nickname: str,
+        email: str,
+        password_hash: str,
+        verify_token_hash: str,
+        request_ip: str = "",
+        user_agent: str = "",
+        device_fingerprint: str = "",
+        risk_level: str = "normal",
+        expires_at: int,
+    ) -> Dict[str, Any]:
+        nickname_value = require_nonempty_text(nickname, "nickname")
+        email_value = normalize_email(email)
+        password_hash_value = require_nonempty_text(password_hash, "password_hash")
+        verify_token_hash_value = require_nonempty_text(verify_token_hash, "verify_token_hash")
+        risk_level_value = str(risk_level or "normal").strip().lower() or "normal"
+        if risk_level_value not in {"normal", "suspicious", "blocked"}:
+            raise ValueError(f"invalid risk level: {risk_level_value}")
+        now = int(time.time())
+        existing = self.conn.execute(
+            """
+            SELECT id
+            FROM pending_registrations
+            WHERE email = ?
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (email_value,),
+        ).fetchone()
+        with self.conn:
+            if existing:
+                self.conn.execute(
+                    """
+                    UPDATE pending_registrations
+                    SET nickname = ?,
+                        password_hash = ?,
+                        verify_token_hash = ?,
+                        status = 'pending',
+                        request_ip = ?,
+                        user_agent = ?,
+                        device_fingerprint = ?,
+                        risk_level = ?,
+                        expires_at = ?,
+                        verified_at = NULL,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        nickname_value,
+                        password_hash_value,
+                        verify_token_hash_value,
+                        str(request_ip or "").strip(),
+                        str(user_agent or "").strip(),
+                        str(device_fingerprint or "").strip(),
+                        risk_level_value,
+                        int(expires_at),
+                        now,
+                        int(existing["id"]),
+                    ),
+                )
+                pending_id = int(existing["id"])
+            else:
+                cur = self.conn.execute(
+                    """
+                    INSERT INTO pending_registrations(
+                        nickname, email, password_hash, verify_token_hash,
+                        status, request_ip, user_agent, device_fingerprint,
+                        risk_level, expires_at, verified_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, NULL, ?, ?)
+                    """,
+                    (
+                        nickname_value,
+                        email_value,
+                        password_hash_value,
+                        verify_token_hash_value,
+                        str(request_ip or "").strip(),
+                        str(user_agent or "").strip(),
+                        str(device_fingerprint or "").strip(),
+                        risk_level_value,
+                        int(expires_at),
+                        now,
+                        now,
+                    ),
+                )
+                pending_id = int(cur.lastrowid)
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM pending_registrations
+            WHERE id = ?
+            """,
+            (pending_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("failed to upsert pending registration")
+        return self._normalize_pending_registration_row(dict(row)) or {}
+
+    def update_pending_registration_status(
+        self,
+        pending_id: int,
+        *,
+        status: str,
+        verified_at: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        status_value = str(status or "").strip().lower()
+        if status_value not in {"pending", "verified", "expired", "canceled", "blocked"}:
+            raise ValueError(f"invalid pending registration status: {status_value}")
+        now = int(time.time())
+        cur = self.conn.execute(
+            """
+            UPDATE pending_registrations
+            SET status = ?,
+                verified_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                status_value,
+                int(verified_at) if verified_at is not None else None,
+                now,
+                int(pending_id),
+            ),
+        )
+        self.conn.commit()
+        if cur.rowcount <= 0:
+            raise ValueError("pending registration not found")
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM pending_registrations
+            WHERE id = ?
+            """,
+            (int(pending_id),),
+        ).fetchone()
+        return self._normalize_pending_registration_row(dict(row)) if row else {}
+
     def _credit_spent_increment(self, entry_type: str, delta: int) -> int:
         if str(entry_type or "").strip().lower() == "project_unlock" and int(delta) < 0:
             return abs(int(delta))
@@ -1446,6 +1752,10 @@ class Storage:
         role: str = "user",
         status: str = "active",
         signup_bonus_credits: int = 0,
+        email_verified_at: Optional[int] = None,
+        signup_ip: str = "",
+        signup_device_fingerprint: str = "",
+        signup_bonus_granted_at: Optional[int] = None,
     ) -> Dict[str, Any]:
         nickname_value = require_nonempty_text(nickname, "nickname")
         email_value = normalize_email(email)
@@ -1457,14 +1767,25 @@ class Storage:
             raise ValueError(f"invalid status: {status_value}")
         now = int(time.time())
         bonus_credits = max(0, int(signup_bonus_credits or 0))
+        email_verified_ts = (
+            int(email_verified_at)
+            if email_verified_at is not None
+            else (now if role_value == "admin" else None)
+        )
+        signup_bonus_granted_ts = (
+            int(signup_bonus_granted_at)
+            if signup_bonus_granted_at is not None
+            else (now if bonus_credits > 0 else None)
+        )
         with self.conn:
             cur = self.conn.execute(
                 """
                 INSERT INTO users(
                     nickname, email, password_hash, role, status,
                     credit_balance, credit_spent_total, credit_granted_total,
-                    password_updated_at, last_login_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, NULL, ?, ?)
+                    password_updated_at, last_login_at, created_at, updated_at,
+                    email_verified_at, signup_ip, signup_device_fingerprint, signup_bonus_granted_at
+                ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, ?, NULL, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     nickname_value,
@@ -1475,6 +1796,10 @@ class Storage:
                     now,
                     now,
                     now,
+                    email_verified_ts,
+                    str(signup_ip or "").strip(),
+                    str(signup_device_fingerprint or "").strip(),
+                    signup_bonus_granted_ts,
                 ),
             )
             user_id = int(cur.lastrowid)
@@ -4150,6 +4475,102 @@ class VirtualsBot:
     def clear_session_cookie(self, response: web.StreamResponse) -> None:
         response.del_cookie(self.session_cookie_name, path="/")
 
+    def public_app_base_url(self, request: web.Request) -> str:
+        configured = str(self.cfg.app_public_base_url or "").strip().rstrip("/")
+        if configured:
+            return configured
+        return f"{request.scheme}://{request.host}".rstrip("/")
+
+    def email_verification_expires_at(self) -> int:
+        return int(time.time()) + int(self.cfg.email_verify_token_ttl_sec)
+
+    def request_device_fingerprint(self, request: web.Request, payload: Dict[str, Any]) -> str:
+        body_value = str(payload.get("device_fingerprint") or "").strip()
+        header_value = str(request.headers.get("X-Device-Fingerprint") or "").strip()
+        return body_value or header_value
+
+    def ensure_email_delivery_enabled(self) -> None:
+        if not self.cfg.email_enabled:
+            raise ValueError("email verification is unavailable")
+        if not str(self.cfg.email_smtp_host or "").strip():
+            raise ValueError("EMAIL_SMTP_HOST is required")
+        if not str(self.cfg.email_from_address or "").strip():
+            raise ValueError("EMAIL_FROM_ADDRESS is required")
+
+    def build_email_verification_link(self, request: web.Request, token: str) -> str:
+        base_url = self.public_app_base_url(request)
+        return f"{base_url}/auth/verify-email?token={urllib.parse.quote(token)}"
+
+    def send_email_message(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        text_body: str,
+    ) -> None:
+        self.ensure_email_delivery_enabled()
+        message = EmailMessage()
+        from_address = str(self.cfg.email_from_address or "").strip()
+        from_name = str(self.cfg.email_from_name or "").strip() or DEFAULT_EMAIL_FROM_NAME
+        message["From"] = formataddr((from_name, from_address))
+        message["To"] = normalize_email(to_email)
+        message["Subject"] = require_nonempty_text(subject, "subject")
+        message.set_content(require_nonempty_text(text_body, "text_body"))
+
+        smtp_host = str(self.cfg.email_smtp_host or "").strip()
+        smtp_port = int(self.cfg.email_smtp_port)
+        smtp_username = str(self.cfg.email_smtp_username or "").strip()
+        smtp_password = str(self.cfg.email_smtp_password or "")
+        use_tls = bool(self.cfg.email_smtp_use_tls)
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as client:
+            client.ehlo()
+            if use_tls:
+                client.starttls(context=ssl.create_default_context())
+                client.ehlo()
+            if smtp_username or smtp_password:
+                client.login(smtp_username, smtp_password)
+            client.send_message(message)
+
+    def send_email_verification_email(
+        self,
+        *,
+        request: web.Request,
+        email: str,
+        nickname: str,
+        token: str,
+    ) -> None:
+        verify_link = self.build_email_verification_link(request, token)
+        display_name = str(nickname or "").strip() or "朋友"
+        subject = "请验证你的 Virtuals Whale Radar 邮箱"
+        body = (
+            f"{display_name}，你好：\n\n"
+            "感谢注册 Virtuals Whale Radar。\n"
+            "请点击下面的链接完成邮箱验证。验证成功后，账号才会正式创建，20 积分也会到账。\n\n"
+            f"{verify_link}\n\n"
+            f"链接将在 {max(1, int(self.cfg.email_verify_token_ttl_sec) // 60)} 分钟后失效。\n"
+            "如果这不是你的操作，可以直接忽略这封邮件。\n"
+        )
+        self.send_email_message(
+            to_email=email,
+            subject=subject,
+            text_body=body,
+        )
+
+    def build_auth_success_response(
+        self, user: Dict[str, Any], request: web.Request
+    ) -> web.Response:
+        token, _session = self.build_auth_session(user, request)
+        response = web.json_response(
+            {
+                "ok": True,
+                "user": self.auth_public_user(user),
+                "home_path": self.user_home_path(user),
+            }
+        )
+        self.apply_session_cookie(response, token)
+        return response
+
     def build_launch_config_from_managed_project(
         self, project_row: Optional[Dict[str, Any]]
     ) -> Optional[LaunchConfig]:
@@ -5980,24 +6401,124 @@ class VirtualsBot:
             password = require_nonempty_text(payload.get("password"), "password")
             if self.storage.get_user_by_email(email):
                 return web.json_response({"error": "email already registered"}, status=409)
-            user = self.storage.create_user(
+            raw_token = secrets.token_urlsafe(32)
+            pending = self.storage.upsert_pending_registration(
                 nickname=nickname,
                 email=email,
                 password_hash=hash_password(password),
+                verify_token_hash=hash_session_token(raw_token, self.session_secret),
+                request_ip=str(request.remote or ""),
+                user_agent=str(request.headers.get("User-Agent") or ""),
+                device_fingerprint=self.request_device_fingerprint(request, payload),
+                expires_at=self.email_verification_expires_at(),
+            )
+            self.send_email_verification_email(
+                request=request,
+                email=email,
+                nickname=nickname,
+                token=raw_token,
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "requires_verification": True,
+                    "email": email,
+                    "expires_at": int(pending.get("expires_at") or 0),
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def auth_resend_verification_handler(self, request: web.Request) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            email = normalize_email(payload.get("email"))
+            if self.storage.get_user_by_email(email):
+                return web.json_response({"error": "email already verified"}, status=409)
+            pending = self.storage.get_pending_registration_by_email(email)
+            if not pending:
+                return web.json_response({"error": "pending registration not found"}, status=404)
+            if str(pending.get("status") or "").strip().lower() == "blocked":
+                return web.json_response({"error": "registration is blocked"}, status=403)
+            raw_token = secrets.token_urlsafe(32)
+            pending = self.storage.upsert_pending_registration(
+                nickname=str(pending.get("nickname") or "").strip() or "新用户",
+                email=email,
+                password_hash=str(pending.get("password_hash") or ""),
+                verify_token_hash=hash_session_token(raw_token, self.session_secret),
+                request_ip=str(request.remote or pending.get("request_ip") or ""),
+                user_agent=str(request.headers.get("User-Agent") or pending.get("user_agent") or ""),
+                device_fingerprint=self.request_device_fingerprint(request, payload)
+                or str(pending.get("device_fingerprint") or ""),
+                risk_level=str(pending.get("risk_level") or "normal"),
+                expires_at=self.email_verification_expires_at(),
+            )
+            self.send_email_verification_email(
+                request=request,
+                email=email,
+                nickname=str(pending.get("nickname") or ""),
+                token=raw_token,
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "email": email,
+                    "expires_at": int(pending.get("expires_at") or 0),
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def auth_verify_email_handler(self, request: web.Request) -> web.Response:
+        token = str(request.query.get("token", "")).strip()
+        if not token:
+            return web.json_response({"error": "token is required"}, status=400)
+        try:
+            token_hash = hash_session_token(token, self.session_secret)
+            pending = self.storage.get_pending_registration_by_token_hash(token_hash)
+            if not pending:
+                return web.json_response({"error": "verification link is invalid or expired"}, status=400)
+            pending_status = str(pending.get("status") or "").strip().lower()
+            if pending_status == "blocked":
+                return web.json_response({"error": "registration is blocked"}, status=403)
+            if pending_status == "expired":
+                return web.json_response({"error": "verification link is invalid or expired"}, status=400)
+            if pending_status not in {"pending", "verified"}:
+                return web.json_response({"error": "verification link is invalid"}, status=400)
+
+            email = normalize_email(pending.get("email"))
+            existing_user = self.storage.get_user_by_email(email)
+            if existing_user:
+                if pending_status != "verified":
+                    self.storage.update_pending_registration_status(
+                        int(pending["id"]),
+                        status="verified",
+                        verified_at=int(time.time()),
+                    )
+                return self.build_auth_success_response(existing_user, request)
+
+            now = int(time.time())
+            user = self.storage.create_user(
+                nickname=str(pending.get("nickname") or "").strip() or "新用户",
+                email=email,
+                password_hash=str(pending.get("password_hash") or ""),
                 role="user",
                 status="active",
                 signup_bonus_credits=DEFAULT_SIGNUP_BONUS_CREDITS,
+                email_verified_at=now,
+                signup_ip=str(pending.get("request_ip") or ""),
+                signup_device_fingerprint=str(pending.get("device_fingerprint") or ""),
+                signup_bonus_granted_at=now,
             )
-            token, _session = self.build_auth_session(user, request)
-            response = web.json_response(
-                {
-                    "ok": True,
-                    "user": self.auth_public_user(user),
-                    "home_path": self.user_home_path(user),
-                }
+            self.storage.update_pending_registration_status(
+                int(pending["id"]),
+                status="verified",
+                verified_at=now,
             )
-            self.apply_session_cookie(response, token)
-            return response
+            return self.build_auth_success_response(user, request)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -6010,20 +6531,36 @@ class VirtualsBot:
             email = normalize_email(payload.get("email"))
             password = require_nonempty_text(payload.get("password"), "password")
             user = self.storage.get_user_by_email(email)
-            if not user or not verify_password(password, str(user.get("password_hash") or "")):
+            if user:
+                if not verify_password(password, str(user.get("password_hash") or "")):
+                    return web.json_response({"error": "invalid email or password"}, status=401)
+                if not int(user.get("email_verified_at") or 0):
+                    return web.json_response(
+                        {
+                            "error": "email is not verified",
+                            "code": "email_not_verified",
+                            "email": email,
+                            "can_resend": True,
+                        },
+                        status=403,
+                    )
+            else:
+                pending = self.storage.get_pending_registration_by_email(email)
+                if pending and verify_password(password, str(pending.get("password_hash") or "")):
+                    return web.json_response(
+                        {
+                            "error": "email is not verified",
+                            "code": "email_not_verified",
+                            "email": email,
+                            "can_resend": True,
+                            "expired": str(pending.get("status") or "").strip().lower() == "expired",
+                        },
+                        status=403,
+                    )
                 return web.json_response({"error": "invalid email or password"}, status=401)
             if str(user.get("status") or "").lower() != "active":
                 return web.json_response({"error": "user is disabled"}, status=403)
-            token, _session = self.build_auth_session(user, request)
-            response = web.json_response(
-                {
-                    "ok": True,
-                    "user": self.auth_public_user(user),
-                    "home_path": self.user_home_path(user),
-                }
-            )
-            self.apply_session_cookie(response, token)
-            return response
+            return self.build_auth_success_response(user, request)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
@@ -7434,6 +7971,8 @@ class VirtualsBot:
         app.router.add_get("/auth/", self.admin_handler)
         app.router.add_get("/auth/{tail:.*}", self.admin_handler)
         app.router.add_post("/api/auth/register", self.auth_register_handler)
+        app.router.add_post("/api/auth/resend-verification", self.auth_resend_verification_handler)
+        app.router.add_get("/api/auth/verify-email", self.auth_verify_email_handler)
         app.router.add_post("/api/auth/login", self.auth_login_handler)
         app.router.add_post("/api/auth/logout", self.auth_logout_handler)
         app.router.add_get("/api/auth/me", self.auth_me_handler)

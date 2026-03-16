@@ -34,9 +34,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const registerMutation = useMutation({
     mutationFn: ({ nickname, email, password }: { nickname: string; email: string; password: string }) =>
       dashboardApi.auth.register(nickname, email, password),
-    onSuccess: async () => {
-      await invalidateAuth();
-    },
   });
 
   const logoutMutation = useMutation({

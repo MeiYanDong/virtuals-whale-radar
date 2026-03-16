@@ -1,6 +1,11 @@
 import { createContext } from "react";
 
-import type { AuthMeResponse, AuthSuccessResponse, AuthUser } from "@/types/api";
+import type {
+  AuthMeResponse,
+  AuthRegisterPendingResponse,
+  AuthSuccessResponse,
+  AuthUser,
+} from "@/types/api";
 
 export interface AuthContextValue {
   auth?: AuthMeResponse;
@@ -10,7 +15,7 @@ export interface AuthContextValue {
   isUser: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<AuthSuccessResponse>;
-  register: (nickname: string, email: string, password: string) => Promise<AuthSuccessResponse>;
+  register: (nickname: string, email: string, password: string) => Promise<AuthRegisterPendingResponse>;
   logout: () => Promise<void>;
   refresh: () => Promise<AuthMeResponse>;
 }

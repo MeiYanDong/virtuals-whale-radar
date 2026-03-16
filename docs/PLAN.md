@@ -1205,3 +1205,100 @@ CREATE TABLE IF NOT EXISTS user_notifications (
 
 - 当前主流程：用户微信付款后，管理员在 `Users` 页面手动入账，用户收到“充值积分已到账”提醒
 - 备用流程：若未来确实需要工单化，再启用 `billing_requests` / proof / notify 这组隐藏能力
+
+## 19. 邮箱验证注册方案
+
+### 19.1 目标
+
+- 保留公开注册能力，不改为邀请码模式。
+- 保留新用户赠送 `20` 积分的体验路径。
+- 不迁移现有本地 `users / user_sessions / user_wallets / credit_ledger` 体系。
+- 改为“邮箱验证成功后才正式创建本地用户并发放注册积分”。
+
+### 19.2 核心流程
+
+1. 用户在注册页提交 `昵称 + 邮箱 + 密码`。
+2. 后端不立即写入 `users`，而是写入 `pending_registrations`。
+3. 后端生成一次性邮箱验证 token，并发送验证邮件。
+4. 用户点击邮件中的验证链接。
+5. 后端校验 token 成功后，正式创建本地 `users` 记录。
+6. 用户创建成功后写入 `credit_ledger(type=signup_bonus)`，并发放 `20` 积分。
+7. 同时创建本地 session，自动登录并跳转到 `/app`。
+
+### 19.3 数据表
+
+```sql
+CREATE TABLE IF NOT EXISTS pending_registrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nickname TEXT NOT NULL,
+    email TEXT NOT NULL COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    verify_token_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'verified', 'expired', 'canceled', 'blocked')),
+    request_ip TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    device_fingerprint TEXT NOT NULL DEFAULT '',
+    risk_level TEXT NOT NULL DEFAULT 'normal'
+        CHECK (risk_level IN ('normal', 'suspicious', 'blocked')),
+    expires_at INTEGER NOT NULL,
+    verified_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+```
+
+并为 `users` 增加以下字段：
+
+- `email_verified_at`
+- `signup_ip`
+- `signup_device_fingerprint`
+- `signup_bonus_granted_at`
+
+### 19.4 后端接口
+
+| Method | Route | Auth | Request | Response |
+|---|---|---|---|---|
+| `POST` | `/api/auth/register` | Guest | `nickname`, `email`, `password` | `ok`, `requires_verification`, `email`, `expires_at` |
+| `POST` | `/api/auth/resend-verification` | Guest | `email` | `ok`, `email`, `expires_at` |
+| `GET` | `/api/auth/verify-email?token=...` | Guest | query `token` | 验证成功后写入 `users` 并自动登录 |
+| `POST` | `/api/auth/login` | Guest | `email`, `password` | 若邮箱未验证则返回 `email_not_verified` |
+
+### 19.5 邮件发送
+
+- 通过本地 SMTP/邮件服务发送验证邮件，不接入 Supabase Auth。
+- 邮件只承担“验证邮箱”职责，不承担后续登录/会话。
+- 需要新增配置：
+  - `APP_PUBLIC_BASE_URL`
+  - `EMAIL_ENABLED`
+  - `EMAIL_SMTP_HOST`
+  - `EMAIL_SMTP_PORT`
+  - `EMAIL_SMTP_USERNAME`
+  - `EMAIL_SMTP_PASSWORD`
+  - `EMAIL_SMTP_USE_TLS`
+  - `EMAIL_FROM_ADDRESS`
+  - `EMAIL_FROM_NAME`
+  - `EMAIL_VERIFY_TOKEN_TTL_SEC`
+
+### 19.6 前端行为
+
+- 注册成功后不再立即登录。
+- 注册页显示“验证邮件已发送，请前往邮箱完成验证”。
+- 登录页若遇到 `email_not_verified`，提示先完成邮箱验证，并提供“重新发送验证邮件”入口。
+- 新增邮箱验证结果页：
+  - 成功：自动跳转到 `/app`
+  - 失败/过期：提示重新发送
+
+### 19.7 反滥用策略
+
+- 公开注册保留。
+- 新手积分延后到“邮箱验证成功”后再发放。
+- 后续迭代中继续补：
+  - IP 注册限流
+  - 人机验证（Turnstile）
+  - 临时邮箱域名拦截
+
+### 19.8 当前阶段边界
+
+- 本轮先完成邮箱验证闭环。
+- `Turnstile / IP 限流 / 临时邮箱拦截` 作为下一阶段风险控制项，不阻塞当前实现。

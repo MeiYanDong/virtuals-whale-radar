@@ -20,6 +20,19 @@ export interface AuthSuccessResponse {
   home_path: string;
 }
 
+export interface AuthRegisterPendingResponse {
+  ok: boolean;
+  requires_verification: boolean;
+  email: string;
+  expires_at: number;
+}
+
+export interface AuthResendVerificationResponse {
+  ok: boolean;
+  email: string;
+  expires_at: number;
+}
+
 export interface LaunchConfig {
   name: string;
   internal_pool_addr: string;

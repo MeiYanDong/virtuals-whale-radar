@@ -525,7 +525,7 @@
 
 ## Phase 18：双角色联调与验收
 
-- [x] 验证注册 -> 自动登录 -> 进入 `/app`。
+- [x] 验证注册 -> 邮箱验证 -> 自动登录 -> 进入 `/app`。
 - [x] 验证未登录访问 `/app/*` 与 `/admin/*` 会跳到 `/auth/login`。
 - [x] 验证普通用户无法访问管理员写接口。
 - [x] 验证普通用户无法看到其它用户钱包。
@@ -554,3 +554,40 @@
 - [x] 图片凭证上传、通知中心与管理员充值处理流可用。
 - [x] 充值链路已收敛为“微信付款 + 管理员手动入账”的轻模式。
 - [x] 用户可以从 `Projects` 回看 `ended` 项目的历史详情。
+- [x] 公开注册改为“邮箱验证成功后再创建用户并发放注册积分”。
+
+## Phase 26：邮箱验证注册闭环
+
+- [x] 新增 `pending_registrations` 表。
+- [x] 为 `users` 增加：
+  - `email_verified_at`
+  - `signup_ip`
+  - `signup_device_fingerprint`
+  - `signup_bonus_granted_at`
+- [x] `POST /api/auth/register` 改为只创建待验证注册，不立即写入 `users`。
+- [x] 注册成功后发送邮箱验证邮件。
+- [x] 新增 `POST /api/auth/resend-verification`。
+- [x] 新增 `GET /api/auth/verify-email`。
+- [x] 验证成功后再正式创建本地用户。
+- [x] 验证成功后写入 `signup_bonus` 积分流水并发放 `20` 积分。
+- [x] 验证成功后自动创建 session 并登录。
+- [x] `POST /api/auth/login` 对未验证邮箱返回 `email_not_verified`。
+
+## Phase 27：邮箱验证前端与配置
+
+- [x] `config.example.json` 增加邮件发送相关配置项：
+  - `APP_PUBLIC_BASE_URL`
+  - `EMAIL_ENABLED`
+  - `EMAIL_SMTP_HOST`
+  - `EMAIL_SMTP_PORT`
+  - `EMAIL_SMTP_USERNAME`
+  - `EMAIL_SMTP_PASSWORD`
+  - `EMAIL_SMTP_USE_TLS`
+  - `EMAIL_FROM_ADDRESS`
+  - `EMAIL_FROM_NAME`
+  - `EMAIL_VERIFY_TOKEN_TTL_SEC`
+- [x] 注册页改为“提交后提示查收验证邮件”，不再立即登录。
+- [x] 登录页支持提示“邮箱未验证”，并提供重发验证邮件入口。
+- [x] 新增邮箱验证结果页或结果态。
+- [x] 验证注册链接打开成功后跳转 `/app`。
+- [x] 补邮件文案与用户提示，明确“验证成功后才会到账 20 积分”。

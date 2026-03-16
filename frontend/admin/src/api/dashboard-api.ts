@@ -5,6 +5,8 @@ import type {
   AppMetaResponse,
   AppNotificationsResponse,
   AuthMeResponse,
+  AuthRegisterPendingResponse,
+  AuthResendVerificationResponse,
   AuthSuccessResponse,
   BillingRequestsResponse,
   BillingSummaryResponse,
@@ -47,9 +49,20 @@ export const dashboardApi = {
       });
     },
     register(nickname: string, email: string, password: string) {
-      return requestJson<AuthSuccessResponse>("/api/auth/register", {
+      return requestJson<AuthRegisterPendingResponse>("/api/auth/register", {
         method: "POST",
         body: { nickname, email, password },
+      });
+    },
+    resendVerification(email: string) {
+      return requestJson<AuthResendVerificationResponse>("/api/auth/resend-verification", {
+        method: "POST",
+        body: { email },
+      });
+    },
+    verifyEmail(token: string) {
+      return requestJson<AuthSuccessResponse>("/api/auth/verify-email", {
+        params: { token },
       });
     },
     logout() {
