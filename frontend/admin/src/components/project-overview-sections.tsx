@@ -39,7 +39,7 @@ function formatSpentVInteger(value: number) {
 
 function formatBreakevenFdvUsd(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "-";
-  return formatDecimal(value, 2);
+  return formatDecimal(value / 10000, 2);
 }
 
 function projectStatusLabel(status: string) {
@@ -95,11 +95,11 @@ function MinuteBars({
         </div>
         <div className="rounded-[20px] border border-border bg-[color:var(--surface-muted)] px-4 py-3">
           <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">累计 SpentV</div>
-          <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{formatCurrency(total)}</div>
+          <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{formatSpentVInteger(total)}</div>
         </div>
         <div className="rounded-[20px] border border-border bg-[color:var(--surface-muted)] px-4 py-3">
           <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">峰值分钟</div>
-          <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{formatCurrency(peak)}</div>
+          <div className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{formatSpentVInteger(peak)}</div>
         </div>
       </div>
 
@@ -110,11 +110,11 @@ function MinuteBars({
               const height = peak > 0 ? Math.max(8, (item.value / peak) * 180) : 8;
               return (
                 <div key={item.key} className="flex flex-1 flex-col items-center justify-end gap-2">
-                  <div className="text-[10px] text-muted-foreground">{formatDecimal(item.value, 2)}</div>
+                  <div className="text-[10px] text-muted-foreground">{formatInteger(Math.round(item.value))}</div>
                   <div
                     className="w-full rounded-t-[10px] bg-[linear-gradient(180deg,#77b9af_0%,#248e93_100%)] shadow-[0_10px_28px_rgba(36,142,147,0.18)]"
                     style={{ height }}
-                    title={`${formatDateTime(item.key)} / ${formatCurrency(item.value)}`}
+                    title={`${formatDateTime(item.key)} / ${formatSpentVInteger(item.value)}`}
                   />
                 </div>
               );
@@ -150,7 +150,7 @@ function BoardTable({
           <TableHead>钱包地址</TableHead>
           <TableHead>累计花费 V</TableHead>
           <TableHead>累计代币数量（万）</TableHead>
-          <TableHead>买入市值（USD）</TableHead>
+          <TableHead>买入市值（万 USD）</TableHead>
           <TableHead>更新时间</TableHead>
         </TableRow>
       </TableHeader>
