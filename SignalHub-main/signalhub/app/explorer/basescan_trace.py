@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -13,12 +15,45 @@ ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 ZERO_TOPIC = "0x" + ("0" * 64)
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+RPC_TRANSIENT_ERROR_TOKENS = (
+    "timeout",
+    "timed out",
+    "readtimeout",
+    "connecttimeout",
+    "pooltimeout",
+    "read timeout",
+    "connect timeout",
+    "temporarily unavailable",
+    "connection reset",
+    "connection refused",
+    "server disconnected",
+    "502",
+    "503",
+    "504",
+    "gateway",
+    "econnreset",
+)
+
+
+@dataclass(slots=True)
+class RpcEndpointState:
+    url: str
+    label: str
+    is_public: bool
+    supports_basic_rpc: bool | None = None
+    supports_historical_blocks: bool | None = None
+    supports_logs: bool | None = None
+    supports_trace: bool | None = None
+    cooldown_until: float = 0.0
+    last_error: str = ""
+    last_probed_at: float = 0.0
 
 
 class BaseLaunchTraceService:
     def __init__(self, settings: Settings) -> None:
         self.https_url = settings.chainstack_base_https_url
         self.wss_url = settings.chainstack_base_wss_url
+        self.https_urls = self._build_https_pool(settings)
         self.chain_id = settings.base_chain_id
         self.timeout_seconds = settings.request_timeout_seconds
         self.log_chunk_size = max(settings.chainstack_log_chunk_size, 1)
@@ -33,6 +68,67 @@ class BaseLaunchTraceService:
             for item in settings.chainstack_prelaunch_statuses
             if self._normalize_status_value(item)
         }
+        self.rpc_quota_cooldown_seconds = settings.chainstack_rpc_quota_cooldown_seconds
+        self.rpc_transient_cooldown_seconds = settings.chainstack_rpc_transient_cooldown_seconds
+        self.rpc_states = {
+            state.url: state
+            for state in self.https_urls
+        }
+
+    def get_rpc_pool_status(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        now = time.time()
+        for state in self.https_urls:
+            cooldown_until = state.cooldown_until if state.cooldown_until > now else 0.0
+            items.append(
+                {
+                    "label": state.label,
+                    "url": state.url,
+                    "is_public": state.is_public,
+                    "supports_basic_rpc": state.supports_basic_rpc,
+                    "supports_historical_blocks": state.supports_historical_blocks,
+                    "supports_logs": state.supports_logs,
+                    "supports_trace": state.supports_trace,
+                    "cooldown_until": datetime.fromtimestamp(cooldown_until).isoformat()
+                    if cooldown_until
+                    else None,
+                    "last_error": state.last_error or None,
+                    "last_probed_at": datetime.fromtimestamp(state.last_probed_at).isoformat()
+                    if state.last_probed_at
+                    else None,
+                }
+            )
+        return items
+
+    async def probe_rpc_pool(self) -> list[dict[str, Any]]:
+        async with httpx.AsyncClient(timeout=self.timeout_seconds, follow_redirects=True) as client:
+            for state in self.https_urls:
+                await self._probe_endpoint(client, state)
+        return self.get_rpc_pool_status()
+
+    def _build_https_pool(self, settings: Settings) -> list[RpcEndpointState]:
+        urls: list[RpcEndpointState] = []
+        seen: set[str] = set()
+
+        def add(items: tuple[str, ...], *, is_public: bool, prefix: str) -> None:
+            index = 0
+            for raw in items:
+                url = str(raw or "").strip()
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                index += 1
+                urls.append(
+                    RpcEndpointState(
+                        url=url,
+                        label=f"{prefix}-{index}",
+                        is_public=is_public,
+                    )
+                )
+
+        add(settings.chainstack_base_https_urls, is_public=False, prefix="chainstack")
+        add(settings.chainstack_public_https_urls, is_public=True, prefix="public")
+        return urls
 
     async def trace_token_launch(
         self,
@@ -648,33 +744,231 @@ class BaseLaunchTraceService:
 
         return self._flatten_replay_trace(replayed)
 
-    async def _rpc(self, client: httpx.AsyncClient, method: str, params: list[Any]) -> Any:
-        if not self.https_url:
-            raise RuntimeError("CHAINSTACK_BASE_HTTPS_URL is not configured")
+    async def _probe_endpoint(
+        self,
+        client: httpx.AsyncClient,
+        state: RpcEndpointState,
+    ) -> None:
+        await self._probe_capability(client, state, "basic_rpc")
+        await self._probe_capability(client, state, "historical_blocks")
+        await self._probe_capability(client, state, "logs")
 
+    async def _probe_capability(
+        self,
+        client: httpx.AsyncClient,
+        state: RpcEndpointState,
+        capability: str,
+    ) -> None:
+        try:
+            if capability == "basic_rpc":
+                await self._rpc_once(client, state.url, "eth_blockNumber", [])
+                self._mark_endpoint_success(state, capability)
+                return
+            if capability == "historical_blocks":
+                latest = await self._rpc_once(client, state.url, "eth_blockNumber", [])
+                latest_block = self._to_int(latest, base=16) or 0
+                historical_block = max(latest_block - 64, 0)
+                await self._rpc_once(client, state.url, "eth_getBlockByNumber", [hex(historical_block), False])
+                self._mark_endpoint_success(state, capability)
+                return
+            if capability == "logs":
+                latest = await self._rpc_once(client, state.url, "eth_blockNumber", [])
+                latest_block = self._to_int(latest, base=16) or 0
+                await self._rpc_once(
+                    client,
+                    state.url,
+                    "eth_getLogs",
+                    [{
+                        "address": ZERO_ADDRESS,
+                        "fromBlock": hex(latest_block),
+                        "toBlock": hex(latest_block),
+                        "topics": [TRANSFER_TOPIC],
+                    }],
+                )
+                self._mark_endpoint_success(state, capability)
+                return
+        except RuntimeError as exc:
+            self._mark_endpoint_failure(state, capability, str(exc))
+
+    def _required_capability(self, method: str, params: list[Any]) -> str:
+        if method == "eth_getLogs":
+            return "logs"
+        if method in {"debug_traceTransaction", "trace_replayTransaction"}:
+            return "trace"
+        if method == "eth_getBlockByNumber":
+            block_ref = str(params[0] if params else "latest").strip().lower()
+            return "basic_rpc" if block_ref == "latest" else "historical_blocks"
+        if method == "eth_getCode":
+            block_ref = str(params[1] if len(params) > 1 else "latest").strip().lower()
+            return "basic_rpc" if block_ref == "latest" else "historical_blocks"
+        return "basic_rpc"
+
+    def _ordered_rpc_candidates(self, capability: str) -> list[RpcEndpointState]:
+        now = time.time()
+        active = [
+            state
+            for state in self.https_urls
+            if state.cooldown_until <= now
+        ]
+        if not active:
+            active = list(self.https_urls)
+
+        def support_rank(state: RpcEndpointState) -> int:
+            value = self._capability_value(state, capability)
+            if value is True:
+                return 0
+            if value is None:
+                return 1
+            return 2
+
+        ordered = sorted(
+            active,
+            key=lambda state: (
+                support_rank(state),
+                1 if state.is_public else 0,
+                state.cooldown_until,
+                state.label,
+            ),
+        )
+        if capability == "basic_rpc":
+            return ordered
+        supported = [
+            state
+            for state in ordered
+            if self._capability_value(state, capability) is not False
+        ]
+        return supported or ordered
+
+    def _capability_value(self, state: RpcEndpointState, capability: str) -> bool | None:
+        if capability == "basic_rpc":
+            return state.supports_basic_rpc
+        if capability == "historical_blocks":
+            return state.supports_historical_blocks
+        if capability == "logs":
+            return state.supports_logs
+        if capability == "trace":
+            return state.supports_trace
+        return None
+
+    def _mark_endpoint_success(self, state: RpcEndpointState, capability: str) -> None:
+        state.last_probed_at = time.time()
+        state.last_error = ""
+        state.cooldown_until = 0.0
+        if capability == "basic_rpc":
+            state.supports_basic_rpc = True
+        elif capability == "historical_blocks":
+            state.supports_basic_rpc = True
+            state.supports_historical_blocks = True
+        elif capability == "logs":
+            state.supports_basic_rpc = True
+            state.supports_logs = True
+        elif capability == "trace":
+            state.supports_basic_rpc = True
+            state.supports_trace = True
+
+    def _mark_endpoint_failure(self, state: RpcEndpointState, capability: str, error_message: str) -> None:
+        lowered = error_message.lower()
+        state.last_probed_at = time.time()
+        state.last_error = error_message
+        if self._is_quota_error(lowered):
+            state.cooldown_until = time.time() + self.rpc_quota_cooldown_seconds
+        elif self._is_transient_error(lowered):
+            state.cooldown_until = time.time() + self.rpc_transient_cooldown_seconds
+
+        if self._is_capability_error(lowered):
+            if capability == "historical_blocks":
+                state.supports_historical_blocks = False
+            elif capability == "logs":
+                state.supports_logs = False
+            elif capability == "trace":
+                state.supports_trace = False
+            elif capability == "basic_rpc":
+                state.supports_basic_rpc = False
+
+    def _is_quota_error(self, lowered: str) -> bool:
+        return "quota" in lowered or "request units" in lowered or "monthly ru" in lowered
+
+    def _is_transient_error(self, lowered: str) -> bool:
+        return any(token in lowered for token in RPC_TRANSIENT_ERROR_TOKENS)
+
+    def _is_capability_error(self, lowered: str) -> bool:
+        return (
+            "not available on your current plan" in lowered
+            or "method not found" in lowered
+            or "does not exist/is not available" in lowered
+        )
+
+    async def _rpc_once(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        method: str,
+        params: list[Any],
+    ) -> Any:
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": method,
             "params": params,
         }
+        request_timeout = self.timeout_seconds
+        if method in {"eth_getLogs", "debug_traceTransaction", "trace_replayTransaction"}:
+            request_timeout = max(self.timeout_seconds, 45)
         try:
-            response = await client.post(self.https_url, json=payload)
-            response.raise_for_status()
+            response = await client.post(url, json=payload, timeout=request_timeout)
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"Chainstack RPC transport error: {exc}") from exc
+            detail = str(exc).strip() or repr(exc)
+            raise RuntimeError(f"RPC transport error: {detail}") from exc
 
-        body = response.json()
-        if not isinstance(body, dict):
-            raise RuntimeError("Unexpected Chainstack RPC response payload")
+        raw_text = response.text
+        body: dict[str, Any] | None = None
+        try:
+            parsed = response.json()
+            if isinstance(parsed, dict):
+                body = parsed
+        except ValueError:
+            body = None
+
+        if response.status_code >= 400:
+            if body and body.get("error"):
+                detail = body["error"]
+                if isinstance(detail, dict):
+                    message = detail.get("message") or detail
+                else:
+                    message = detail
+                raise RuntimeError(f"RPC error: {message}")
+            raise RuntimeError(f"RPC transport error: HTTP {response.status_code}: {raw_text[:240]}")
+
+        if body is None:
+            raise RuntimeError("Unexpected RPC response payload")
         if body.get("error"):
             detail = body["error"]
             if isinstance(detail, dict):
                 message = detail.get("message") or detail
             else:
                 message = detail
-            raise RuntimeError(f"Chainstack RPC error: {message}")
+            raise RuntimeError(f"RPC error: {message}")
         return body.get("result")
+
+    async def _rpc(self, client: httpx.AsyncClient, method: str, params: list[Any]) -> Any:
+        if not self.https_urls:
+            raise RuntimeError("No HTTPS RPC endpoint is configured")
+
+        capability = self._required_capability(method, params)
+        last_error = ""
+        for state in self._ordered_rpc_candidates(capability):
+            try:
+                result = await self._rpc_once(client, state.url, method, params)
+                self._mark_endpoint_success(state, capability)
+                return result
+            except RuntimeError as exc:
+                last_error = f"{state.label}: {exc}"
+                self._mark_endpoint_failure(state, capability, str(exc))
+                continue
+
+        if capability == "trace":
+            return []
+        raise RuntimeError(last_error or f"No available RPC endpoint for capability={capability}")
 
     def _flatten_call_trace(self, trace: Any, *, depth: int = 0) -> list[dict[str, Any]]:
         if not isinstance(trace, dict):

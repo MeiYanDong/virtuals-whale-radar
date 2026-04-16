@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +10,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_VIRTUALS_ENDPOINT = "https://api2.virtuals.io/api/virtuals"
 DEFAULT_VIRTUALS_APP_BASE_URL = "https://app.virtuals.io"
+DEFAULT_PUBLIC_BASE_HTTPS_URLS = (
+    "https://base-rpc.publicnode.com",
+    "https://mainnet.base.org",
+)
 
 
 def _load_env_file(path: Path) -> None:
@@ -67,6 +72,19 @@ def _to_csv_list(raw: str | None) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _merge_url_list(*groups: Iterable[str]) -> tuple[str, ...]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw in group:
+            item = str(raw or "").strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            values.append(item)
+    return tuple(values)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str
@@ -76,6 +94,8 @@ class Settings:
     virtuals_app_base_url: str
     chainstack_base_https_url: str | None
     chainstack_base_wss_url: str | None
+    chainstack_base_https_urls: tuple[str, ...]
+    chainstack_public_https_urls: tuple[str, ...]
     chainstack_subscription_enabled: bool
     chainstack_subscription_refresh_seconds: int
     chainstack_trace_backfill_enabled: bool
@@ -85,6 +105,8 @@ class Settings:
     chainstack_earliest_scan_window_blocks: int
     chainstack_earliest_batch_size: int
     chainstack_pattern_log_limit: int
+    chainstack_rpc_quota_cooldown_seconds: int
+    chainstack_rpc_transient_cooldown_seconds: int
     chainstack_prelaunch_statuses: tuple[str, ...]
     etherscan_api_key: str | None
     etherscan_base_api_url: str
@@ -120,6 +142,14 @@ def load_settings() -> Settings:
     ).strip() or None
     chainstack_base_https_url = (os.getenv("CHAINSTACK_BASE_HTTPS_URL") or "").strip() or None
     chainstack_base_wss_url = (os.getenv("CHAINSTACK_BASE_WSS_URL") or "").strip() or None
+    chainstack_base_https_urls = _merge_url_list(
+        (chainstack_base_https_url,) if chainstack_base_https_url else (),
+        _to_csv_list(os.getenv("CHAINSTACK_BASE_HTTPS_URLS")),
+    )
+    chainstack_public_https_urls = _merge_url_list(
+        _to_csv_list(os.getenv("CHAINSTACK_PUBLIC_HTTPS_URLS")),
+        DEFAULT_PUBLIC_BASE_HTTPS_URLS,
+    )
 
     return Settings(
         app_name=os.getenv("APP_NAME", "SignalHub - Virtuals Monitor"),
@@ -134,6 +164,8 @@ def load_settings() -> Settings:
         virtuals_app_base_url=os.getenv("VIRTUALS_APP_BASE_URL", DEFAULT_VIRTUALS_APP_BASE_URL),
         chainstack_base_https_url=chainstack_base_https_url,
         chainstack_base_wss_url=chainstack_base_wss_url,
+        chainstack_base_https_urls=chainstack_base_https_urls,
+        chainstack_public_https_urls=chainstack_public_https_urls,
         chainstack_subscription_enabled=_to_bool(os.getenv("CHAINSTACK_SUBSCRIPTION_ENABLED"), True),
         chainstack_subscription_refresh_seconds=max(
             int(os.getenv("CHAINSTACK_SUBSCRIPTION_REFRESH_SECONDS", "30")),
@@ -166,6 +198,14 @@ def load_settings() -> Settings:
         chainstack_pattern_log_limit=max(
             int(os.getenv("CHAINSTACK_PATTERN_LOG_LIMIT", "3")),
             1,
+        ),
+        chainstack_rpc_quota_cooldown_seconds=max(
+            int(os.getenv("CHAINSTACK_RPC_QUOTA_COOLDOWN_SECONDS", "3600")),
+            60,
+        ),
+        chainstack_rpc_transient_cooldown_seconds=max(
+            int(os.getenv("CHAINSTACK_RPC_TRANSIENT_COOLDOWN_SECONDS", "600")),
+            10,
         ),
         chainstack_prelaunch_statuses=_to_csv_list(
             os.getenv("CHAINSTACK_PRELAUNCH_STATUSES", "PRE LAUNCH,PRE_LAUNCH,PRELAUNCH")

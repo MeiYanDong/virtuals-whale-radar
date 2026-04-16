@@ -67,6 +67,8 @@ VIRTUALS_MODE=upcoming_launches
 VIRTUALS_SAMPLE_MODE=false
 
 CHAINSTACK_BASE_HTTPS_URL=https://base-mainnet.core.chainstack.com/<your-project-id>
+CHAINSTACK_BASE_HTTPS_URLS=https://base-mainnet.core.chainstack.com/<primary>,https://base-mainnet.core.chainstack.com/<secondary>
+CHAINSTACK_PUBLIC_HTTPS_URLS=https://base-rpc.publicnode.com,https://mainnet.base.org
 CHAINSTACK_BASE_WSS_URL=wss://base-mainnet.core.chainstack.com/<your-project-id>
 CHAINSTACK_SUBSCRIPTION_ENABLED=true
 ```
@@ -170,6 +172,8 @@ restart_service.cmd -Port 8000
 ### Chainstack / 链上追踪
 
 - `CHAINSTACK_BASE_HTTPS_URL`：Base HTTPS RPC
+- `CHAINSTACK_BASE_HTTPS_URLS`：按顺序尝试的付费 / 自有 HTTPS RPC 池
+- `CHAINSTACK_PUBLIC_HTTPS_URLS`：公开 HTTPS RPC 兜底池
 - `CHAINSTACK_BASE_WSS_URL`：Base WSS RPC
 - `CHAINSTACK_SUBSCRIPTION_ENABLED`：是否开启常驻订阅
 - `CHAINSTACK_SUBSCRIPTION_REFRESH_SECONDS`：订阅刷新周期
@@ -180,6 +184,8 @@ restart_service.cmd -Port 8000
 - `CHAINSTACK_EARLIEST_SCAN_WINDOW_BLOCKS`：首批日志扫描窗口
 - `CHAINSTACK_EARLIEST_BATCH_SIZE`：首批记录保留数量
 - `CHAINSTACK_PATTERN_LOG_LIMIT`：用于模式识别的最早日志条数
+- `CHAINSTACK_RPC_QUOTA_COOLDOWN_SECONDS`：节点触发额度限制后的冷却时间
+- `CHAINSTACK_RPC_TRANSIENT_COOLDOWN_SECONDS`：节点触发临时网络错误后的冷却时间
 
 ### 兼容字段
 

@@ -98,6 +98,7 @@ class ChainstackLaunchMonitor:
             "last_connected_at": self._last_connected_at,
             "last_message_at": self._last_message_at,
             "last_error": self._last_error,
+            "trace_rpc_pool": self.trace_service.get_rpc_pool_status(),
         }
 
     async def _run_loop(self) -> None:

@@ -727,4 +727,7 @@
 - [x] 让 `fetch_backfill_txhashes` 在日志扫描失败时自动切换下一条候选节点。
 - [x] 让时间窗到区块的解析优先选择支持历史块查询的节点。
 - [x] 在健康检查中暴露当前回扫池状态，便于线上排障。
-- [ ] 为 `SignalHub` 的 trace / 自动识别链路补同样的池化与能力检测。
+- [x] 为 `SignalHub` 的 trace / 自动识别链路补同样的池化与能力检测。
+- [x] 为 `SignalHub` 增加 `CHAINSTACK_BASE_HTTPS_URLS` 与 `CHAINSTACK_PUBLIC_HTTPS_URLS` 配置。
+- [x] 在 `SignalHub /system/status` 中暴露 trace RPC 池状态。
+- [ ] 为 `SignalHub` 的 WSS 订阅链路补多节点与自动切换。

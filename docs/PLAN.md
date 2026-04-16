@@ -1713,4 +1713,14 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - `RU quota exceeded`：进入长冷却，再切下一条
   - 临时网络错误：进入短冷却，再切下一条
   - 不支持 `eth_getLogs`：排除出日志扫描，但仍可继续尝试块扫描
-- 当前落地范围只覆盖主项目 `backfill`；`SignalHub` 的 trace / 自动识别链路仍待独立池化。
+- `SignalHub` 的 `BaseLaunchTraceService` 已补充独立 HTTPS RPC 池，使用：
+  - `CHAINSTACK_BASE_HTTPS_URLS`
+  - `CHAINSTACK_PUBLIC_HTTPS_URLS`
+- `SignalHub` 的 trace 节点也会暴露：
+  - `supports_basic_rpc`
+  - `supports_historical_blocks`
+  - `supports_logs`
+  - `supports_trace`
+  - `cooldown_until`
+  - `last_error`
+- `SignalHub` 当前只对 HTTPS trace / 自动识别链路做池化；WSS 订阅仍保持单节点。

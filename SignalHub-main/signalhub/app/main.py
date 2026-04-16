@@ -48,6 +48,10 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.database = database
     app.state.base_trace_service = BaseLaunchTraceService(settings)
+    try:
+        await app.state.base_trace_service.probe_rpc_pool()
+    except Exception:
+        logger.exception("initial trace RPC pool probe failed")
     app.state.token_pool_exporter = TokenPoolExportService(database, settings.token_pool_export_path)
     app.state.token_pool_exporter.refresh()
 
