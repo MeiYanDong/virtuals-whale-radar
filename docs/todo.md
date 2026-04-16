@@ -710,4 +710,21 @@
 - [x] 证明原解析器会漏掉 `tax-only` 结构。
 - [x] 使用更新后的解析器，对 `SR` 的 `447` 笔真实 tx hash 做全量重放。
 - [x] 确认 `SR` 的 `events / minute_agg / leaderboard` 已经非零。
-- [ ] 将 `tax-only` fallback 作为正式生产规则提交到 GitHub 并同步服务器。
+- [x] 将 `tax-only` fallback 作为正式生产规则提交到 GitHub 并同步服务器。
+
+## Phase 36：RPC 池化与自动降级
+
+- [x] 为主项目 `backfill` 增加 `BACKFILL_HTTP_RPC_URLS` 多节点顺序配置。
+- [x] 为主项目 `backfill` 增加 `BACKFILL_PUBLIC_HTTP_RPC_URLS` 公共 RPC 兜底配置。
+- [x] 在主项目运行时维护每条回扫节点的能力状态：
+  - `supports_basic_rpc`
+  - `supports_historical_blocks`
+  - `supports_logs`
+  - `cooldown_until`
+  - `last_error`
+- [x] 实现 `RU quota exceeded` 长冷却。
+- [x] 实现临时网络错误短冷却。
+- [x] 让 `fetch_backfill_txhashes` 在日志扫描失败时自动切换下一条候选节点。
+- [x] 让时间窗到区块的解析优先选择支持历史块查询的节点。
+- [x] 在健康检查中暴露当前回扫池状态，便于线上排障。
+- [ ] 为 `SignalHub` 的 trace / 自动识别链路补同样的池化与能力检测。

@@ -16,7 +16,7 @@ import time
 import urllib.parse
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, getcontext
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -104,6 +104,22 @@ def parse_bool_request(value: Any) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     raise ValueError("paused must be a boolean")
+
+
+def parse_url_list(value: Any) -> List[str]:
+    urls: List[str] = []
+    if isinstance(value, str):
+        candidates = [x.strip() for x in value.split(",")]
+    elif isinstance(value, list):
+        candidates = [str(x).strip() for x in value]
+    else:
+        candidates = []
+    for item in candidates:
+        if not item:
+            continue
+        if item not in urls:
+            urls.append(item)
+    return urls
 
 
 def parse_optional_int(value: Any, field_name: str) -> Optional[int]:
@@ -214,6 +230,11 @@ DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
 DEFAULT_BILLING_CONTACT_HINT = "扫码添加运营联系方式，付款后联系管理员手动补积分。"
 DEFAULT_BILLING_REFERRAL_NOTICE = "Virtuals 新用户使用邀请码注册，后续付费一律五折"
 DEFAULT_BILLING_REFERRAL_URL = "https://app.virtuals.io/referral?code=LFfW5x"
+DEFAULT_PUBLIC_BASE_HTTP_RPC_URLS = [
+    "https://base-rpc.publicnode.com",
+    "https://base.llamarpc.com",
+    "https://mainnet.base.org",
+]
 RPC_RU_EXCEEDED_TOKENS = (
     "monthly quota",
     "request units",
@@ -223,6 +244,22 @@ RPC_RU_EXCEEDED_TOKENS = (
 RPC_LOG_HISTORY_UNAVAILABLE_TOKENS = (
     "archive, debug and trace requests are not available",
     "debug and trace requests are not available",
+)
+RPC_TRANSIENT_ERROR_TOKENS = (
+    "timeout",
+    "temporarily unavailable",
+    "server disconnected",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "bad gateway",
+    "gateway timeout",
+    "service unavailable",
+    "too many requests",
+    "429",
+    "502",
+    "503",
+    "504",
 )
 CREDIT_LEDGER_TYPES = {"signup_bonus", "manual_topup", "manual_adjustment", "project_unlock"}
 BILLING_REQUEST_STATUSES = {"pending_review", "credited", "notified"}
@@ -398,6 +435,11 @@ def is_rpc_log_history_unavailable_error(exc: Exception) -> bool:
     return any(token in text for token in RPC_LOG_HISTORY_UNAVAILABLE_TOKENS)
 
 
+def is_rpc_transient_error(exc: Exception) -> bool:
+    text = rpc_error_text(exc)
+    return any(token in text for token in RPC_TRANSIENT_ERROR_TOKENS)
+
+
 @dataclass
 class LaunchConfig:
     name: str
@@ -406,6 +448,19 @@ class LaunchConfig:
     tax_addr: str
     token_total_supply: Decimal
     fee_rate: Decimal
+
+
+@dataclass
+class RpcEndpointState:
+    label: str
+    url: str
+    client: Optional["RPCClient"] = None
+    supports_basic_rpc: Optional[bool] = None
+    supports_historical_blocks: Optional[bool] = None
+    supports_logs: Optional[bool] = None
+    cooldown_until: int = 0
+    last_error: str = ""
+    last_checked_at: int = 0
 
 
 @dataclass
@@ -463,6 +518,10 @@ class AppConfig:
     email_verify_token_ttl_sec: int
     billing_contact_qr_url: str
     billing_contact_hint: str
+    backfill_http_rpc_urls: List[str] = field(default_factory=list)
+    backfill_public_http_rpc_urls: List[str] = field(default_factory=list)
+    backfill_rpc_quota_cooldown_sec: int = 3600
+    backfill_rpc_transient_cooldown_sec: int = 600
 
 
 class RateLimitExceeded(Exception):
@@ -494,6 +553,15 @@ def load_config(path: str) -> AppConfig:
     http_rpc_url = str(raw["HTTP_RPC_URL"]).strip()
     backfill_http_rpc_url_raw = str(raw.get("BACKFILL_HTTP_RPC_URL", "")).strip()
     backfill_http_rpc_url = backfill_http_rpc_url_raw or None
+    backfill_http_rpc_urls = parse_url_list(raw.get("BACKFILL_HTTP_RPC_URLS", []))
+    if not backfill_http_rpc_urls:
+        if backfill_http_rpc_url:
+            backfill_http_rpc_urls.append(backfill_http_rpc_url)
+        if http_rpc_url and http_rpc_url not in backfill_http_rpc_urls:
+            backfill_http_rpc_urls.append(http_rpc_url)
+    backfill_public_http_rpc_urls = parse_url_list(
+        raw.get("BACKFILL_PUBLIC_HTTP_RPC_URLS", DEFAULT_PUBLIC_BASE_HTTP_RPC_URLS)
+    )
     virtual_token_addr = normalize_address(raw["VIRTUAL_TOKEN_ADDR"])
 
     fee_rate_default = Decimal(str(raw.get("FEE_RATE_DEFAULT", "0.01")))
@@ -719,6 +787,14 @@ def load_config(path: str) -> AppConfig:
         email_verify_token_ttl_sec=email_verify_token_ttl_sec,
         billing_contact_qr_url=billing_contact_qr_url,
         billing_contact_hint=billing_contact_hint,
+        backfill_http_rpc_urls=backfill_http_rpc_urls,
+        backfill_public_http_rpc_urls=backfill_public_http_rpc_urls,
+        backfill_rpc_quota_cooldown_sec=max(
+            60, int(raw.get("BACKFILL_RPC_QUOTA_COOLDOWN_SEC", 60 * 60))
+        ),
+        backfill_rpc_transient_cooldown_sec=max(
+            30, int(raw.get("BACKFILL_RPC_TRANSIENT_COOLDOWN_SEC", 10 * 60))
+        ),
     )
 
 
@@ -4284,14 +4360,19 @@ class VirtualsBot:
         elif self.storage.get_state("runtime_paused") is None:
             self.storage.set_state("runtime_paused", "1")
         self.ws_reconnect_event = asyncio.Event()
-        self.http_rpc = RPCClient(cfg.http_rpc_url, max_retries=cfg.max_rpc_retries)
-        if cfg.backfill_http_rpc_url:
-            self.backfill_http_rpc = RPCClient(
-                cfg.backfill_http_rpc_url, max_retries=cfg.max_rpc_retries
-            )
-        else:
-            self.backfill_http_rpc = self.http_rpc
-        self.backfill_rpc_separate = self.backfill_http_rpc is not self.http_rpc
+        self.rpc_clients_by_url: Dict[str, RPCClient] = {}
+        self.http_rpc = self.get_or_create_rpc_client(cfg.http_rpc_url)
+        self.backfill_http_rpc = (
+            self.get_or_create_rpc_client(cfg.backfill_http_rpc_url)
+            if cfg.backfill_http_rpc_url
+            else self.http_rpc
+        )
+        self.backfill_rpc_states: Dict[str, RpcEndpointState] = {}
+        self.backfill_http_rpcs: List[RPCClient] = []
+        self.configure_backfill_rpc_pool()
+        self.backfill_rpc_separate = any(
+            client is not self.http_rpc for client in self.backfill_http_rpcs
+        )
         self.ws_timeout = aiohttp.ClientTimeout(total=None)
         self.runtime_ui_heartbeat_timeout_sec = 2 * 60 * 60
         self.runtime_manual_paused = True
@@ -4306,7 +4387,7 @@ class VirtualsBot:
             self.http_rpc,
             is_paused=lambda: self.runtime_paused,
         )
-        self.queue: asyncio.Queue[Tuple[str, int, bool]] = asyncio.Queue(maxsize=10000)
+        self.queue: asyncio.Queue[Tuple[str, int, Optional[str]]] = asyncio.Queue(maxsize=10000)
         self.pending_txs: Set[str] = set()
         self.stop_event = asyncio.Event()
         self.tasks: List[asyncio.Task] = []
@@ -4345,6 +4426,218 @@ class VirtualsBot:
         self.stats["scheduler_active_projects"] = 0
         self.stats["scheduler_transitions"] = 0
         self.stats["scheduler_scan_jobs"] = 0
+
+    def get_or_create_rpc_client(self, url: str) -> RPCClient:
+        target = str(url or "").strip()
+        if not target:
+            raise ValueError("rpc url cannot be empty")
+        client = self.rpc_clients_by_url.get(target)
+        if client is None:
+            client = RPCClient(target, max_retries=self.cfg.max_rpc_retries)
+            self.rpc_clients_by_url[target] = client
+        return client
+
+    def configure_backfill_rpc_pool(self) -> None:
+        ordered_urls: List[Tuple[str, str]] = []
+        for idx, url in enumerate(self.cfg.backfill_http_rpc_urls, start=1):
+            ordered_urls.append((f"backfill-{idx}", url))
+        for idx, url in enumerate(self.cfg.backfill_public_http_rpc_urls, start=1):
+            ordered_urls.append((f"public-{idx}", url))
+        if not ordered_urls:
+            ordered_urls.append(("primary-http", self.cfg.http_rpc_url))
+
+        seen: Set[str] = set()
+        self.backfill_http_rpcs = []
+        self.backfill_rpc_states = {}
+        for label, url in ordered_urls:
+            clean = str(url or "").strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            client = self.get_or_create_rpc_client(clean)
+            self.backfill_http_rpcs.append(client)
+            self.backfill_rpc_states[clean] = RpcEndpointState(
+                label=label,
+                url=clean,
+                client=client,
+            )
+
+    def mark_backfill_rpc_failure(
+        self,
+        client: RPCClient,
+        exc: Exception,
+        *,
+        operation: str,
+    ) -> None:
+        state = self.backfill_rpc_states.get(client.url)
+        if not state:
+            return
+        now = int(time.time())
+        state.last_error = rpc_error_text(exc)
+        state.last_checked_at = now
+        if operation in {"logs", "probe_logs"} and is_rpc_log_history_unavailable_error(exc):
+            state.supports_logs = False
+        if operation in {"historical_block", "probe_historical_blocks"} and (
+            is_rpc_log_history_unavailable_error(exc) or "eth_getblockbynumber" in state.last_error
+        ):
+            state.supports_historical_blocks = False
+        if is_rpc_ru_exceeded_error(exc):
+            state.cooldown_until = max(
+                state.cooldown_until,
+                now + int(self.cfg.backfill_rpc_quota_cooldown_sec),
+            )
+        elif is_rpc_transient_error(exc):
+            state.cooldown_until = max(
+                state.cooldown_until,
+                now + int(self.cfg.backfill_rpc_transient_cooldown_sec),
+            )
+
+    async def probe_backfill_rpc(self, client: RPCClient, force: bool = False) -> RpcEndpointState:
+        state = self.backfill_rpc_states[client.url]
+        now = int(time.time())
+        if (
+            (not force)
+            and state.last_checked_at > 0
+            and (now - state.last_checked_at) < 300
+            and state.supports_basic_rpc is not None
+        ):
+            return state
+
+        state.last_checked_at = now
+        state.last_error = ""
+        try:
+            latest = await client.get_latest_block_number()
+            state.supports_basic_rpc = True
+        except Exception as exc:
+            state.supports_basic_rpc = False
+            self.mark_backfill_rpc_failure(client, exc, operation="probe_basic")
+            return state
+
+        try:
+            await client.get_block_by_number(max(0, latest - 1))
+            state.supports_historical_blocks = True
+        except Exception as exc:
+            state.supports_historical_blocks = False
+            self.mark_backfill_rpc_failure(client, exc, operation="probe_historical_blocks")
+
+        try:
+            await client.get_logs(
+                from_block=max(0, latest - 1),
+                to_block=latest,
+                address=self.cfg.virtual_token_addr,
+                topics=[TRANSFER_TOPIC0],
+            )
+            state.supports_logs = True
+        except Exception as exc:
+            state.supports_logs = False
+            self.mark_backfill_rpc_failure(client, exc, operation="probe_logs")
+        return state
+
+    async def ordered_backfill_rpc_candidates(
+        self,
+        *,
+        require_logs: bool,
+        preferred: Optional[RPCClient] = None,
+        exclude_urls: Optional[Set[str]] = None,
+    ) -> List[RPCClient]:
+        ordered: List[RPCClient] = []
+        seen: Set[str] = set()
+        if preferred is not None:
+            ordered.append(preferred)
+            seen.add(preferred.url)
+        for client in self.backfill_http_rpcs:
+            if client.url in seen:
+                continue
+            ordered.append(client)
+            seen.add(client.url)
+
+        candidates: List[RPCClient] = []
+        now = int(time.time())
+        excluded = exclude_urls or set()
+        for client in ordered:
+            if client.url in excluded:
+                continue
+            state = await self.probe_backfill_rpc(client)
+            if state.cooldown_until > now:
+                continue
+            if state.supports_basic_rpc is False:
+                continue
+            if state.supports_historical_blocks is False:
+                continue
+            if require_logs and state.supports_logs is False:
+                continue
+            candidates.append(client)
+        return candidates
+
+    async def resolve_backfill_scan_rpc(
+        self,
+        *,
+        require_logs: bool = False,
+        preferred: Optional[RPCClient] = None,
+        exclude_urls: Optional[Set[str]] = None,
+    ) -> RPCClient:
+        candidates = await self.ordered_backfill_rpc_candidates(
+            require_logs=require_logs,
+            preferred=preferred,
+            exclude_urls=exclude_urls,
+        )
+        if candidates:
+            return candidates[0]
+        need = "historical blocks + logs" if require_logs else "historical blocks"
+        raise RuntimeError(f"no available backfill RPC endpoints for {need}")
+
+    async def resolve_backfill_block_range(
+        self,
+        start_ts: int,
+        end_ts: int,
+        *,
+        preferred: Optional[RPCClient] = None,
+    ) -> Tuple[RPCClient, int, int]:
+        last_exc: Optional[Exception] = None
+        for client in await self.ordered_backfill_rpc_candidates(
+            require_logs=False,
+            preferred=preferred,
+        ):
+            try:
+                from_block = await self.find_block_gte_timestamp(start_ts, rpc=client)
+                to_block = await self.find_block_lte_timestamp(end_ts, rpc=client)
+                if to_block < from_block:
+                    raise ValueError("invalid block range for time range")
+                return client, from_block, to_block
+            except Exception as exc:
+                self.mark_backfill_rpc_failure(client, exc, operation="historical_block")
+                last_exc = exc
+                if not (
+                    is_rpc_ru_exceeded_error(exc)
+                    or is_rpc_log_history_unavailable_error(exc)
+                    or is_rpc_transient_error(exc)
+                ):
+                    raise
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("no available backfill RPC endpoints for block range resolution")
+
+    def backfill_rpc_pool_payload(self) -> List[Dict[str, Any]]:
+        now = int(time.time())
+        payload: List[Dict[str, Any]] = []
+        for client in self.backfill_http_rpcs:
+            state = self.backfill_rpc_states.get(client.url)
+            if not state:
+                continue
+            payload.append(
+                {
+                    "label": state.label,
+                    "url": state.url,
+                    "supportsBasicRpc": state.supports_basic_rpc,
+                    "supportsHistoricalBlocks": state.supports_historical_blocks,
+                    "supportsLogs": state.supports_logs,
+                    "cooldownUntil": state.cooldown_until or None,
+                    "isCoolingDown": state.cooldown_until > now,
+                    "lastError": state.last_error or None,
+                    "lastCheckedAt": state.last_checked_at or None,
+                }
+            )
+        return payload
 
     def reload_launch_configs(self) -> None:
         launch_configs = self.storage.get_enabled_launch_configs()
@@ -5692,9 +5985,11 @@ class VirtualsBot:
             await self.run_scan_range_job_bus(job)
 
     async def __aenter__(self) -> "VirtualsBot":
-        await self.http_rpc.__aenter__()
-        if self.backfill_rpc_separate:
-            await self.backfill_http_rpc.__aenter__()
+        for client in self.rpc_clients_by_url.values():
+            await client.__aenter__()
+        for client in self.backfill_http_rpcs:
+            with contextlib.suppress(Exception):
+                await self.probe_backfill_rpc(client, force=True)
         if self.enable_api and self.signalhub_client:
             await self.signalhub_client.__aenter__()
         return self
@@ -5702,9 +5997,8 @@ class VirtualsBot:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         if not self.stop_event.is_set():
             await self.shutdown()
-        await self.http_rpc.__aexit__(exc_type, exc, tb)
-        if self.backfill_rpc_separate:
-            await self.backfill_http_rpc.__aexit__(exc_type, exc, tb)
+        for client in reversed(list(self.rpc_clients_by_url.values())):
+            await client.__aexit__(exc_type, exc, tb)
         if self.enable_api and self.signalhub_client:
             await self.signalhub_client.__aexit__(exc_type, exc, tb)
         self.storage.close()
@@ -5944,13 +6238,13 @@ class VirtualsBot:
         return events
 
     async def enqueue_tx(
-        self, tx_hash: str, block_number: int, use_backfill_rpc: bool = False
+        self, tx_hash: str, block_number: int, rpc_url: Optional[str] = None
     ) -> None:
         tx_hash = tx_hash.lower()
         if tx_hash in self.pending_txs:
             return
         self.pending_txs.add(tx_hash)
-        await self.queue.put((tx_hash, block_number, use_backfill_rpc))
+        await self.queue.put((tx_hash, block_number, rpc_url))
         self.stats["enqueued_txs"] += 1
 
     async def process_tx(
@@ -6008,9 +6302,9 @@ class VirtualsBot:
             if self.refresh_runtime_pause_state():
                 await asyncio.sleep(0.5)
                 continue
-            tx_hash, block_number, use_backfill_rpc = await self.queue.get()
+            tx_hash, block_number, rpc_url = await self.queue.get()
             try:
-                rpc_client = self.backfill_http_rpc if use_backfill_rpc else self.http_rpc
+                rpc_client = self.rpc_clients_by_url.get(str(rpc_url or "").strip()) or self.http_rpc
                 await self.process_tx(tx_hash, block_number, rpc=rpc_client)
             finally:
                 self.queue.task_done()
@@ -6128,28 +6422,52 @@ class VirtualsBot:
         launch_configs: List[LaunchConfig],
         rpc: Optional[RPCClient] = None,
     ) -> Set[str]:
-        rpc_client = rpc or self.http_rpc
-        try:
-            return await self._fetch_backfill_txhashes_via_logs(
-                from_block,
-                to_block,
-                launch_configs,
-                rpc=rpc_client,
-            )
-        except Exception as exc:
-            fallback_rpc = rpc_client
-            should_block_scan = is_rpc_log_history_unavailable_error(exc)
-            if self.backfill_rpc_separate and rpc_client is self.backfill_http_rpc and is_rpc_ru_exceeded_error(exc):
-                fallback_rpc = self.http_rpc
-                should_block_scan = True
-            if not should_block_scan:
-                raise
-            return await self._fetch_backfill_txhashes_via_block_scan(
-                from_block,
-                to_block,
-                launch_configs,
-                rpc=fallback_rpc,
-            )
+        last_exc: Optional[Exception] = None
+        for rpc_client in await self.ordered_backfill_rpc_candidates(
+            require_logs=True,
+            preferred=rpc,
+        ):
+            try:
+                return await self._fetch_backfill_txhashes_via_logs(
+                    from_block,
+                    to_block,
+                    launch_configs,
+                    rpc=rpc_client,
+                )
+            except Exception as exc:
+                self.mark_backfill_rpc_failure(rpc_client, exc, operation="logs")
+                last_exc = exc
+                if not (
+                    is_rpc_ru_exceeded_error(exc)
+                    or is_rpc_log_history_unavailable_error(exc)
+                    or is_rpc_transient_error(exc)
+                ):
+                    raise
+
+        for rpc_client in await self.ordered_backfill_rpc_candidates(
+            require_logs=False,
+            preferred=rpc,
+        ):
+            try:
+                return await self._fetch_backfill_txhashes_via_block_scan(
+                    from_block,
+                    to_block,
+                    launch_configs,
+                    rpc=rpc_client,
+                )
+            except Exception as exc:
+                self.mark_backfill_rpc_failure(rpc_client, exc, operation="historical_block")
+                last_exc = exc
+                if not (
+                    is_rpc_ru_exceeded_error(exc)
+                    or is_rpc_log_history_unavailable_error(exc)
+                    or is_rpc_transient_error(exc)
+                ):
+                    raise
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("no available backfill RPC endpoints")
 
     async def _fetch_backfill_txhashes_via_logs(
         self,
@@ -6230,18 +6548,6 @@ class VirtualsBot:
                         break
         return txs
 
-    async def resolve_backfill_scan_rpc(self) -> RPCClient:
-        scan_rpc = self.backfill_http_rpc
-        if not self.backfill_rpc_separate:
-            return scan_rpc
-        try:
-            await scan_rpc.get_latest_block_number()
-            return scan_rpc
-        except Exception as exc:
-            if is_rpc_ru_exceeded_error(exc):
-                return self.http_rpc
-            raise
-
     async def find_block_gte_timestamp(
         self, target_ts: int, rpc: Optional[RPCClient] = None
     ) -> int:
@@ -6303,8 +6609,6 @@ class VirtualsBot:
 
                 job["status"] = "running"
                 job["startedAt"] = int(time.time())
-                scan_rpc = await self.resolve_backfill_scan_rpc()
-                use_backfill_rpc = scan_rpc is self.backfill_http_rpc
                 if not await self.wait_until_resumed():
                     return
 
@@ -6320,10 +6624,10 @@ class VirtualsBot:
                 if not launch_configs:
                     raise ValueError("no enabled launch configs to scan; please enable a project first")
 
-                from_block = await self.find_block_gte_timestamp(start_ts, rpc=scan_rpc)
-                to_block = await self.find_block_lte_timestamp(end_ts, rpc=scan_rpc)
-                if to_block < from_block:
-                    raise ValueError("invalid block range for time range")
+                scan_rpc, from_block, to_block = await self.resolve_backfill_block_range(
+                    start_ts,
+                    end_ts,
+                )
 
                 chunk = max(1, self.cfg.backfill_chunk_blocks)
                 total_blocks = to_block - from_block + 1
@@ -6411,7 +6715,6 @@ class VirtualsBot:
 
         async with self.scan_lock:
             try:
-                scan_rpc = await self.resolve_backfill_scan_rpc()
                 if not await self.wait_until_resumed():
                     return
                 if project:
@@ -6426,10 +6729,10 @@ class VirtualsBot:
                 if not launch_configs:
                     raise ValueError("no enabled launch configs to scan")
 
-                from_block = await self.find_block_gte_timestamp(start_ts, rpc=scan_rpc)
-                to_block = await self.find_block_lte_timestamp(end_ts, rpc=scan_rpc)
-                if to_block < from_block:
-                    raise ValueError("invalid block range for time range")
+                scan_rpc, from_block, to_block = await self.resolve_backfill_block_range(
+                    start_ts,
+                    end_ts,
+                )
 
                 chunk = max(1, self.cfg.backfill_chunk_blocks)
                 total_blocks = to_block - from_block + 1
@@ -6543,7 +6846,6 @@ class VirtualsBot:
         while not self.stop_event.is_set():
             try:
                 scan_rpc = await self.resolve_backfill_scan_rpc()
-                use_backfill_rpc = scan_rpc is self.backfill_http_rpc
                 if self.refresh_runtime_pause_state():
                     await asyncio.sleep(1)
                     continue
@@ -6572,7 +6874,7 @@ class VirtualsBot:
                     await self.enqueue_tx(
                         tx_hash,
                         to_block,
-                        use_backfill_rpc=use_backfill_rpc,
+                        rpc_url=scan_rpc.url,
                     )
                 cursor = to_block
                 self.storage.set_state("last_processed_block", str(cursor))
@@ -6622,7 +6924,8 @@ class VirtualsBot:
                 "price": decimal_to_str(p, 18) if p is not None else None,
                 "monitoringProjects": [x.name for x in self.get_launch_configs()],
                 "scanJobs": scan_jobs,
-                "backfillRpcMode": "separate" if self.backfill_rpc_separate else "shared",
+                "backfillRpcMode": "pool" if len(self.backfill_http_rpcs) > 1 else ("separate" if self.backfill_rpc_separate else "shared"),
+                "backfillRpcPool": self.backfill_rpc_pool_payload(),
                 "role": self.role,
                 "runtimePaused": runtime_data["runtimePaused"],
                 "runtimeManualPaused": runtime_data["runtimeManualPaused"],

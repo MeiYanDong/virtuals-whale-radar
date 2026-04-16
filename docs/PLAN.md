@@ -78,6 +78,7 @@
 - 用户通知支持 `未读 / 已读 / 全部已读`，并在顶栏显示未读提醒。
 - 当前不单独设置充值申请流程；用户微信付款后，管理员直接在 `Users` 页面手动补积分。
 - `billing_requests` / 付款凭证附件能力保留为备用后端能力，但不是当前产品主流程。
+- 链上 RPC 使用策略升级为：`实时采集 / 历史回扫 / SignalHub 识别` 分池使用；回扫池按 `专用 Chainstack -> 备用 Chainstack -> 主实时 Chainstack -> 公共 Base RPC` 顺序自动降级。
 - `Billing` 顶部固定展示邀请文案与注册链接：
   - 文案：`Virtuals 新用户使用邀请码注册，后续付费一律五折`
   - 链接：`https://app.virtuals.io/referral?code=LFfW5x`
@@ -1695,3 +1696,21 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 - 本案例后续事项：
   - 将 `tax-only` fallback 作为正式生产规则发布
   - 将“一次性 tx hash 历史重放”沉淀为正式工具，而不是继续依赖临时脚本
+
+## 27. RPC 池化与自动降级（2026-04-16）
+
+- 主项目 `backfill` 已从“单一 `BACKFILL_HTTP_RPC_URL`”升级为“按顺序尝试多个历史节点”的池化模式。
+- 当前回扫池配置约定：
+  - `BACKFILL_HTTP_RPC_URLS`：优先使用的付费 / 自有节点
+  - `BACKFILL_PUBLIC_HTTP_RPC_URLS`：公开 Base RPC 最后一层兜底
+- 每条候选节点会记录并暴露以下状态：
+  - `supports_basic_rpc`
+  - `supports_historical_blocks`
+  - `supports_logs`
+  - `cooldown_until`
+  - `last_error`
+- 自动降级规则：
+  - `RU quota exceeded`：进入长冷却，再切下一条
+  - 临时网络错误：进入短冷却，再切下一条
+  - 不支持 `eth_getLogs`：排除出日志扫描，但仍可继续尝试块扫描
+- 当前落地范围只覆盖主项目 `backfill`；`SignalHub` 的 trace / 自动识别链路仍待独立池化。

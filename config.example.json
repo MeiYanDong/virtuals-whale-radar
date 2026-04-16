@@ -3,6 +3,17 @@
   "WS_RPC_URL": "wss://base-mainnet.core.chainstack.com/f182d37c5cbff7f1bb5fc314f5900f1c",
   "HTTP_RPC_URL": "https://base-mainnet.core.chainstack.com/f182d37c5cbff7f1bb5fc314f5900f1c",
   "BACKFILL_HTTP_RPC_URL": "https://base-mainnet.core.chainstack.com/03f07e9ef90c8db8e71fdca6ab243657",
+  "BACKFILL_HTTP_RPC_URLS": [
+    "https://base-mainnet.core.chainstack.com/03f07e9ef90c8db8e71fdca6ab243657",
+    "https://base-mainnet.core.chainstack.com/f182d37c5cbff7f1bb5fc314f5900f1c"
+  ],
+  "BACKFILL_PUBLIC_HTTP_RPC_URLS": [
+    "https://base-rpc.publicnode.com",
+    "https://base.llamarpc.com",
+    "https://mainnet.base.org"
+  ],
+  "BACKFILL_RPC_QUOTA_COOLDOWN_SEC": 3600,
+  "BACKFILL_RPC_TRANSIENT_COOLDOWN_SEC": 600,
 
   "VIRTUAL_TOKEN_ADDR": "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b",
   "FEE_RATE_DEFAULT": 0.01,
