@@ -744,5 +744,6 @@
 - [x] 确认 `VOID` 历史回扫任务存在批量失败。
 - [x] 证明失败错误为公共节点要求 `eth_getLogs` 必须携带 `address` 过滤。
 - [x] 定位当前日志扫描逻辑仍存在未带 `address` 的 `eth_getLogs` 请求。
-- [ ] 为日志扫描逻辑补齐 `address` 过滤，避免公共节点拒绝请求。
-- [ ] 重跑 `VOID` 时间窗口回扫，并重新核对 `events / minute_agg / leaderboard`。
+- [x] 为日志扫描逻辑补齐 `address` 过滤，避免公共节点拒绝请求。
+- [x] 重跑 `VOID` 时间窗口回扫，并重新核对 `events / minute_agg / leaderboard`。
+- [x] 证明 `VOID` 剩余未入库候选 tx 为 `Tax Swapper / Allowance / Uniswap` 等非买入交易，而非新的买入漏判。

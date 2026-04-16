@@ -1742,3 +1742,11 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - 失败错误为公共节点返回 `Please specify an address in your request`
   - 当前主项目日志扫描逻辑仍有两条 `eth_getLogs` 请求未携带 `address` 过滤条件
   - 这会导致回扫切到公共节点时被直接拒绝，形成“scan job 已创建但 scanned_tx = 0”的现象
+- `VOID` 当前已确认的二层结论：
+  - 上述日志扫描问题修复后，回扫已能正常扫块并获取候选 tx
+  - 当前 `VOID` 已入库的有效事件为 4 条，聚合结果与事件表一致
+  - 剩余未入库候选 tx 经核对为非买入交易，包括：
+    - `Virtuals Protocol: Tax Swapper`
+    - `0x: Allowance Holder`
+    - `Uniswap` 上的其他代币换币交易
+  - 因此 `VOID` 当前“记录偏少”的主因已经收口为日志扫描问题；剩余差异不再属于买入事件漏判
