@@ -1677,3 +1677,21 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 - 新增 `deploy/install_runtime_maintenance.sh`
 - 生产安装脚本 `deploy/install_virtuals_production.sh` 需要自动执行该维护安装脚本
 - 更新脚本 `deploy/update_server_oneclick.sh` 需要在代码更新后补装 / 刷新维护资产
+
+## 26. SR 排障案例沉淀（2026-04-15）
+
+- 新增排障案例文档：`docs/SR-2026-04-15-排障记录.md`
+- 本案例结论固定为三层问题叠加：
+  - 当前 RPC plan 不满足历史日志 / trace 需求
+  - 新 `SR` 的链上买入结构与旧项目不同
+  - 原解析器对 `tax-only` 结构不兼容
+- 本案例要求后续类似问题排查时，优先分三层取证：
+  - RPC 能力与额度
+  - 新旧项目 receipt 结构对比
+  - 解析器过滤条件
+- 本案例已完成：
+  - 使用更新后的解析器，对 `SR` 的 `447` 笔真实 tx hash 完成全量重放
+  - 已确认回流结果：`events = 380`、`minute_agg = 32`、`leaderboard = 146`、`wallet_positions = 2`
+- 本案例后续事项：
+  - 将 `tax-only` fallback 作为正式生产规则发布
+  - 将“一次性 tx hash 历史重放”沉淀为正式工具，而不是继续依赖临时脚本

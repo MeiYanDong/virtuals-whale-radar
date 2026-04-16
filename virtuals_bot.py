@@ -214,6 +214,16 @@ DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
 DEFAULT_BILLING_CONTACT_HINT = "扫码添加运营联系方式，付款后联系管理员手动补积分。"
 DEFAULT_BILLING_REFERRAL_NOTICE = "Virtuals 新用户使用邀请码注册，后续付费一律五折"
 DEFAULT_BILLING_REFERRAL_URL = "https://app.virtuals.io/referral?code=LFfW5x"
+RPC_RU_EXCEEDED_TOKENS = (
+    "monthly quota",
+    "request units",
+    "ru",
+    "pay-as-you-go",
+)
+RPC_LOG_HISTORY_UNAVAILABLE_TOKENS = (
+    "archive, debug and trace requests are not available",
+    "debug and trace requests are not available",
+)
 CREDIT_LEDGER_TYPES = {"signup_bonus", "manual_topup", "manual_adjustment", "project_unlock"}
 BILLING_REQUEST_STATUSES = {"pending_review", "credited", "notified"}
 USER_NOTIFICATION_KINDS = {"success", "warning", "info", "accent"}
@@ -372,6 +382,20 @@ def deserialize_event_from_bus(payload: Dict[str, Any]) -> Dict[str, Any]:
         if key in out and out[key] is not None:
             out[key] = bool(out[key])
     return out
+
+
+def rpc_error_text(exc: Exception) -> str:
+    return str(exc or "").strip().lower()
+
+
+def is_rpc_ru_exceeded_error(exc: Exception) -> bool:
+    text = rpc_error_text(exc)
+    return any(token in text for token in RPC_RU_EXCEEDED_TOKENS)
+
+
+def is_rpc_log_history_unavailable_error(exc: Exception) -> bool:
+    text = rpc_error_text(exc)
+    return any(token in text for token in RPC_LOG_HISTORY_UNAVAILABLE_TOKENS)
 
 
 @dataclass
@@ -5849,13 +5873,33 @@ class VirtualsBot:
             if token_bought <= 0:
                 continue
 
+            virtual_out = raw_to_decimal(buyer_virtual_out_raw.get(buyer, 0), virtual_decimals)
+            virtual_in = raw_to_decimal(buyer_virtual_in_raw.get(buyer, 0), virtual_decimals)
+            spent_v_actual = virtual_out - virtual_in
+            if spent_v_actual <= 0:
+                continue
+
             fee_raw = buyer_fee_raw.get(buyer, 0)
             tax_raw = buyer_tax_raw.get(buyer, 0)
             fee_v = raw_to_decimal(fee_raw, virtual_decimals)
             tax_v = raw_to_decimal(tax_raw, virtual_decimals)
-            if launch.fee_rate <= 0:
-                continue
-            spent_v_est = fee_v / launch.fee_rate
+
+            launch_pattern = ""
+            if launch.fee_rate > 0 and fee_v > 0:
+                launch_pattern = "fee_pool"
+                spent_v_est = fee_v / launch.fee_rate
+            elif tax_v > 0:
+                launch_pattern = "tax_pool"
+                # Newer launches can route payment to pool + tax without an
+                # explicit fee transfer. In that case the actual VIRTUAL
+                # outflow is the best available estimate.
+                spent_v_est = spent_v_actual
+            else:
+                launch_pattern = "pool_only"
+                # Fallback for launches that only expose pool inflow + token
+                # outflow. Keep this below tax_pool so known tax-bearing flows
+                # still retain their stronger signal.
+                spent_v_est = spent_v_actual
             if spent_v_est <= 0:
                 continue
 
@@ -5866,11 +5910,8 @@ class VirtualsBot:
                 breakeven_fdv_v * virtual_price_usd if virtual_price_usd is not None else None
             )
 
-            virtual_out = raw_to_decimal(buyer_virtual_out_raw.get(buyer, 0), virtual_decimals)
-            virtual_in = raw_to_decimal(buyer_virtual_in_raw.get(buyer, 0), virtual_decimals)
-            spent_v_actual = virtual_out - virtual_in
             anomaly = False
-            if spent_v_est > 0:
+            if launch_pattern == "fee_pool" and spent_v_est > 0:
                 gap = abs(spent_v_actual - spent_v_est) / spent_v_est
                 anomaly = gap > Decimal("0.02")
 
@@ -6087,6 +6128,36 @@ class VirtualsBot:
         launch_configs: List[LaunchConfig],
         rpc: Optional[RPCClient] = None,
     ) -> Set[str]:
+        rpc_client = rpc or self.http_rpc
+        try:
+            return await self._fetch_backfill_txhashes_via_logs(
+                from_block,
+                to_block,
+                launch_configs,
+                rpc=rpc_client,
+            )
+        except Exception as exc:
+            fallback_rpc = rpc_client
+            should_block_scan = is_rpc_log_history_unavailable_error(exc)
+            if self.backfill_rpc_separate and rpc_client is self.backfill_http_rpc and is_rpc_ru_exceeded_error(exc):
+                fallback_rpc = self.http_rpc
+                should_block_scan = True
+            if not should_block_scan:
+                raise
+            return await self._fetch_backfill_txhashes_via_block_scan(
+                from_block,
+                to_block,
+                launch_configs,
+                rpc=fallback_rpc,
+            )
+
+    async def _fetch_backfill_txhashes_via_logs(
+        self,
+        from_block: int,
+        to_block: int,
+        launch_configs: List[LaunchConfig],
+        rpc: Optional[RPCClient] = None,
+    ) -> Set[str]:
         txs: Set[str] = set()
         rpc_client = rpc or self.http_rpc
         vaddr = self.cfg.virtual_token_addr
@@ -6125,6 +6196,51 @@ class VirtualsBot:
             )
             txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
         return txs
+
+    async def _fetch_backfill_txhashes_via_block_scan(
+        self,
+        from_block: int,
+        to_block: int,
+        launch_configs: List[LaunchConfig],
+        rpc: Optional[RPCClient] = None,
+    ) -> Set[str]:
+        txs: Set[str] = set()
+        rpc_client = rpc or self.http_rpc
+        for block_number in range(max(0, from_block), max(0, to_block) + 1):
+            block = await rpc_client.get_block_by_number(block_number)
+            if not isinstance(block, dict):
+                continue
+            tx_hashes = block.get("transactions") or []
+            for tx_ref in tx_hashes:
+                if isinstance(tx_ref, dict):
+                    tx_hash = str(tx_ref.get("hash") or "").strip().lower()
+                else:
+                    tx_hash = str(tx_ref or "").strip().lower()
+                if not tx_hash or tx_hash in txs:
+                    continue
+                receipt = await rpc_client.get_receipt(tx_hash)
+                if not receipt:
+                    continue
+                if receipt.get("status") and int(receipt["status"], 16) == 0:
+                    continue
+                logs = receipt.get("logs", [])
+                for launch in launch_configs:
+                    if self.is_related_to_launch(logs, launch):
+                        txs.add(tx_hash)
+                        break
+        return txs
+
+    async def resolve_backfill_scan_rpc(self) -> RPCClient:
+        scan_rpc = self.backfill_http_rpc
+        if not self.backfill_rpc_separate:
+            return scan_rpc
+        try:
+            await scan_rpc.get_latest_block_number()
+            return scan_rpc
+        except Exception as exc:
+            if is_rpc_ru_exceeded_error(exc):
+                return self.http_rpc
+            raise
 
     async def find_block_gte_timestamp(
         self, target_ts: int, rpc: Optional[RPCClient] = None
@@ -6187,7 +6303,8 @@ class VirtualsBot:
 
                 job["status"] = "running"
                 job["startedAt"] = int(time.time())
-                scan_rpc = self.backfill_http_rpc
+                scan_rpc = await self.resolve_backfill_scan_rpc()
+                use_backfill_rpc = scan_rpc is self.backfill_http_rpc
                 if not await self.wait_until_resumed():
                     return
 
@@ -6294,7 +6411,7 @@ class VirtualsBot:
 
         async with self.scan_lock:
             try:
-                scan_rpc = self.backfill_http_rpc
+                scan_rpc = await self.resolve_backfill_scan_rpc()
                 if not await self.wait_until_resumed():
                     return
                 if project:
@@ -6418,7 +6535,6 @@ class VirtualsBot:
 
     async def backfill_loop(self) -> None:
         checkpoint_raw = self.storage.get_state("last_processed_block")
-        scan_rpc = self.backfill_http_rpc
         if checkpoint_raw:
             cursor = int(checkpoint_raw)
         else:
@@ -6426,6 +6542,8 @@ class VirtualsBot:
 
         while not self.stop_event.is_set():
             try:
+                scan_rpc = await self.resolve_backfill_scan_rpc()
+                use_backfill_rpc = scan_rpc is self.backfill_http_rpc
                 if self.refresh_runtime_pause_state():
                     await asyncio.sleep(1)
                     continue
@@ -6451,7 +6569,11 @@ class VirtualsBot:
                     cursor + 1, to_block, launch_configs, rpc=scan_rpc
                 )
                 for tx_hash in txs:
-                    await self.enqueue_tx(tx_hash, to_block, use_backfill_rpc=True)
+                    await self.enqueue_tx(
+                        tx_hash,
+                        to_block,
+                        use_backfill_rpc=use_backfill_rpc,
+                    )
                 cursor = to_block
                 self.storage.set_state("last_processed_block", str(cursor))
                 self.stats["last_backfill_block"] = cursor
