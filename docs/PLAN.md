@@ -1730,3 +1730,15 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - `cooldown_until`
   - `last_error`
 - `SignalHub` 当前只对 HTTPS trace / 自动识别链路做池化；WSS 订阅仍保持单节点。
+
+## 28. 当前剩余收口项（2026-04-16）
+
+- 当前不做异地备份；运行时备份维持“服务器本机每日快照 + 7 天保留”策略。
+- 当前最高优先级剩余项为：
+  - `SignalHub` 的 WSS 订阅链路补多节点与自动切换
+  - `VOID` 项目的缺失记录排查与收口
+- `VOID` 当前已确认的一层问题：
+  - 历史回扫任务大量失败
+  - 失败错误为公共节点返回 `Please specify an address in your request`
+  - 当前主项目日志扫描逻辑仍有两条 `eth_getLogs` 请求未携带 `address` 过滤条件
+  - 这会导致回扫切到公共节点时被直接拒绝，形成“scan job 已创建但 scanned_tx = 0”的现象

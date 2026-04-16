@@ -446,6 +446,7 @@ class LaunchConfig:
     internal_pool_addr: str
     fee_addr: str
     tax_addr: str
+    token_addr: Optional[str]
     token_total_supply: Decimal
     fee_rate: Decimal
 
@@ -580,6 +581,7 @@ def load_config(path: str) -> AppConfig:
                 internal_pool_addr=normalize_address(item["internal_pool_addr"]),
                 fee_addr=normalize_address(item["fee_addr"]),
                 tax_addr=normalize_address(item["tax_addr"]),
+                token_addr=normalize_optional_address(item.get("token_addr")),
                 token_total_supply=Decimal(
                     str(item.get("token_total_supply", total_supply_default))
                 ),
@@ -1072,6 +1074,7 @@ class Storage:
                 internal_pool_addr TEXT NOT NULL,
                 fee_addr TEXT NOT NULL,
                 tax_addr TEXT NOT NULL,
+                token_addr TEXT,
                 token_total_supply TEXT NOT NULL,
                 fee_rate TEXT NOT NULL,
                 is_enabled INTEGER NOT NULL DEFAULT 1,
@@ -1322,6 +1325,7 @@ class Storage:
         self._ensure_column("users", "signup_bonus_granted_at", "INTEGER")
         self._ensure_column("credit_ledger", "payment_amount", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("credit_ledger", "payment_proof_ref", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("launch_configs", "token_addr", "TEXT")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("billing_requests", "credited_credit_ledger_id", "INTEGER")
         self._ensure_column("billing_requests", "operator_user_id", "INTEGER")
@@ -1411,15 +1415,16 @@ class Storage:
             cur.execute(
                 """
                 INSERT OR IGNORE INTO launch_configs(
-                    name, internal_pool_addr, fee_addr, tax_addr,
+                    name, internal_pool_addr, fee_addr, tax_addr, token_addr,
                     token_total_supply, fee_rate, is_enabled, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 """,
                 (
                     lc.name,
                     lc.internal_pool_addr,
                     lc.fee_addr,
                     lc.tax_addr,
+                    lc.token_addr,
                     decimal_to_str(lc.token_total_supply, 0),
                     decimal_to_str(lc.fee_rate, 18),
                     now,
@@ -1515,6 +1520,7 @@ class Storage:
                     internal_pool_addr=normalize_address(r["internal_pool_addr"]),
                     fee_addr=normalize_address(r["fee_addr"]),
                     tax_addr=normalize_address(r["tax_addr"]),
+                    token_addr=normalize_optional_address(r["token_addr"]),
                     token_total_supply=Decimal(str(r["token_total_supply"])),
                     fee_rate=Decimal(str(r["fee_rate"])),
                 )
@@ -1537,6 +1543,7 @@ class Storage:
             internal_pool_addr=normalize_address(row["internal_pool_addr"]),
             fee_addr=normalize_address(row["fee_addr"]),
             tax_addr=normalize_address(row["tax_addr"]),
+            token_addr=normalize_optional_address(row["token_addr"]),
             token_total_supply=Decimal(str(row["token_total_supply"])),
             fee_rate=Decimal(str(row["fee_rate"])),
         )
@@ -1548,6 +1555,7 @@ class Storage:
         internal_pool_addr: str,
         fee_addr: str,
         tax_addr: str,
+        token_addr: Optional[str],
         token_total_supply: Decimal,
         fee_rate: Decimal,
         is_enabled: bool = True,
@@ -1561,13 +1569,14 @@ class Storage:
         self.conn.execute(
             """
             INSERT INTO launch_configs(
-                name, internal_pool_addr, fee_addr, tax_addr,
+                name, internal_pool_addr, fee_addr, tax_addr, token_addr,
                 token_total_supply, fee_rate, is_enabled, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 internal_pool_addr = excluded.internal_pool_addr,
                 fee_addr = excluded.fee_addr,
                 tax_addr = excluded.tax_addr,
+                token_addr = excluded.token_addr,
                 token_total_supply = excluded.token_total_supply,
                 fee_rate = excluded.fee_rate,
                 is_enabled = excluded.is_enabled,
@@ -1578,6 +1587,7 @@ class Storage:
                 normalize_address(internal_pool_addr),
                 normalize_address(fee_addr),
                 normalize_address(tax_addr),
+                normalize_optional_address(token_addr),
                 decimal_to_str(token_total_supply, 0),
                 decimal_to_str(fee_rate, 18),
                 1 if is_enabled else 0,
@@ -5184,6 +5194,7 @@ class VirtualsBot:
             internal_pool_addr=internal_pool_addr,
             fee_addr=self.fixed_fee_addr,
             tax_addr=self.fixed_tax_addr,
+            token_addr=normalize_optional_address(project_row.get("token_addr")),
             token_total_supply=self.fixed_token_total_supply,
             fee_rate=self.fixed_fee_rate,
         )
@@ -5208,6 +5219,7 @@ class VirtualsBot:
                 internal_pool_addr=str(internal_pool_addr),
                 fee_addr=self.fixed_fee_addr,
                 tax_addr=self.fixed_tax_addr,
+                token_addr=normalize_optional_address(project_row.get("token_addr")),
                 token_total_supply=self.fixed_token_total_supply,
                 fee_rate=self.fixed_fee_rate,
                 is_enabled=collect_enabled,
@@ -6352,6 +6364,7 @@ class VirtualsBot:
                             internal = topic_address(launch.internal_pool_addr)
                             fee = topic_address(launch.fee_addr)
                             tax = topic_address(launch.tax_addr)
+                            token_addr = launch.token_addr
                             sub_filters.append(
                                 {
                                     "address": vaddr,
@@ -6364,16 +6377,19 @@ class VirtualsBot:
                                     "topics": [TRANSFER_TOPIC0, internal],
                                 }
                             )
-                            sub_filters.append(
-                                {
-                                    "topics": [TRANSFER_TOPIC0, internal],
-                                }
-                            )
-                            sub_filters.append(
-                                {
-                                    "topics": [TRANSFER_TOPIC0, None, internal],
-                                }
-                            )
+                            if token_addr:
+                                sub_filters.append(
+                                    {
+                                        "address": token_addr,
+                                        "topics": [TRANSFER_TOPIC0, internal],
+                                    }
+                                )
+                                sub_filters.append(
+                                    {
+                                        "address": token_addr,
+                                        "topics": [TRANSFER_TOPIC0, None, internal],
+                                    }
+                                )
 
                         for idx, f in enumerate(sub_filters, start=1):
                             await ws.send_json(
@@ -6483,6 +6499,7 @@ class VirtualsBot:
             internal = topic_address(launch.internal_pool_addr)
             fee = topic_address(launch.fee_addr)
             tax = topic_address(launch.tax_addr)
+            token_addr = launch.token_addr
 
             logs = await rpc_client.get_logs(
                 from_block=from_block,
@@ -6500,19 +6517,22 @@ class VirtualsBot:
             )
             txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
 
-            logs = await rpc_client.get_logs(
-                from_block=from_block,
-                to_block=to_block,
-                topics=[TRANSFER_TOPIC0, internal],
-            )
-            txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
+            if token_addr:
+                logs = await rpc_client.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                    address=token_addr,
+                    topics=[TRANSFER_TOPIC0, internal],
+                )
+                txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
 
-            logs = await rpc_client.get_logs(
-                from_block=from_block,
-                to_block=to_block,
-                topics=[TRANSFER_TOPIC0, None, internal],
-            )
-            txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
+                logs = await rpc_client.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                    address=token_addr,
+                    topics=[TRANSFER_TOPIC0, None, internal],
+                )
+                txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
         return txs
 
     async def _fetch_backfill_txhashes_via_block_scan(
@@ -8464,6 +8484,7 @@ class VirtualsBot:
                 internal_pool_addr=internal_pool_addr,
                 fee_addr=self.fixed_fee_addr,
                 tax_addr=self.fixed_tax_addr,
+                token_addr=normalize_optional_address(payload.get("token_addr")),
                 token_total_supply=self.fixed_token_total_supply,
                 fee_rate=self.fixed_fee_rate,
                 is_enabled=is_enabled,

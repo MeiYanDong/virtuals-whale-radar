@@ -732,3 +732,17 @@
 - [x] 为 `SignalHub` 增加 `CHAINSTACK_BASE_HTTPS_URLS` 与 `CHAINSTACK_PUBLIC_HTTPS_URLS` 配置。
 - [x] 在 `SignalHub /system/status` 中暴露 trace RPC 池状态。
 - [ ] 为 `SignalHub` 的 WSS 订阅链路补多节点与自动切换。
+
+## Phase 37：VOID 缺失记录排查与收口
+
+- [x] 确认 `VOID` 当前项目基础信息完整：
+  - `token_addr`
+  - `internal_pool_addr`
+  - `status`
+  - `start_at / resolved_end_at`
+- [x] 确认 `VOID` 当前主库聚合结果非零但明显偏少。
+- [x] 确认 `VOID` 历史回扫任务存在批量失败。
+- [x] 证明失败错误为公共节点要求 `eth_getLogs` 必须携带 `address` 过滤。
+- [x] 定位当前日志扫描逻辑仍存在未带 `address` 的 `eth_getLogs` 请求。
+- [ ] 为日志扫描逻辑补齐 `address` 过滤，避免公共节点拒绝请求。
+- [ ] 重跑 `VOID` 时间窗口回扫，并重新核对 `events / minute_agg / leaderboard`。
