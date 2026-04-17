@@ -299,6 +299,9 @@ python run_local.py
 
 - `.env` 中的 `CHAINSTACK_BASE_HTTPS_URL`
 - `.env` 中的 `CHAINSTACK_BASE_WSS_URL`
+- 如需多节点自动切换，可改为：
+  - `CHAINSTACK_BASE_HTTPS_URLS`
+  - `CHAINSTACK_BASE_WSS_URLS`
 - `GET /system/status` 中 `chainstack_subscription.connected` 是否为 `true`
 
 如果项目刚被抓到，等待一个轮询周期即可；系统会自动对待发射项目做回补。
@@ -307,6 +310,24 @@ python run_local.py
 
 说明当前 RPC 计划不支持某些历史或 trace 能力。  
 当前代码已对这类情况做降级处理，但若要更完整的链上追踪能力，仍建议使用支持对应方法的节点计划。
+
+### 4. WSS 节点自动切换
+
+如果你有多条可用的 Chainstack WSS 节点，可在 `.env` 中写成：
+
+```bash
+CHAINSTACK_BASE_WSS_URLS=wss://node-a,wss://node-b,wss://node-c
+```
+
+系统会：
+
+- 按顺序尝试连接
+- 对失败节点进入冷却
+- 在 `GET /system/status` 的 `chainstack_subscription.wss_rpc_pool` 中暴露：
+  - 当前活动节点
+  - 最近错误
+  - 冷却截止时间
+  - 最近连接 / 最近消息时间
 
 ### 4. 只想本地看页面，不想接真实链上
 

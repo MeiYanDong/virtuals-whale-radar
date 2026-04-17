@@ -41,13 +41,13 @@ class ChainstackLaunchMonitor:
         self.exporter = exporter
         self.enabled = bool(
             settings.chainstack_subscription_enabled
-            and settings.chainstack_base_https_url
-            and settings.chainstack_base_wss_url
+            and settings.chainstack_base_https_urls
+            and settings.chainstack_base_wss_urls
         )
         self.refresh_seconds = settings.chainstack_subscription_refresh_seconds
         self.backfill_enabled = bool(
             settings.chainstack_trace_backfill_enabled
-            and settings.chainstack_base_https_url
+            and settings.chainstack_base_https_urls
         )
         self.backfill_batch_size = settings.chainstack_trace_backfill_batch_size
         self.backfill_cooldown_seconds = settings.chainstack_trace_backfill_cooldown_seconds
@@ -64,6 +64,20 @@ class ChainstackLaunchMonitor:
         self._last_message_at: str | None = None
         self._project_locks: dict[str, asyncio.Lock] = {}
         self._last_trace_attempt_at: dict[str, float] = {}
+        self._wss_candidates = tuple(settings.chainstack_base_wss_urls)
+        self._active_wss_url: str | None = None
+        self._wss_pool: dict[str, dict[str, Any]] = {
+            url: {
+                "url": url,
+                "healthy": False,
+                "active": False,
+                "cooldown_until_ts": 0.0,
+                "last_error": None,
+                "last_connected_at": None,
+                "last_message_at": None,
+            }
+            for url in self._wss_candidates
+        }
         self._prelaunch_statuses = {
             self._normalize_status(item)
             for item in settings.chainstack_prelaunch_statuses
@@ -90,34 +104,42 @@ class ChainstackLaunchMonitor:
             "enabled": self.enabled,
             "connected": self._connected,
             "subscriptions": len(self._subscription_by_project),
-            "wss_url_configured": bool(self.settings.chainstack_base_wss_url),
-            "https_url_configured": bool(self.settings.chainstack_base_https_url),
+            "wss_url_configured": bool(self._wss_candidates),
+            "https_url_configured": bool(self.settings.chainstack_base_https_urls),
+            "active_wss_url": self._active_wss_url,
             "trace_backfill_enabled": self.backfill_enabled,
             "trace_backfill_batch_size": self.backfill_batch_size,
             "trace_backfill_cooldown_seconds": self.backfill_cooldown_seconds,
             "last_connected_at": self._last_connected_at,
             "last_message_at": self._last_message_at,
             "last_error": self._last_error,
+            "wss_rpc_pool": self._get_wss_pool_status(),
             "trace_rpc_pool": self.trace_service.get_rpc_pool_status(),
         }
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
+            wss_url = self._select_wss_endpoint()
+            if not wss_url:
+                self._connected = False
+                self._last_error = "No available Chainstack WSS endpoint; waiting for cooldown"
+                await asyncio.sleep(5)
+                continue
             try:
-                await self._connect_and_run()
+                await self._connect_and_run(wss_url)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._last_error = str(exc)
                 self._connected = False
+                self._mark_wss_failure(wss_url, exc)
                 logger.exception("chainstack launch monitor failed")
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
 
-    async def _connect_and_run(self) -> None:
-        assert self.settings.chainstack_base_wss_url is not None
+    async def _connect_and_run(self, wss_url: str) -> None:
         self._reset_connection_state()
         async with websockets.connect(
-            self.settings.chainstack_base_wss_url,
+            wss_url,
             ping_interval=20,
             ping_timeout=20,
             max_size=None,
@@ -126,6 +148,8 @@ class ChainstackLaunchMonitor:
             self._connected = True
             self._last_connected_at = utc_now_iso()
             self._last_error = None
+            self._active_wss_url = wss_url
+            self._mark_wss_connected(wss_url)
             reader = asyncio.create_task(self._reader_loop())
             try:
                 while not self._stop_event.is_set():
@@ -137,6 +161,7 @@ class ChainstackLaunchMonitor:
                     await reader
                 self._connected = False
                 self._connection = None
+                self._mark_wss_disconnected(wss_url)
                 self._reset_connection_state()
 
     def _reset_connection_state(self) -> None:
@@ -151,6 +176,8 @@ class ChainstackLaunchMonitor:
         assert self._connection is not None
         async for raw_message in self._connection:
             self._last_message_at = utc_now_iso()
+            if self._active_wss_url:
+                self._mark_wss_message(self._active_wss_url)
             payload = json.loads(raw_message)
             if "id" in payload:
                 future = self._pending.pop(int(payload["id"]), None)
@@ -567,3 +594,89 @@ class ChainstackLaunchMonitor:
 
     def _mark_trace_attempt(self, project_id: str) -> None:
         self._last_trace_attempt_at[project_id] = time.monotonic()
+
+    def _select_wss_endpoint(self) -> str | None:
+        now = time.time()
+        for url in self._wss_candidates:
+            state = self._wss_pool.get(url) or {}
+            if float(state.get("cooldown_until_ts") or 0.0) <= now:
+                return url
+        return None
+
+    def _mark_wss_connected(self, url: str) -> None:
+        now = utc_now_iso()
+        for item_url, state in self._wss_pool.items():
+            state["active"] = item_url == url
+            if item_url == url:
+                state["healthy"] = True
+                state["cooldown_until_ts"] = 0.0
+                state["last_error"] = None
+                state["last_connected_at"] = now
+
+    def _mark_wss_message(self, url: str) -> None:
+        state = self._wss_pool.get(url)
+        if not state:
+            return
+        state["last_message_at"] = utc_now_iso()
+        state["healthy"] = True
+
+    def _mark_wss_disconnected(self, url: str) -> None:
+        state = self._wss_pool.get(url)
+        if not state:
+            return
+        state["active"] = False
+        if self._active_wss_url == url:
+            self._active_wss_url = None
+
+    def _mark_wss_failure(self, url: str, exc: Exception) -> None:
+        state = self._wss_pool.get(url)
+        if not state:
+            return
+        message = str(exc)
+        cooldown_seconds = (
+            self.settings.chainstack_rpc_quota_cooldown_seconds
+            if self._is_quota_error(message)
+            else self.settings.chainstack_rpc_transient_cooldown_seconds
+        )
+        state["healthy"] = False
+        state["active"] = False
+        state["last_error"] = message
+        state["cooldown_until_ts"] = time.time() + cooldown_seconds
+        if self._active_wss_url == url:
+            self._active_wss_url = None
+
+    def _get_wss_pool_status(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "url": url,
+                "healthy": bool(state.get("healthy")),
+                "active": bool(state.get("active")),
+                "cooldown_until": self._epoch_to_iso(state.get("cooldown_until_ts")),
+                "last_error": state.get("last_error"),
+                "last_connected_at": state.get("last_connected_at"),
+                "last_message_at": state.get("last_message_at"),
+            }
+            for url, state in self._wss_pool.items()
+        ]
+
+    def _epoch_to_iso(self, value: Any) -> str | None:
+        try:
+            raw = float(value or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if raw <= 0:
+            return None
+        return datetime.fromtimestamp(raw, tz=timezone.utc).isoformat()
+
+    def _is_quota_error(self, message: str) -> bool:
+        text = str(message or "").lower()
+        return any(
+            token in text
+            for token in (
+                "quota",
+                "request units",
+                "rate limit",
+                "too many requests",
+                "429",
+            )
+        )

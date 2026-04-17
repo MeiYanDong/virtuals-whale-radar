@@ -1730,6 +1730,23 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - `cooldown_until`
   - `last_error`
 - `SignalHub` 当前只对 HTTPS trace / 自动识别链路做池化；WSS 订阅仍保持单节点。
+- `SignalHub` 的下一步收口为 WSS 订阅池化：
+  - 新增 `CHAINSTACK_BASE_WSS_URLS`
+  - 启动时按顺序构建 WSS 候选池
+  - 运行时记录每条 WSS 节点的：
+    - `healthy`
+    - `active`
+    - `cooldown_until`
+    - `last_error`
+    - `last_connected_at`
+    - `last_message_at`
+  - 对以下错误做自动切换：
+    - 配额 / 限流
+    - 连接失败
+    - 握手失败
+    - 长时间无消息
+  - `SignalHub /system/status` 需要暴露当前活动 WSS 节点与 WSS 池状态
+  - 默认顺序沿用现有节点优先级，不直接把公共节点作为 WSS 主链路
 
 ## 28. 当前剩余收口项（2026-04-16）
 

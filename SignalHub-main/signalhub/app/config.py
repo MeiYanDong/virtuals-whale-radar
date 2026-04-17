@@ -95,6 +95,7 @@ class Settings:
     chainstack_base_https_url: str | None
     chainstack_base_wss_url: str | None
     chainstack_base_https_urls: tuple[str, ...]
+    chainstack_base_wss_urls: tuple[str, ...]
     chainstack_public_https_urls: tuple[str, ...]
     chainstack_subscription_enabled: bool
     chainstack_subscription_refresh_seconds: int
@@ -146,6 +147,10 @@ def load_settings() -> Settings:
         (chainstack_base_https_url,) if chainstack_base_https_url else (),
         _to_csv_list(os.getenv("CHAINSTACK_BASE_HTTPS_URLS")),
     )
+    chainstack_base_wss_urls = _merge_url_list(
+        (chainstack_base_wss_url,) if chainstack_base_wss_url else (),
+        _to_csv_list(os.getenv("CHAINSTACK_BASE_WSS_URLS")),
+    )
     chainstack_public_https_urls = _merge_url_list(
         _to_csv_list(os.getenv("CHAINSTACK_PUBLIC_HTTPS_URLS")),
         DEFAULT_PUBLIC_BASE_HTTPS_URLS,
@@ -165,6 +170,7 @@ def load_settings() -> Settings:
         chainstack_base_https_url=chainstack_base_https_url,
         chainstack_base_wss_url=chainstack_base_wss_url,
         chainstack_base_https_urls=chainstack_base_https_urls,
+        chainstack_base_wss_urls=chainstack_base_wss_urls,
         chainstack_public_https_urls=chainstack_public_https_urls,
         chainstack_subscription_enabled=_to_bool(os.getenv("CHAINSTACK_SUBSCRIPTION_ENABLED"), True),
         chainstack_subscription_refresh_seconds=max(
