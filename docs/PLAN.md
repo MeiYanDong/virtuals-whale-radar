@@ -1750,3 +1750,8 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
     - `0x: Allowance Holder`
     - `Uniswap` 上的其他代币换币交易
   - 因此 `VOID` 当前“记录偏少”的主因已经收口为日志扫描问题；剩余差异不再属于买入事件漏判
+- `VOID` 当前进一步确认的一层噪音来源：
+  - `99 tax` 阶段会引入大量共享税管理器与路由相关交易
+  - 这些 tx 会命中“VIRTUAL -> tax_addr”候选规则，但实际买到的并不是 `VOID` 代币
+  - 例如交易 `0x365e...` 虽然在区块浏览器上显示为 `Buy Function`，但 receipt 中实际收到的 token 并非 `VOID`
+  - 因此 `VOID` 与 `SR` 不同：`SR` 的主问题是 parser 漏掉真实买单；`VOID` 当前更多是候选集噪音偏高，而不是大量真实买单未入库

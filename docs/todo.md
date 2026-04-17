@@ -747,3 +747,4 @@
 - [x] 为日志扫描逻辑补齐 `address` 过滤，避免公共节点拒绝请求。
 - [x] 重跑 `VOID` 时间窗口回扫，并重新核对 `events / minute_agg / leaderboard`。
 - [x] 证明 `VOID` 剩余未入库候选 tx 为 `Tax Swapper / Allowance / Uniswap` 等非买入交易，而非新的买入漏判。
+- [x] 证明 `VOID` 的部分 `Buy Function` 候选 tx 实际买到的是其他 `Virtuals` 项目代币，而不是 `VOID` 本身。
