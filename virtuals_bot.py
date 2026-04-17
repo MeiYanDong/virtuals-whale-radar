@@ -462,6 +462,12 @@ class RpcEndpointState:
     cooldown_until: int = 0
     last_error: str = ""
     last_checked_at: int = 0
+    request_count: int = 0
+    estimated_ru: int = 0
+    last_used_at: int = 0
+    basic_request_count: int = 0
+    historical_block_request_count: int = 0
+    logs_request_count: int = 0
 
 
 @dataclass
@@ -4472,6 +4478,43 @@ class VirtualsBot:
                 client=client,
             )
 
+    def backfill_rpc_ru_cost(self, operation: str) -> int:
+        if operation == "logs":
+            return 1
+        if operation in {"historical_block", "basic"}:
+            return 1
+        return 1
+
+    def record_backfill_rpc_usage(self, client: RPCClient, *, operation: str) -> None:
+        state = self.backfill_rpc_states.get(client.url)
+        if not state:
+            return
+        now = int(time.time())
+        state.request_count += 1
+        state.estimated_ru += self.backfill_rpc_ru_cost(operation)
+        state.last_used_at = now
+        if operation == "logs":
+            state.logs_request_count += 1
+        elif operation == "historical_block":
+            state.historical_block_request_count += 1
+        else:
+            state.basic_request_count += 1
+
+    def backfill_rpc_usage_summary_payload(self) -> Dict[str, Any]:
+        total_requests = 0
+        total_estimated_ru = 0
+        last_used_at = 0
+        for state in self.backfill_rpc_states.values():
+            total_requests += int(state.request_count)
+            total_estimated_ru += int(state.estimated_ru)
+            last_used_at = max(last_used_at, int(state.last_used_at or 0))
+        return {
+            "totalRequestCount": total_requests,
+            "totalEstimatedRu": total_estimated_ru,
+            "lastUsedAt": last_used_at or None,
+            "isEstimated": True,
+        }
+
     def mark_backfill_rpc_failure(
         self,
         client: RPCClient,
@@ -4516,6 +4559,7 @@ class VirtualsBot:
         state.last_checked_at = now
         state.last_error = ""
         try:
+            self.record_backfill_rpc_usage(client, operation="basic")
             latest = await client.get_latest_block_number()
             state.supports_basic_rpc = True
         except Exception as exc:
@@ -4524,6 +4568,7 @@ class VirtualsBot:
             return state
 
         try:
+            self.record_backfill_rpc_usage(client, operation="historical_block")
             await client.get_block_by_number(max(0, latest - 1))
             state.supports_historical_blocks = True
         except Exception as exc:
@@ -4531,6 +4576,7 @@ class VirtualsBot:
             self.mark_backfill_rpc_failure(client, exc, operation="probe_historical_blocks")
 
         try:
+            self.record_backfill_rpc_usage(client, operation="logs")
             await client.get_logs(
                 from_block=max(0, latest - 1),
                 to_block=latest,
@@ -4645,6 +4691,12 @@ class VirtualsBot:
                     "isCoolingDown": state.cooldown_until > now,
                     "lastError": state.last_error or None,
                     "lastCheckedAt": state.last_checked_at or None,
+                    "requestCount": state.request_count,
+                    "estimatedRu": state.estimated_ru,
+                    "lastUsedAt": state.last_used_at or None,
+                    "basicRequestCount": state.basic_request_count,
+                    "historicalBlockRequestCount": state.historical_block_request_count,
+                    "logsRequestCount": state.logs_request_count,
                 }
             )
         return payload
@@ -6038,6 +6090,7 @@ class VirtualsBot:
         if cached is not None:
             return cached
         rpc_client = rpc or self.http_rpc
+        self.record_backfill_rpc_usage(rpc_client, operation="historical_block")
         block = await rpc_client.get_block_by_number(block_number)
         if not block:
             return int(time.time())
@@ -6501,6 +6554,7 @@ class VirtualsBot:
             tax = topic_address(launch.tax_addr)
             token_addr = launch.token_addr
 
+            self.record_backfill_rpc_usage(rpc_client, operation="logs")
             logs = await rpc_client.get_logs(
                 from_block=from_block,
                 to_block=to_block,
@@ -6509,6 +6563,7 @@ class VirtualsBot:
             )
             txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
 
+            self.record_backfill_rpc_usage(rpc_client, operation="logs")
             logs = await rpc_client.get_logs(
                 from_block=from_block,
                 to_block=to_block,
@@ -6518,6 +6573,7 @@ class VirtualsBot:
             txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
 
             if token_addr:
+                self.record_backfill_rpc_usage(rpc_client, operation="logs")
                 logs = await rpc_client.get_logs(
                     from_block=from_block,
                     to_block=to_block,
@@ -6526,6 +6582,7 @@ class VirtualsBot:
                 )
                 txs.update(x["transactionHash"].lower() for x in logs if x.get("transactionHash"))
 
+                self.record_backfill_rpc_usage(rpc_client, operation="logs")
                 logs = await rpc_client.get_logs(
                     from_block=from_block,
                     to_block=to_block,
@@ -6545,6 +6602,7 @@ class VirtualsBot:
         txs: Set[str] = set()
         rpc_client = rpc or self.http_rpc
         for block_number in range(max(0, from_block), max(0, to_block) + 1):
+            self.record_backfill_rpc_usage(rpc_client, operation="historical_block")
             block = await rpc_client.get_block_by_number(block_number)
             if not isinstance(block, dict):
                 continue
@@ -6556,6 +6614,7 @@ class VirtualsBot:
                     tx_hash = str(tx_ref or "").strip().lower()
                 if not tx_hash or tx_hash in txs:
                     continue
+                self.record_backfill_rpc_usage(rpc_client, operation="basic")
                 receipt = await rpc_client.get_receipt(tx_hash)
                 if not receipt:
                     continue
@@ -6572,6 +6631,7 @@ class VirtualsBot:
         self, target_ts: int, rpc: Optional[RPCClient] = None
     ) -> int:
         rpc_client = rpc or self.http_rpc
+        self.record_backfill_rpc_usage(rpc_client, operation="basic")
         latest = await rpc_client.get_latest_block_number()
         latest_ts = await self.get_block_timestamp(latest, rpc=rpc_client)
         if target_ts >= latest_ts:
@@ -6592,6 +6652,7 @@ class VirtualsBot:
         self, target_ts: int, rpc: Optional[RPCClient] = None
     ) -> int:
         rpc_client = rpc or self.http_rpc
+        self.record_backfill_rpc_usage(rpc_client, operation="basic")
         latest = await rpc_client.get_latest_block_number()
         first_ts = await self.get_block_timestamp(0, rpc=rpc_client)
         if target_ts <= first_ts:
@@ -6946,6 +7007,7 @@ class VirtualsBot:
                 "scanJobs": scan_jobs,
                 "backfillRpcMode": "pool" if len(self.backfill_http_rpcs) > 1 else ("separate" if self.backfill_rpc_separate else "shared"),
                 "backfillRpcPool": self.backfill_rpc_pool_payload(),
+                "backfillRpcUsage": self.backfill_rpc_usage_summary_payload(),
                 "role": self.role,
                 "runtimePaused": runtime_data["runtimePaused"],
                 "runtimeManualPaused": runtime_data["runtimeManualPaused"],

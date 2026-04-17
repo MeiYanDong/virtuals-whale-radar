@@ -759,3 +759,19 @@
 - [x] 重跑 `VOID` 时间窗口回扫，并重新核对 `events / minute_agg / leaderboard`。
 - [x] 证明 `VOID` 剩余未入库候选 tx 为 `Tax Swapper / Allowance / Uniswap` 等非买入交易，而非新的买入漏判。
 - [x] 证明 `VOID` 的部分 `Buy Function` 候选 tx 实际买到的是其他 `Virtuals` 项目代币，而不是 `VOID` 本身。
+
+## Phase 38：回扫节点 RU 本地估算与后台可视化
+
+- [x] 为主项目 `backfill` 节点池增加本地请求计数。
+- [x] 为主项目 `backfill` 节点池增加 `estimated_ru` 本地近似估算。
+- [x] 在健康检查中增加回扫节点池汇总使用信息。
+- [x] 在健康检查中为每条回扫节点暴露：
+  - `requestCount`
+  - `estimatedRu`
+  - `lastUsedAt`
+  - `basicRequestCount`
+  - `historicalBlockRequestCount`
+  - `logsRequestCount`
+- [x] 在 `Settings` 页面增加“回扫节点池”观测区块。
+- [x] 在 `Settings` 页面明确标注“估算值不等于官方账单真值”。
+- [x] 本轮不扩展到 `SignalHub trace` RU 估算。

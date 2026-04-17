@@ -45,6 +45,9 @@ export function SettingsPage() {
     return <LoadingState />;
   }
 
+  const backfillRpcPool = health.backfillRpcPool ?? [];
+  const backfillRpcUsage = health.backfillRpcUsage;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -183,6 +186,111 @@ export function SettingsPage() {
             </div>
           </div>
         )}
+      </SectionCard>
+
+      <SectionCard
+        title="回扫节点池"
+        description="展示主项目 backfill 节点池的本地使用估算与健康状态。这里的 RU 仅基于本地请求统计，不等于 Chainstack 官方账单真值。"
+      >
+        <div className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-4">
+            <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">节点模式</div>
+              <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">{health.backfillRpcMode || "-"}</div>
+            </div>
+            <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">累计请求</div>
+              <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">
+                {backfillRpcUsage?.totalRequestCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">估算 RU</div>
+              <div className="mt-3 text-3xl font-semibold tracking-[-0.04em]">
+                {backfillRpcUsage?.totalEstimatedRu ?? 0}
+              </div>
+            </div>
+            <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">最近使用</div>
+              <div className="mt-3 text-sm font-medium">
+                {formatDateTime(backfillRpcUsage?.lastUsedAt ?? null)}
+              </div>
+            </div>
+          </div>
+
+          <Alert variant="warning">
+            当前 RU 为运行时本地估算值，只用于节点健康判断与容量趋势观察，不代表 Chainstack 控制台中的官方账单数据。
+          </Alert>
+
+          <div className="space-y-3">
+            {backfillRpcPool.map((item) => (
+              <div
+                key={item.url}
+                className="rounded-[22px] border border-border bg-white/70 px-4 py-4"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-medium">{item.label}</div>
+                      <Badge variant={item.isCoolingDown ? "warning" : "success"}>
+                        {item.isCoolingDown ? "冷却中" : "可用"}
+                      </Badge>
+                      <Badge variant={item.supportsLogs ? "success" : "warning"}>
+                        Logs {item.supportsLogs ? "On" : "Off"}
+                      </Badge>
+                      <Badge variant={item.supportsHistoricalBlocks ? "success" : "warning"}>
+                        History {item.supportsHistoricalBlocks ? "On" : "Off"}
+                      </Badge>
+                      <Badge variant={item.supportsBasicRpc ? "success" : "warning"}>
+                        Basic {item.supportsBasicRpc ? "On" : "Off"}
+                      </Badge>
+                    </div>
+                    <div className="break-all text-xs text-muted-foreground">{item.url}</div>
+                    <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-3">
+                      <div>最近探测：{formatDateTime(item.lastCheckedAt)}</div>
+                      <div>最近使用：{formatDateTime(item.lastUsedAt)}</div>
+                      <div>冷却截止：{formatDateTime(item.cooldownUntil)}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 md:min-w-[320px]">
+                    <Alert>
+                      请求数：
+                      <span className="ml-2 font-medium">{item.requestCount}</span>
+                    </Alert>
+                    <Alert>
+                      估算 RU：
+                      <span className="ml-2 font-medium">{item.estimatedRu}</span>
+                    </Alert>
+                    <Alert>
+                      Basic：
+                      <span className="ml-2 font-medium">{item.basicRequestCount}</span>
+                    </Alert>
+                    <Alert>
+                      History：
+                      <span className="ml-2 font-medium">{item.historicalBlockRequestCount}</span>
+                    </Alert>
+                    <Alert className="sm:col-span-2">
+                      Logs：
+                      <span className="ml-2 font-medium">{item.logsRequestCount}</span>
+                    </Alert>
+                  </div>
+                </div>
+
+                {item.lastError ? (
+                  <div className="mt-3 rounded-[18px] border border-[color:var(--warning-soft)] bg-[color:var(--warning-soft)] px-3 py-3 text-xs text-[color:var(--warning-foreground)]">
+                    最近错误：{item.lastError}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            {!backfillRpcPool.length ? (
+              <div className="rounded-[22px] border border-dashed border-border bg-white/55 px-4 py-5 text-sm text-muted-foreground">
+                当前还没有可展示的回扫节点池状态。
+              </div>
+            ) : null}
+          </div>
+        </div>
       </SectionCard>
 
       <section className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">

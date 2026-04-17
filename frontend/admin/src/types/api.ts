@@ -97,6 +97,8 @@ export interface HealthResponse {
   monitoringProjects: string[];
   scanJobs: number;
   backfillRpcMode: string;
+  backfillRpcPool: BackfillRpcPoolItem[];
+  backfillRpcUsage: BackfillRpcUsageSummary;
   role: string;
   runtimePaused: boolean;
   runtimeManualPaused: boolean;
@@ -104,6 +106,31 @@ export interface HealthResponse {
   runtimeUiLastSeenAt: number | null;
   runtimeUiHeartbeatTimeoutSec: number;
   runtimePauseUpdatedAt: number | null;
+}
+
+export interface BackfillRpcPoolItem {
+  label: string;
+  url: string;
+  supportsBasicRpc: boolean | null;
+  supportsHistoricalBlocks: boolean | null;
+  supportsLogs: boolean | null;
+  cooldownUntil: number | null;
+  isCoolingDown: boolean;
+  lastError: string | null;
+  lastCheckedAt: number | null;
+  requestCount: number;
+  estimatedRu: number;
+  lastUsedAt: number | null;
+  basicRequestCount: number;
+  historicalBlockRequestCount: number;
+  logsRequestCount: number;
+}
+
+export interface BackfillRpcUsageSummary {
+  totalRequestCount: number;
+  totalEstimatedRu: number;
+  lastUsedAt: number | null;
+  isEstimated: boolean;
 }
 
 export interface SignalHubItem {

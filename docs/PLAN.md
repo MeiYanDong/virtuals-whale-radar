@@ -1774,3 +1774,22 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - 这些 tx 会命中“VIRTUAL -> tax_addr”候选规则，但实际买到的并不是 `VOID` 代币
   - 例如交易 `0x365e...` 虽然在区块浏览器上显示为 `Buy Function`，但 receipt 中实际收到的 token 并非 `VOID`
   - 因此 `VOID` 与 `SR` 不同：`SR` 的主问题是 parser 漏掉真实买单；`VOID` 当前更多是候选集噪音偏高，而不是大量真实买单未入库
+
+## 29. 节点 RU 本地估算与后台可视化（2026-04-17）
+
+- 当前不接入第三方账单 API，也不依赖手工登录多个 Chainstack 账号查看额度。
+- 当前采用“本地 issued-request 近似估算”方案，只覆盖主项目 `backfill` 节点池：
+  - 以节点实际发起的请求数为基础
+  - 按请求类型估算本地 `estimated_ru`
+  - 明确标注为“运行时近似值，不等于官方账单真值”
+- `Settings` 页面增加“回扫节点池”区块，展示：
+  - 当前节点池模式
+  - 总请求数
+  - 估算 RU
+  - 最近使用时间
+  - 每条节点的能力状态、冷却状态、最近错误、请求数、估算 RU
+- 第一阶段只覆盖以下请求类别：
+  - `basic`
+  - `historical_block`
+  - `logs`
+- `SignalHub trace` 的 RU 估算暂不纳入本轮，避免把两套链路一起耦合。
