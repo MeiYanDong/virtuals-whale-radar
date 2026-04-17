@@ -731,18 +731,18 @@
 - [x] 为 `SignalHub` 的 trace / 自动识别链路补同样的池化与能力检测。
 - [x] 为 `SignalHub` 增加 `CHAINSTACK_BASE_HTTPS_URLS` 与 `CHAINSTACK_PUBLIC_HTTPS_URLS` 配置。
 - [x] 在 `SignalHub /system/status` 中暴露 trace RPC 池状态。
-- [ ] 为 `SignalHub` 增加 `CHAINSTACK_BASE_WSS_URLS` 多节点顺序配置。
-- [ ] 为 `SignalHub` 维护 WSS 节点运行状态：
+- [x] 为 `SignalHub` 增加 `CHAINSTACK_BASE_WSS_URLS` 多节点顺序配置。
+- [x] 为 `SignalHub` 维护 WSS 节点运行状态：
   - `healthy`
   - `active`
   - `cooldown_until`
   - `last_error`
   - `last_connected_at`
   - `last_message_at`
-- [ ] 为 `SignalHub` 的 WSS 订阅实现连接失败自动切换。
-- [ ] 为 `SignalHub` 的 WSS 订阅实现限流 / 配额类错误冷却切换。
-- [ ] 在 `SignalHub /system/status` 中暴露当前活动 WSS 节点与 WSS 池状态。
-- [ ] 在线上验证 WSS 主节点故障后可自动切换到下一条候选节点。
+- [x] 为 `SignalHub` 的 WSS 订阅实现连接失败自动切换。
+- [x] 为 `SignalHub` 的 WSS 订阅实现限流 / 配额类错误冷却切换。
+- [x] 在 `SignalHub /system/status` 中暴露当前活动 WSS 节点与 WSS 池状态。
+- [x] 在线上验证 WSS 主节点故障后可自动切换到下一条候选节点。
 
 ## Phase 37：VOID 缺失记录排查与收口
 
