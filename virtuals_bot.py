@@ -4413,6 +4413,9 @@ class VirtualsBot:
         self.pending_max_block = 0
         self.decimals_cache: Dict[str, int] = {}
         self.block_ts_cache: Dict[int, int] = {}
+        self.project_market_cache: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        self.project_market_cache_ttl_sec = 20
+        self.project_market_cache_lock = asyncio.Lock()
         self.scan_jobs: Dict[str, Dict[str, Any]] = {}
         self.scan_lock = asyncio.Lock()
         self.stats: Dict[str, Any] = {
@@ -5664,6 +5667,47 @@ class VirtualsBot:
         out["market_price_source"] = market_price_source
         return out
 
+    async def get_cached_live_pool_market_snapshot(
+        self,
+        project_name: str,
+        token_addr: Optional[str],
+        internal_pool_addr: Optional[str],
+    ) -> Dict[str, Any]:
+        token = normalize_optional_address(token_addr)
+        pool = normalize_optional_address(internal_pool_addr)
+        cache_key = (str(project_name or "").strip().upper(), token or "", pool or "")
+        now_ts = time.time()
+        async with self.project_market_cache_lock:
+            cached = self.project_market_cache.get(cache_key)
+            if cached and float(cached.get("expires_at") or 0) > now_ts:
+                return dict(cached.get("payload") or {})
+        payload = await self.get_live_pool_market_snapshot(project_name, token, pool)
+        async with self.project_market_cache_lock:
+            self.project_market_cache[cache_key] = {
+                "expires_at": now_ts + self.project_market_cache_ttl_sec,
+                "payload": dict(payload),
+            }
+        return payload
+
+    def build_project_market_payload(self, live_market: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "tokenPriceV": decimal_to_str(live_market.get("token_price_v"), 18)
+            if live_market.get("token_price_v") is not None
+            else None,
+            "tokenPriceUsd": decimal_to_str(live_market.get("token_price_usd"), 18)
+            if live_market.get("token_price_usd") is not None
+            else None,
+            "liveFdvUsd": decimal_to_str(live_market.get("live_fdv_usd"), 18)
+            if live_market.get("live_fdv_usd") is not None
+            else None,
+            "marketPriceSource": str(live_market.get("market_price_source") or "").strip() or None,
+            "marketPriceStale": bool(live_market.get("market_price_stale")),
+            "virtualPriceUsd": decimal_to_str(live_market.get("virtual_price_usd"), 18)
+            if live_market.get("virtual_price_usd") is not None
+            else None,
+        }
+
     async def build_project_overview_payload(
         self,
         managed_row: Optional[Dict[str, Any]],
@@ -5790,12 +5834,6 @@ class VirtualsBot:
         )
         whale_board = await self.enrich_overview_board_items(project_name, whale_board)
         tracked_wallets = await self.enrich_overview_board_items(project_name, tracked_wallets)
-        live_market = await self.get_live_pool_market_snapshot(
-            project_name,
-            managed_row.get("token_addr"),
-            managed_row.get("internal_pool_addr"),
-        )
-
         return {
             "ok": True,
             "viewMode": view_mode,
@@ -5813,17 +5851,11 @@ class VirtualsBot:
                 "tokenAddr": normalize_optional_address(managed_row.get("token_addr")),
                 "internalPoolAddr": normalize_optional_address(managed_row.get("internal_pool_addr")),
                 "sumTaxV": str(tax.get("sum_tax_v") or "0"),
-                "tokenPriceV": decimal_to_str(live_market["token_price_v"], 18)
-                if live_market.get("token_price_v") is not None
-                else None,
-                "tokenPriceUsd": decimal_to_str(live_market["token_price_usd"], 18)
-                if live_market.get("token_price_usd") is not None
-                else None,
-                "liveFdvUsd": decimal_to_str(live_market["live_fdv_usd"], 18)
-                if live_market.get("live_fdv_usd") is not None
-                else None,
-                "marketPriceSource": str(live_market.get("market_price_source") or "").strip() or None,
-                "marketPriceStale": bool(live_market.get("market_price_stale")),
+                "tokenPriceV": None,
+                "tokenPriceUsd": None,
+                "liveFdvUsd": None,
+                "marketPriceSource": None,
+                "marketPriceStale": None,
                 "chartFromAt": chart_from_at,
                 "chartToAt": chart_to_at,
             },
@@ -7327,6 +7359,28 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def admin_project_market_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_id = int(raw_project_id)
+        except ValueError:
+            return web.json_response({"error": "project_id must be integer"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(project_id)
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+            live_market = await self.get_cached_live_pool_market_snapshot(
+                str(project_row.get("name") or ""),
+                project_row.get("token_addr"),
+                project_row.get("internal_pool_addr"),
+            )
+            return web.json_response(self.build_project_market_payload(live_market))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     async def auth_me_handler(self, request: web.Request) -> web.Response:
         user = self.get_request_user(request)
         if not user:
@@ -7879,6 +7933,31 @@ class VirtualsBot:
                     status=403,
                 )
             return web.json_response(payload)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def app_project_market_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        project_id_raw = str(request.match_info.get("project_id", "")).strip()
+        if not project_id_raw:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_id = int(project_id_raw)
+        except ValueError:
+            return web.json_response({"error": "project_id must be integer"}, status=400)
+        project_row = self.storage.get_managed_project(project_id)
+        if not project_row or str(project_row.get("status") or "").lower() not in {"scheduled", "prelaunch", "live", "ended"}:
+            return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+        access = self.build_project_access_payload(user, project_row)
+        if not bool(access.get("isUnlocked")):
+            return web.json_response({"error": "project market is locked", "code": "project_locked", "access": access}, status=403)
+        try:
+            live_market = await self.get_cached_live_pool_market_snapshot(
+                str(project_row.get("name") or ""),
+                project_row.get("token_addr"),
+                project_row.get("internal_pool_addr"),
+            )
+            return web.json_response(self.build_project_market_payload(live_market))
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -9085,6 +9164,7 @@ class VirtualsBot:
         app.router.add_get("/api/app/overview-active", self.app_overview_active_handler)
         app.router.add_get("/api/app/projects", self.app_projects_handler)
         app.router.add_get("/api/app/projects/{project_id}/overview", self.app_project_overview_handler)
+        app.router.add_get("/api/app/projects/{project_id}/market", self.app_project_market_handler)
         app.router.add_get("/api/app/projects/{project_id}/access", self.app_project_access_handler)
         app.router.add_post("/api/app/projects/{project_id}/unlock", self.app_project_unlock_handler)
         app.router.add_get("/api/app/signalhub", self.app_signalhub_handler)
@@ -9097,6 +9177,7 @@ class VirtualsBot:
         app.router.add_get("/api/admin/overview-active", admin_only(self.overview_active_handler))
         app.router.add_get("/api/admin/projects", admin_only(self.managed_projects_handler))
         app.router.add_get("/api/admin/projects/{project_id}/overview", admin_only(self.admin_project_overview_handler))
+        app.router.add_get("/api/admin/projects/{project_id}/market", admin_only(self.admin_project_market_handler))
         app.router.add_post("/api/admin/projects", admin_only(self.managed_project_upsert_handler))
         app.router.add_delete("/api/admin/projects/{project_id}", admin_only(self.managed_project_delete_handler))
         app.router.add_get("/api/admin/signalhub", admin_only(self.signalhub_upcoming_handler))

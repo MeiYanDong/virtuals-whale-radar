@@ -394,6 +394,16 @@ export interface OverviewActiveResponse {
   delays: EventDelayRow[];
 }
 
+export interface ProjectMarketResponse {
+  ok: boolean;
+  tokenPriceV: string | null;
+  tokenPriceUsd: string | null;
+  liveFdvUsd: string | null;
+  marketPriceSource?: string | null;
+  marketPriceStale?: boolean | null;
+  virtualPriceUsd?: string | null;
+}
+
 export interface ProjectAccessState {
   projectId: number;
   isUnlocked: boolean;

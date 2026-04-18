@@ -24,6 +24,7 @@ import type {
   MinuteRow,
   OverviewActiveResponse,
   ProjectAccessResponse,
+  ProjectMarketResponse,
   ProjectSchedulerStatusResponse,
   ProjectUnlockResponse,
   ProjectTaxResponse,
@@ -194,6 +195,9 @@ export const dashboardApi = {
     },
     getProjectOverview(projectId: number) {
       return requestJson<OverviewActiveResponse>(`/api/admin/projects/${projectId}/overview`);
+    },
+    getProjectMarket(projectId: number) {
+      return requestJson<ProjectMarketResponse>(`/api/admin/projects/${projectId}/market`);
     },
     createScanJob(project: string | null, startTs: number, endTs: number) {
       return requestJson<{ ok: boolean; jobId: string }>("/api/admin/scan-range", {
@@ -438,6 +442,9 @@ export const dashboardApi = {
     },
     getProjectOverview(projectId: number) {
       return requestJson<OverviewActiveResponse>(`/api/app/projects/${projectId}/overview`);
+    },
+    getProjectMarket(projectId: number) {
+      return requestJson<ProjectMarketResponse>(`/api/app/projects/${projectId}/market`);
     },
     getProjectAccess(projectId: number) {
       return requestJson<ProjectAccessResponse>(`/api/app/projects/${projectId}/access`);

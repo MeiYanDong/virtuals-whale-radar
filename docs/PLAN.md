@@ -1815,3 +1815,8 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
     - `live_fdv_usd = token_price_usd * total_supply`
 - 当前 `virtual_price_usd` 仍来自全局 `VIRTUAL/USDC` 池价格服务。
 - 若池子不支持 `getReserves()`、地址不匹配或价格不可得，前端显示 `-`，不影响原有成本与榜单链路。
+- 为避免项目详情首屏阻塞链上初始化读取，实时价格链改为：
+  - 项目详情主接口只返回数据库和聚合数据
+  - `tokenPriceV / tokenPriceUsd / liveFdvUsd` 通过独立 market 接口异步加载
+  - 后端对单项目 market 结果做短 TTL 缓存
+- 当前设计上，`ended` 历史项目仍允许显示“当前实时价格 / 当前实时 FDV”，不因为项目已结束而隐藏；这与“买入市值（按成本）”属于不同口径。

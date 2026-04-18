@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LockKeyhole, WalletCards } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -112,6 +112,7 @@ export function OverviewPage() {
       ];
       if (detailProjectId !== null) {
         invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.appProjectOverview(detailProjectId) }));
+        invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.appProjectMarket(detailProjectId) }));
       }
       if (currentProjectName) {
         invalidations.push(
@@ -128,12 +129,46 @@ export function OverviewPage() {
 
   const activeProjects = overviewQuery.data?.activeProjects ?? [];
   const currentItem = overviewQuery.data?.item ?? null;
+  const marketProjectId = currentItem?.id ?? null;
+  const marketQuery = useQuery({
+    queryKey:
+      marketProjectId !== null
+        ? viewer === "admin"
+          ? queryKeys.adminProjectMarket(marketProjectId)
+          : queryKeys.appProjectMarket(marketProjectId)
+        : ["project-market", "idle"],
+    queryFn: () => {
+      if (marketProjectId === null) {
+        throw new Error("project market requires a project id");
+      }
+      return viewer === "admin"
+        ? dashboardApi.admin.getProjectMarket(marketProjectId)
+        : dashboardApi.app.getProjectMarket(marketProjectId);
+    },
+    enabled: Boolean(currentItem && marketProjectId !== null),
+    staleTime: 15_000,
+    gcTime: 60_000,
+  });
+  const displayItem = useMemo(
+    () =>
+      currentItem && marketQuery.data
+        ? {
+            ...currentItem,
+            tokenPriceV: marketQuery.data.tokenPriceV,
+            tokenPriceUsd: marketQuery.data.tokenPriceUsd,
+            liveFdvUsd: marketQuery.data.liveFdvUsd,
+            marketPriceSource: marketQuery.data.marketPriceSource ?? undefined,
+            marketPriceStale: marketQuery.data.marketPriceStale ?? undefined,
+          }
+        : currentItem,
+    [currentItem, marketQuery.data],
+  );
 
   useEffect(() => {
-    if (currentItem && currentItem.name !== selectedProject) {
-      setSelectedProject(currentItem.name);
+    if (displayItem && displayItem.name !== selectedProject) {
+      setSelectedProject(displayItem.name);
     }
-  }, [currentItem, selectedProject, setSelectedProject]);
+  }, [displayItem, selectedProject, setSelectedProject]);
 
   if (hasInvalidProjectId) {
     return (
@@ -324,12 +359,13 @@ export function OverviewPage() {
         </div>
       );
     }
+    const detailItem = displayItem ?? currentItem;
 
     return (
       <div className="space-y-6">
         <PageHeader
           eyebrow="Projects"
-          title={`${currentItem.name} · ${detailPageTitle(currentItem.projectedStatus || currentItem.status)}`}
+          title={`${detailItem.name} · ${detailPageTitle(detailItem.projectedStatus || detailItem.status)}`}
           description={
             viewer === "admin"
               ? "这里保留项目在整个发射窗口内的分钟消耗、大户榜、追踪钱包和录入延迟，方便管理员复盘。"
@@ -337,31 +373,31 @@ export function OverviewPage() {
           }
           actions={
             <>
-              <Badge variant={detailStatusVariant(currentItem.projectedStatus || currentItem.status)}>
-                {detailStatusLabel(currentItem.projectedStatus || currentItem.status)}
+              <Badge variant={detailStatusVariant(detailItem.projectedStatus || detailItem.status)}>
+                {detailStatusLabel(detailItem.projectedStatus || detailItem.status)}
               </Badge>
               <span className="self-center text-sm text-muted-foreground">
-                发射窗口 {formatDateTime(currentItem.startAt)} - {formatDateTime(currentItem.resolvedEndAt)}
+                发射窗口 {formatDateTime(detailItem.startAt)} - {formatDateTime(detailItem.resolvedEndAt)}
               </span>
             </>
           }
         />
 
         <ProjectOverviewSections
-          item={currentItem}
+          item={detailItem}
           minutes={overviewQuery.data?.minutes ?? []}
           whaleBoard={overviewQuery.data?.whaleBoard ?? []}
           trackedWallets={overviewQuery.data?.trackedWallets ?? []}
           delays={overviewQuery.data?.delays ?? []}
           actions={
             <>
-              {isRealtimeStatus(currentItem.projectedStatus || currentItem.status) ? (
+              {isRealtimeStatus(detailItem.projectedStatus || detailItem.status) ? (
                 <Button asChild variant="outline">
                   <Link
                     to={
                       viewer === "admin"
-                        ? `/admin/overview?project=${encodeURIComponent(currentItem.name)}`
-                        : `/app/overview?project=${encodeURIComponent(currentItem.name)}`
+                        ? `/admin/overview?project=${encodeURIComponent(detailItem.name)}`
+                        : `/app/overview?project=${encodeURIComponent(detailItem.name)}`
                     }
                   >
                     切回实时看板
@@ -402,23 +438,24 @@ export function OverviewPage() {
   if (!currentItem) {
     return <LoadingState label="正在定位活跃项目..." />;
   }
+  const activeItem = displayItem ?? currentItem;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Overview"
-        title={`${currentItem.name} · 实时发射看板`}
+        title={`${activeItem.name} · 实时发射看板`}
         description="这里集中看正在发射项目的资金变化、大户榜和你的钱包持仓。"
         actions={
           <>
-            <Badge variant={detailStatusVariant(currentItem.projectedStatus || currentItem.status)}>
-              {detailStatusLabel(currentItem.projectedStatus || currentItem.status)}
+            <Badge variant={detailStatusVariant(activeItem.projectedStatus || activeItem.status)}>
+              {detailStatusLabel(activeItem.projectedStatus || activeItem.status)}
             </Badge>
             <div className="min-w-[240px]">
               <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                 活跃项目
               </div>
-              <Select value={currentItem.name} onChange={(event) => setSelectedProject(event.target.value)}>
+              <Select value={activeItem.name} onChange={(event) => setSelectedProject(event.target.value)}>
                 {activeProjects.map((item) => (
                   <option key={item.id} value={item.name}>
                     {item.name}
@@ -434,7 +471,7 @@ export function OverviewPage() {
       />
 
       <ProjectOverviewSections
-        item={currentItem}
+        item={activeItem}
         minutes={overviewQuery.data?.minutes ?? []}
         whaleBoard={overviewQuery.data?.whaleBoard ?? []}
         trackedWallets={overviewQuery.data?.trackedWallets ?? []}

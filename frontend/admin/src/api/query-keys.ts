@@ -10,6 +10,7 @@ export const queryKeys = {
   appNotifications: (limit: number) => ["app-notifications", limit] as const,
   appProjectAccess: (projectId: number) => ["app-project-access", projectId] as const,
   appProjectOverview: (projectId: number) => ["app-project-overview", projectId] as const,
+  appProjectMarket: (projectId: number) => ["app-project-market", projectId] as const,
   signalHub: (limit: number, withinHours: number) =>
     ["signalhub", "upcoming", limit, withinHours] as const,
   appSignalHub: (limit: number, withinHours: number) =>
@@ -28,6 +29,7 @@ export const queryKeys = {
   projectScheduler: ["project-scheduler-status"] as const,
   overviewActive: (project: string) => ["overview-active", project] as const,
   adminProjectOverview: (projectId: number) => ["admin-project-overview", projectId] as const,
+  adminProjectMarket: (projectId: number) => ["admin-project-market", projectId] as const,
   appOverviewActive: (project: string) => ["app-overview-active", project] as const,
   scanJob: (jobId: string) => ["scan-job", jobId] as const,
   adminUsers: ["admin-users"] as const,
