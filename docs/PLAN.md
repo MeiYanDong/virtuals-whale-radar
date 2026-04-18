@@ -1793,3 +1793,23 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - `historical_block`
   - `logs`
 - `SignalHub trace` 的 RU 估算暂不纳入本轮，避免把两套链路一起耦合。
+
+## 30. 实时价格与实时 FDV（2026-04-18）
+
+- 当前保留两套不同口径，不能混用：
+  - `买入市值（万 USD）`：按买入成本推算的 FDV
+  - `实时价格 / 实时 FDV`：按当前内盘池 `reserve` 计算的现价与实时 FDV
+- 第一阶段只做“当前实时价格”，不做“历史时点价格”。
+- 实时价格链的前提：
+  - 已识别 `internal_pool_addr`
+  - 内盘池支持 `getReserves()`
+  - 池子的 `token0/token1` 恰好是 `目标代币 + VIRTUAL`
+- 当前实现方式：
+  - 读取 `internal_pool_addr` 的 `token0/token1`
+  - 读取 `getReserves()`
+  - 计算：
+    - `token_price_v = virtual_reserve / token_reserve`
+    - `token_price_usd = token_price_v * virtual_price_usd`
+    - `live_fdv_usd = token_price_usd * total_supply`
+- 当前 `virtual_price_usd` 仍来自全局 `VIRTUAL/USDC` 池价格服务。
+- 若池子不支持 `getReserves()`、地址不匹配或价格不可得，前端显示 `-`，不影响原有成本与榜单链路。

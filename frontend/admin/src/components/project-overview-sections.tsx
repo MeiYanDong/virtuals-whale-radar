@@ -42,6 +42,21 @@ function formatBreakevenFdvUsd(value: number | null) {
   return formatDecimal(value / 10000, 2);
 }
 
+function formatLiveTokenPriceV(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return `${formatDecimal(value, 10)} V`;
+}
+
+function formatLiveTokenPriceUsd(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return `${formatDecimal(value, 10)} USD`;
+}
+
+function formatLiveFdvUsd(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return formatDecimal(value / 10000, 2);
+}
+
 function projectStatusLabel(status: string) {
   const key = String(status || "").toLowerCase();
   if (key === "live") return "发射中";
@@ -207,6 +222,12 @@ export function ProjectOverviewSections({
 }) {
   const whaleRows = toBoardRows(whaleBoard);
   const trackedWalletRows = toBoardRows(trackedWallets);
+  const tokenPriceV =
+    item.tokenPriceV === null || item.tokenPriceV === undefined ? null : toNumber(item.tokenPriceV);
+  const tokenPriceUsd =
+    item.tokenPriceUsd === null || item.tokenPriceUsd === undefined ? null : toNumber(item.tokenPriceUsd);
+  const liveFdvUsd =
+    item.liveFdvUsd === null || item.liveFdvUsd === undefined ? null : toNumber(item.liveFdvUsd);
 
   return (
     <>
@@ -266,6 +287,18 @@ export function ProjectOverviewSections({
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4 xl:col-span-2">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">当前项目累计税收</div>
             <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{formatCurrency(item.sumTaxV)}</div>
+          </div>
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">实时价格（USD）</div>
+            <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceUsd(tokenPriceUsd)}</div>
+          </div>
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">实时价格（V）</div>
+            <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceV(tokenPriceV)}</div>
+          </div>
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">实时 FDV（万 USD）</div>
+            <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveFdvUsd(liveFdvUsd)}</div>
           </div>
         </div>
       </section>

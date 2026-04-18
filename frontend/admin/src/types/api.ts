@@ -372,6 +372,11 @@ export interface OverviewActiveProjectItem {
   tokenAddr: string | null;
   internalPoolAddr: string | null;
   sumTaxV: string;
+  tokenPriceV?: string | null;
+  tokenPriceUsd?: string | null;
+  liveFdvUsd?: string | null;
+  marketPriceSource?: string | null;
+  marketPriceStale?: boolean;
   chartFromAt: number;
   chartToAt: number;
 }

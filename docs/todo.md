@@ -775,3 +775,18 @@
 - [x] 在 `Settings` 页面增加“回扫节点池”观测区块。
 - [x] 在 `Settings` 页面明确标注“估算值不等于官方账单真值”。
 - [x] 本轮不扩展到 `SignalHub trace` RU 估算。
+
+## Phase 39：项目详情实时价格
+
+- [x] 保留原有“买入市值（万 USD）”口径，不与实时价格混用。
+- [x] 为项目详情新增当前内盘实时价格链。
+- [x] 仅在已识别 `internal_pool_addr` 且池子支持 `getReserves()` 时启用。
+- [x] 后端返回：
+  - `tokenPriceV`
+  - `tokenPriceUsd`
+  - `liveFdvUsd`
+- [x] 项目详情页增加：
+  - `实时价格（USD）`
+  - `实时价格（V）`
+  - `实时 FDV（万 USD）`
+- [x] 第一阶段不做历史时点价格，只使用当前 `VIRTUAL/USD` 价格服务。

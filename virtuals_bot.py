@@ -5543,6 +5543,80 @@ class VirtualsBot:
 
         return enriched
 
+    async def get_live_pool_market_snapshot(
+        self,
+        project_name: str,
+        token_addr: Optional[str],
+        internal_pool_addr: Optional[str],
+    ) -> Dict[str, Any]:
+        token = normalize_optional_address(token_addr)
+        pool = normalize_optional_address(internal_pool_addr)
+        virtual_token = self.cfg.virtual_token_addr
+        virtual_price_usd, virtual_price_stale = await self.price_service.get_price()
+        out: Dict[str, Any] = {
+            "token_price_v": None,
+            "token_price_usd": None,
+            "live_fdv_usd": None,
+            "virtual_price_usd": virtual_price_usd,
+            "market_price_source": None,
+            "market_price_stale": virtual_price_stale,
+        }
+        if not token or not pool:
+            return out
+
+        try:
+            token0 = normalize_address("0x" + (await self.http_rpc.eth_call(pool, TOKEN0_SELECTOR))[-40:])
+            token1 = normalize_address("0x" + (await self.http_rpc.eth_call(pool, TOKEN1_SELECTOR))[-40:])
+            if {token0, token1} != {token, virtual_token}:
+                return out
+
+            reserves_hex = await self.http_rpc.eth_call(pool, GET_RESERVES_SELECTOR)
+            if not reserves_hex or reserves_hex == "0x":
+                return out
+            data = reserves_hex[2:]
+            if len(data) < 64 * 3:
+                return out
+
+            reserve0 = int(data[0:64], 16)
+            reserve1 = int(data[64:128], 16)
+            if reserve0 <= 0 or reserve1 <= 0:
+                return out
+
+            token0_decimals = await self.get_token_decimals(token0, rpc=self.http_rpc)
+            token1_decimals = await self.get_token_decimals(token1, rpc=self.http_rpc)
+            if token0 == token:
+                token_reserve = raw_to_decimal(reserve0, token0_decimals)
+                virtual_reserve = raw_to_decimal(reserve1, token1_decimals)
+            else:
+                token_reserve = raw_to_decimal(reserve1, token1_decimals)
+                virtual_reserve = raw_to_decimal(reserve0, token0_decimals)
+            if token_reserve <= 0 or virtual_reserve <= 0:
+                return out
+
+            token_price_v = virtual_reserve / token_reserve
+            token_price_usd = (
+                token_price_v * virtual_price_usd if virtual_price_usd is not None else None
+            )
+            launch_cfg = self.storage.get_launch_config_by_name(project_name)
+            total_supply = (
+                launch_cfg.token_total_supply
+                if launch_cfg is not None
+                else self.fixed_token_total_supply
+            )
+            live_fdv_usd = (
+                token_price_usd * total_supply
+                if token_price_usd is not None and total_supply > 0
+                else None
+            )
+
+            out["token_price_v"] = token_price_v
+            out["token_price_usd"] = token_price_usd
+            out["live_fdv_usd"] = live_fdv_usd
+            out["market_price_source"] = "internal_pool_reserves"
+            return out
+        except Exception:
+            return out
+
     async def build_project_overview_payload(
         self,
         managed_row: Optional[Dict[str, Any]],
@@ -5669,6 +5743,11 @@ class VirtualsBot:
         )
         whale_board = await self.enrich_overview_board_items(project_name, whale_board)
         tracked_wallets = await self.enrich_overview_board_items(project_name, tracked_wallets)
+        live_market = await self.get_live_pool_market_snapshot(
+            project_name,
+            managed_row.get("token_addr"),
+            managed_row.get("internal_pool_addr"),
+        )
 
         return {
             "ok": True,
@@ -5687,6 +5766,17 @@ class VirtualsBot:
                 "tokenAddr": normalize_optional_address(managed_row.get("token_addr")),
                 "internalPoolAddr": normalize_optional_address(managed_row.get("internal_pool_addr")),
                 "sumTaxV": str(tax.get("sum_tax_v") or "0"),
+                "tokenPriceV": decimal_to_str(live_market["token_price_v"], 18)
+                if live_market.get("token_price_v") is not None
+                else None,
+                "tokenPriceUsd": decimal_to_str(live_market["token_price_usd"], 18)
+                if live_market.get("token_price_usd") is not None
+                else None,
+                "liveFdvUsd": decimal_to_str(live_market["live_fdv_usd"], 18)
+                if live_market.get("live_fdv_usd") is not None
+                else None,
+                "marketPriceSource": str(live_market.get("market_price_source") or "").strip() or None,
+                "marketPriceStale": bool(live_market.get("market_price_stale")),
                 "chartFromAt": chart_from_at,
                 "chartToAt": chart_to_at,
             },
