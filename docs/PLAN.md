@@ -1805,6 +1805,7 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - 内盘池支持 `getReserves()`
   - 优先使用池子的 `token0/token1` 判断资产方向
   - 若 `token0/token1` 不可读，但 `getReserves()` 可读，则允许按 `reserve + 总供应量 + 数量级` 做 fallback 判定
+  - 若池子只返回两段储备值，不返回标准第三段时间戳，也应视为可计算价格的有效 `getReserves()` 响应
 - 当前实现方式：
   - 读取 `internal_pool_addr` 的 `token0/token1`
   - 读取 `getReserves()`

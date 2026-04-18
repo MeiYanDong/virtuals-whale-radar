@@ -791,3 +791,4 @@
   - `实时 FDV（万 USD）`
 - [x] 第一阶段不做历史时点价格，只使用当前 `VIRTUAL/USD` 价格服务。
 - [x] 对 `token0/token1` 不可读、但 `getReserves()` 可读的非标准内盘池增加 fallback 判定。
+- [x] 对只返回两段储备值的非标准 `getReserves()` 响应增加兼容，避免 `VOID` 这类池子直接显示为空。
