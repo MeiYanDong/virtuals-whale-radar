@@ -751,7 +751,7 @@ def load_config(path: str) -> AppConfig:
         total_supply_default=total_supply_default,
         launch_configs=launch_configs,
         my_wallets=my_wallets,
-        top_n=int(raw.get("TOP_N", 50)),
+        top_n=int(raw.get("TOP_N", 20)),
         confirmations=int(raw.get("CONFIRMATIONS", 1)),
         agg_minute_window=int(raw.get("AGG_MINUTE_WINDOW", 0)),
         price_mode=price_mode,
