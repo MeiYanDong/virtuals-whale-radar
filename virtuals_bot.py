@@ -5565,11 +5565,6 @@ class VirtualsBot:
             return out
 
         try:
-            token0 = normalize_address("0x" + (await self.http_rpc.eth_call(pool, TOKEN0_SELECTOR))[-40:])
-            token1 = normalize_address("0x" + (await self.http_rpc.eth_call(pool, TOKEN1_SELECTOR))[-40:])
-            if {token0, token1} != {token, virtual_token}:
-                return out
-
             reserves_hex = await self.http_rpc.eth_call(pool, GET_RESERVES_SELECTOR)
             if not reserves_hex or reserves_hex == "0x":
                 return out
@@ -5582,26 +5577,75 @@ class VirtualsBot:
             if reserve0 <= 0 or reserve1 <= 0:
                 return out
 
-            token0_decimals = await self.get_token_decimals(token0, rpc=self.http_rpc)
-            token1_decimals = await self.get_token_decimals(token1, rpc=self.http_rpc)
-            if token0 == token:
-                token_reserve = raw_to_decimal(reserve0, token0_decimals)
-                virtual_reserve = raw_to_decimal(reserve1, token1_decimals)
+            total_supply = None
+            launch_cfg = self.storage.get_launch_config_by_name(project_name)
+            if launch_cfg is not None:
+                total_supply = launch_cfg.token_total_supply
             else:
-                token_reserve = raw_to_decimal(reserve1, token1_decimals)
-                virtual_reserve = raw_to_decimal(reserve0, token0_decimals)
+                total_supply = self.fixed_token_total_supply
+
+            token_decimals = await self.get_token_decimals(token, rpc=self.http_rpc)
+            virtual_decimals = await self.get_token_decimals(virtual_token, rpc=self.http_rpc)
+
+            token0 = None
+            token1 = None
+            try:
+                token0 = normalize_address("0x" + (await self.http_rpc.eth_call(pool, TOKEN0_SELECTOR))[-40:])
+                token1 = normalize_address("0x" + (await self.http_rpc.eth_call(pool, TOKEN1_SELECTOR))[-40:])
+            except Exception:
+                token0 = None
+                token1 = None
+
+            market_price_source = "internal_pool_reserves"
+            if token0 and token1:
+                if {token0, token1} != {token, virtual_token}:
+                    return out
+                token0_decimals = await self.get_token_decimals(token0, rpc=self.http_rpc)
+                token1_decimals = await self.get_token_decimals(token1, rpc=self.http_rpc)
+                if token0 == token:
+                    token_reserve = raw_to_decimal(reserve0, token0_decimals)
+                    virtual_reserve = raw_to_decimal(reserve1, token1_decimals)
+                else:
+                    token_reserve = raw_to_decimal(reserve1, token1_decimals)
+                    virtual_reserve = raw_to_decimal(reserve0, token0_decimals)
+            else:
+                reserve0_as_token = raw_to_decimal(reserve0, token_decimals)
+                reserve1_as_virtual = raw_to_decimal(reserve1, virtual_decimals)
+                reserve1_as_token = raw_to_decimal(reserve1, token_decimals)
+                reserve0_as_virtual = raw_to_decimal(reserve0, virtual_decimals)
+
+                def score_layout(token_reserve: Decimal, virtual_reserve: Decimal) -> Tuple[int, Decimal]:
+                    score = 0
+                    if token_reserve > 0 and virtual_reserve > 0:
+                        score += 1
+                    if total_supply is not None and total_supply > 0 and token_reserve <= total_supply * Decimal("1.05"):
+                        score += 3
+                    if token_reserve > virtual_reserve:
+                        score += 2
+                    if virtual_reserve <= Decimal("1000000"):
+                        score += 1
+                    return score, token_reserve / virtual_reserve if virtual_reserve > 0 else Decimal(0)
+
+                left_score, left_ratio = score_layout(reserve0_as_token, reserve1_as_virtual)
+                right_score, right_ratio = score_layout(reserve1_as_token, reserve0_as_virtual)
+                choose_left = left_score > right_score or (
+                    left_score == right_score and left_ratio >= right_ratio
+                )
+
+                if choose_left:
+                    token_reserve = reserve0_as_token
+                    virtual_reserve = reserve1_as_virtual
+                else:
+                    token_reserve = reserve1_as_token
+                    virtual_reserve = reserve0_as_virtual
+                market_price_source = "internal_pool_reserves_fallback"
+
             if token_reserve <= 0 or virtual_reserve <= 0:
                 return out
 
             token_price_v = virtual_reserve / token_reserve
             token_price_usd = (
                 token_price_v * virtual_price_usd if virtual_price_usd is not None else None
-            )
-            launch_cfg = self.storage.get_launch_config_by_name(project_name)
-            total_supply = (
-                launch_cfg.token_total_supply
-                if launch_cfg is not None
-                else self.fixed_token_total_supply
             )
             live_fdv_usd = (
                 token_price_usd * total_supply
@@ -5612,7 +5656,7 @@ class VirtualsBot:
             out["token_price_v"] = token_price_v
             out["token_price_usd"] = token_price_usd
             out["live_fdv_usd"] = live_fdv_usd
-            out["market_price_source"] = "internal_pool_reserves"
+            out["market_price_source"] = market_price_source
             return out
         except Exception:
             return out

@@ -1803,7 +1803,8 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 - 实时价格链的前提：
   - 已识别 `internal_pool_addr`
   - 内盘池支持 `getReserves()`
-  - 池子的 `token0/token1` 恰好是 `目标代币 + VIRTUAL`
+  - 优先使用池子的 `token0/token1` 判断资产方向
+  - 若 `token0/token1` 不可读，但 `getReserves()` 可读，则允许按 `reserve + 总供应量 + 数量级` 做 fallback 判定
 - 当前实现方式：
   - 读取 `internal_pool_addr` 的 `token0/token1`
   - 读取 `getReserves()`
