@@ -377,6 +377,21 @@ export interface OverviewActiveProjectItem {
   liveFdvUsd?: string | null;
   marketPriceSource?: string | null;
   marketPriceStale?: boolean;
+  marketPriceMode?: string | null;
+  marketPriceLabel?: string | null;
+  recommendedRefreshMs?: number | null;
+  marketCacheTtlMs?: number | null;
+  marketCacheHit?: boolean | null;
+  priceUpdatedAt?: number | null;
+  priceLatencyMs?: number | null;
+  priceBlockNumber?: number | null;
+  buyTaxRate?: number | null;
+  buyTaxRateSource?: string | null;
+  taxStartAt?: number | null;
+  taxEndAt?: number | null;
+  antiSniperTaxType?: number | null;
+  estimatedFdvUsdWithTax?: string | null;
+  estimatedFdvWanUsdWithTax?: string | null;
   chartFromAt: number;
   chartToAt: number;
 }
@@ -402,6 +417,21 @@ export interface ProjectMarketResponse {
   marketPriceSource?: string | null;
   marketPriceStale?: boolean | null;
   virtualPriceUsd?: string | null;
+  marketPriceMode?: string | null;
+  marketPriceLabel?: string | null;
+  recommendedRefreshMs?: number | null;
+  marketCacheTtlMs?: number | null;
+  marketCacheHit?: boolean | null;
+  priceUpdatedAt?: number | null;
+  priceLatencyMs?: number | null;
+  priceBlockNumber?: number | null;
+  buyTaxRate?: number | null;
+  buyTaxRateSource?: string | null;
+  taxStartAt?: number | null;
+  taxEndAt?: number | null;
+  antiSniperTaxType?: number | null;
+  estimatedFdvUsdWithTax?: string | null;
+  estimatedFdvWanUsdWithTax?: string | null;
 }
 
 export interface ProjectAccessState {

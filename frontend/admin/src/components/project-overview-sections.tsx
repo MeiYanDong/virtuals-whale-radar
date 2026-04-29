@@ -1,5 +1,5 @@
 import { ExternalLink } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { EmptyState, SectionCard } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,10 @@ import {
   formatShortDateTime,
 } from "@/lib/format";
 import type { MinuteRow, OverviewActiveProjectItem, OverviewBoardItem, EventDelayRow } from "@/types/api";
+
+const TAX_FDV_GLOW_MS = 2000;
+const LOCAL_TAX_FDV_SIM_START_HOLD_MS = 1800;
+const LOCAL_TAX_FDV_SIM_REPLAY_MS = 5800;
 
 type BoardRow = {
   wallet: string;
@@ -57,6 +61,27 @@ function formatLiveFdvUsd(value: number | null) {
   return formatDecimal(value / 10000, 2);
 }
 
+function formatWanUsd(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return formatDecimal(value, 2);
+}
+
+function formatBuyTaxRate(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "-";
+  return `${formatDecimal(value, 0)}%`;
+}
+
+// Local-only visual replay for checking the cross-threshold glow without mutating DB/API data.
+function getLocalTaxFdvSimulationScenario() {
+  if (typeof window === "undefined") return null;
+  if (window.location.hostname !== "127.0.0.1" && window.location.hostname !== "localhost") return null;
+
+  const mode = new URLSearchParams(window.location.search).get("taxFdvSim");
+  if (mode === "up") return { start: 96.58, end: 106.58 };
+  if (mode === "down") return { start: 106.58, end: 86.58 };
+  return null;
+}
+
 function projectStatusLabel(status: string) {
   const key = String(status || "").toLowerCase();
   if (key === "live") return "发射中";
@@ -74,6 +99,35 @@ function projectStatusVariant(status: string) {
   if (key === "ended" || key === "scheduled") return "secondary" as const;
   if (key === "removed") return "danger" as const;
   return "default" as const;
+}
+
+function marketBaseLabel(item: OverviewActiveProjectItem) {
+  if (item.marketPriceLabel) return item.marketPriceLabel;
+  const status = String(item.projectedStatus || item.status || "").toLowerCase();
+  if (status === "live") return "实时价格";
+  if (status === "scheduled" || status === "prelaunch") return "开盘参考价";
+  return "当前池价";
+}
+
+function marketFdvLabel(item: OverviewActiveProjectItem) {
+  const mode = String(item.marketPriceMode || "").toLowerCase();
+  const status = String(item.projectedStatus || item.status || "").toLowerCase();
+  if (mode === "reference" || status === "scheduled" || status === "prelaunch") {
+    return "参考 FDV（万 USD）";
+  }
+  if (mode === "live" || status === "live") return "实时 FDV（万 USD）";
+  return "当前 FDV（万 USD）";
+}
+
+function formatMarketMeta(item: OverviewActiveProjectItem) {
+  const parts: string[] = [];
+  if (item.priceUpdatedAt) parts.push(`更新 ${formatDateTime(item.priceUpdatedAt)}`);
+  if (item.priceBlockNumber) parts.push(`区块 #${formatInteger(item.priceBlockNumber)}`);
+  if (item.priceLatencyMs !== null && item.priceLatencyMs !== undefined) {
+    parts.push(`${item.priceLatencyMs}ms`);
+  }
+  if (item.marketPriceStale) parts.push("VIRTUAL/USD 价格源过期");
+  return parts.join(" / ");
 }
 
 function MinuteBars({
@@ -228,6 +282,94 @@ export function ProjectOverviewSections({
     item.tokenPriceUsd === null || item.tokenPriceUsd === undefined ? null : toNumber(item.tokenPriceUsd);
   const liveFdvUsd =
     item.liveFdvUsd === null || item.liveFdvUsd === undefined ? null : toNumber(item.liveFdvUsd);
+  const buyTaxRate =
+    item.buyTaxRate === null || item.buyTaxRate === undefined ? null : toNumber(item.buyTaxRate);
+  const rawEstimatedFdvWanUsdWithTax =
+    item.estimatedFdvWanUsdWithTax !== null && item.estimatedFdvWanUsdWithTax !== undefined
+      ? toNumber(item.estimatedFdvWanUsdWithTax)
+      : item.estimatedFdvUsdWithTax !== null && item.estimatedFdvUsdWithTax !== undefined
+        ? toNumber(item.estimatedFdvUsdWithTax) / 10000
+        : null;
+  const [taxFdvSimulation, setTaxFdvSimulation] = useState<number | null>(
+    () => getLocalTaxFdvSimulationScenario()?.start ?? null,
+  );
+  const estimatedFdvWanUsdWithTax = taxFdvSimulation ?? rawEstimatedFdvWanUsdWithTax;
+  const priceLabel = marketBaseLabel(item);
+  const marketMeta = formatMarketMeta(item);
+  const hasTaxAdjustedFdv =
+    estimatedFdvWanUsdWithTax !== null && Number.isFinite(estimatedFdvWanUsdWithTax);
+  const taxFdvBucket = hasTaxAdjustedFdv ? Math.floor(estimatedFdvWanUsdWithTax / 10) : null;
+  const [taxFdvGlow, setTaxFdvGlow] = useState<"up" | "down" | null>(null);
+  const previousTaxFdvBucketRef = useRef<number | null>(null);
+  const suppressNextTaxFdvGlowRef = useRef(false);
+  const triggerGlowTimeoutRef = useRef<number | null>(null);
+  const clearGlowTimeoutRef = useRef<number | null>(null);
+  const showTaxFdvGlow = (direction: "up" | "down") => {
+    if (triggerGlowTimeoutRef.current !== null) window.clearTimeout(triggerGlowTimeoutRef.current);
+    if (clearGlowTimeoutRef.current !== null) window.clearTimeout(clearGlowTimeoutRef.current);
+
+    setTaxFdvGlow(null);
+    triggerGlowTimeoutRef.current = window.setTimeout(() => {
+      setTaxFdvGlow(direction);
+      clearGlowTimeoutRef.current = window.setTimeout(() => setTaxFdvGlow(null), TAX_FDV_GLOW_MS);
+    }, 20);
+  };
+
+  useEffect(() => {
+    const scenario = getLocalTaxFdvSimulationScenario();
+    if (!scenario) return undefined;
+
+    let stepTimeout: number | null = null;
+    const replaySimulation = () => {
+      if (stepTimeout !== null) window.clearTimeout(stepTimeout);
+      if (triggerGlowTimeoutRef.current !== null) window.clearTimeout(triggerGlowTimeoutRef.current);
+      if (clearGlowTimeoutRef.current !== null) window.clearTimeout(clearGlowTimeoutRef.current);
+
+      const startBucket = Math.floor(scenario.start / 10);
+      const previousBucket = previousTaxFdvBucketRef.current;
+      suppressNextTaxFdvGlowRef.current = previousBucket !== null && previousBucket !== startBucket;
+      setTaxFdvGlow(null);
+      setTaxFdvSimulation(scenario.start);
+      stepTimeout = window.setTimeout(() => {
+        suppressNextTaxFdvGlowRef.current = true;
+        setTaxFdvSimulation(scenario.end);
+        showTaxFdvGlow(scenario.end > scenario.start ? "up" : "down");
+      }, LOCAL_TAX_FDV_SIM_START_HOLD_MS);
+    };
+
+    const startTimeout = window.setTimeout(replaySimulation, 500);
+    const loopInterval = window.setInterval(replaySimulation, LOCAL_TAX_FDV_SIM_REPLAY_MS);
+    return () => {
+      window.clearTimeout(startTimeout);
+      if (stepTimeout !== null) window.clearTimeout(stepTimeout);
+      window.clearInterval(loopInterval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (taxFdvBucket === null) {
+      previousTaxFdvBucketRef.current = null;
+      return;
+    }
+
+    const previousBucket = previousTaxFdvBucketRef.current;
+    previousTaxFdvBucketRef.current = taxFdvBucket;
+    if (suppressNextTaxFdvGlowRef.current) {
+      suppressNextTaxFdvGlowRef.current = false;
+      return;
+    }
+    if (previousBucket === null || previousBucket === taxFdvBucket) return;
+
+    const direction = taxFdvBucket > previousBucket ? "up" : "down";
+    showTaxFdvGlow(direction);
+  }, [taxFdvBucket]);
+
+  useEffect(() => {
+    return () => {
+      if (triggerGlowTimeoutRef.current !== null) window.clearTimeout(triggerGlowTimeoutRef.current);
+      if (clearGlowTimeoutRef.current !== null) window.clearTimeout(clearGlowTimeoutRef.current);
+    };
+  }, []);
 
   return (
     <>
@@ -289,16 +431,39 @@ export function ProjectOverviewSections({
             <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{formatCurrency(item.sumTaxV)}</div>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">实时价格（USD）</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{priceLabel}（USD）</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceUsd(tokenPriceUsd)}</div>
+            {marketMeta ? <div className="mt-2 text-xs text-muted-foreground">{marketMeta}</div> : null}
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">实时价格（V）</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{priceLabel}（V）</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceV(tokenPriceV)}</div>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">实时 FDV（万 USD）</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{marketFdvLabel(item)}</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveFdvUsd(liveFdvUsd)}</div>
+          </div>
+          <div
+            className="tax-fdv-card min-h-[150px] rounded-[22px] border border-primary/35 bg-[color:var(--surface-soft)] px-4 py-4"
+            data-testid="tax-fdv-card"
+            data-glow={taxFdvGlow ?? undefined}
+          >
+            <div className="relative z-10 flex h-full flex-col justify-between gap-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                  含税估算 FDV（万 USD）
+                </div>
+                {buyTaxRate !== null ? <Badge variant="warning">Tax Rate {formatBuyTaxRate(buyTaxRate)}</Badge> : null}
+              </div>
+              <div>
+                <div className="text-3xl font-semibold tracking-[-0.04em]">
+                  {hasTaxAdjustedFdv ? formatWanUsd(estimatedFdvWanUsdWithTax) : "-"}
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {hasTaxAdjustedFdv ? `按${priceLabel}与当前税率折算` : "等待价格与税率数据"}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

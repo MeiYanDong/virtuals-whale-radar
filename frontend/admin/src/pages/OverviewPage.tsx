@@ -20,6 +20,20 @@ function isRealtimeStatus(status: string) {
   return ["prelaunch", "live"].includes(String(status || "").toLowerCase());
 }
 
+function marketRefreshIntervalMs(status: string) {
+  const key = String(status || "").toLowerCase();
+  if (key === "live") return 500;
+  if (key === "prelaunch") return 5_000;
+  return 20_000;
+}
+
+function marketStaleTimeMs(status: string) {
+  const key = String(status || "").toLowerCase();
+  if (key === "live") return 0;
+  if (key === "prelaunch") return 2_000;
+  return 15_000;
+}
+
 function detailPageTitle(status: string) {
   return String(status || "").toLowerCase() === "ended" ? "历史项目详情" : "项目详情";
 }
@@ -130,6 +144,8 @@ export function OverviewPage() {
   const activeProjects = overviewQuery.data?.activeProjects ?? [];
   const currentItem = overviewQuery.data?.item ?? null;
   const marketProjectId = currentItem?.id ?? null;
+  const marketStatus = String(currentItem?.projectedStatus || currentItem?.status || "");
+  const marketRefreshMs = marketRefreshIntervalMs(marketStatus);
   const marketQuery = useQuery({
     queryKey:
       marketProjectId !== null
@@ -146,7 +162,9 @@ export function OverviewPage() {
         : dashboardApi.app.getProjectMarket(marketProjectId);
     },
     enabled: Boolean(currentItem && marketProjectId !== null),
-    staleTime: 15_000,
+    staleTime: marketStaleTimeMs(marketStatus),
+    refetchInterval: currentItem && marketProjectId !== null ? marketRefreshMs : false,
+    refetchIntervalInBackground: false,
     gcTime: 60_000,
   });
   const displayItem = useMemo(
@@ -159,6 +177,21 @@ export function OverviewPage() {
             liveFdvUsd: marketQuery.data.liveFdvUsd,
             marketPriceSource: marketQuery.data.marketPriceSource ?? undefined,
             marketPriceStale: marketQuery.data.marketPriceStale ?? undefined,
+            marketPriceMode: marketQuery.data.marketPriceMode ?? undefined,
+            marketPriceLabel: marketQuery.data.marketPriceLabel ?? undefined,
+            recommendedRefreshMs: marketQuery.data.recommendedRefreshMs ?? undefined,
+            marketCacheTtlMs: marketQuery.data.marketCacheTtlMs ?? undefined,
+            marketCacheHit: marketQuery.data.marketCacheHit ?? undefined,
+            priceUpdatedAt: marketQuery.data.priceUpdatedAt ?? undefined,
+            priceLatencyMs: marketQuery.data.priceLatencyMs ?? undefined,
+            priceBlockNumber: marketQuery.data.priceBlockNumber ?? undefined,
+            buyTaxRate: marketQuery.data.buyTaxRate ?? undefined,
+            buyTaxRateSource: marketQuery.data.buyTaxRateSource ?? undefined,
+            taxStartAt: marketQuery.data.taxStartAt ?? undefined,
+            taxEndAt: marketQuery.data.taxEndAt ?? undefined,
+            antiSniperTaxType: marketQuery.data.antiSniperTaxType ?? undefined,
+            estimatedFdvUsdWithTax: marketQuery.data.estimatedFdvUsdWithTax ?? undefined,
+            estimatedFdvWanUsdWithTax: marketQuery.data.estimatedFdvWanUsdWithTax ?? undefined,
           }
         : currentItem,
     [currentItem, marketQuery.data],
