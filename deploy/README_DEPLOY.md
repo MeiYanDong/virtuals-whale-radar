@@ -1,4 +1,43 @@
-# Virtuals-Launch-Hunter Deployment Guide (Backend on Server, Frontend on Domain)
+# Virtuals Whale Radar Deployment Guide
+
+## 0. Current Aliyun Server Type
+
+The current production server for `virtuals.club` is **Alibaba Cloud Simple Application Server** (`swas-open`), not ECS.
+
+Use the project helper CLI first:
+
+```bash
+scripts/ops/aliyun_swas_server.sh instance
+scripts/ops/aliyun_swas_server.sh services
+scripts/ops/aliyun_swas_server.sh ssh-check
+```
+
+Default production target:
+
+- Product line: `aliyun swas-open`
+- Region: `cn-hongkong`
+- Domain: `virtuals.club`
+- Public IP: `47.243.172.165`
+- App dir: `/opt/virtuals-whale-radar`
+- Current production systemd prefix: `vwr`
+- Current public frontend/API domain: `https://virtuals.club`
+
+Production status checks:
+
+```bash
+ssh -i /Users/myandong/.ssh/id_ed25519 root@47.243.172.165
+systemctl is-active vwr@writer vwr@realtime vwr@backfill vwr-signalhub nginx
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8000/healthz
+```
+
+Do **not** start production lookup with ECS commands such as:
+
+```bash
+aliyun ecs DescribeInstances ...
+```
+
+Those commands query the wrong Aliyun product line for this project.
 
 This guide covers two production patterns:
 
@@ -18,7 +57,7 @@ The project now supports:
 For domain `launch.licheng.website` style deployment:
 
 ```bash
-cd /opt/virtuals-launch-hunter
+cd /opt/virtuals-whale-radar
 chmod +x deploy/install_ubuntu22_oneclick.sh
 DOMAIN=launch.licheng.website \
 LETSENCRYPT_EMAIL=you@example.com \
@@ -52,33 +91,33 @@ Open firewall ports (if enabled):
 ## 2. Project layout on server
 
 Recommended paths:
-- App code: `/opt/virtuals-launch-hunter`
-- Frontend static files: `/var/www/virtuals-launch-hunter`
+- App code: `/opt/virtuals-whale-radar`
+- Frontend static files: `/var/www/virtuals-whale-radar`
 
 ```bash
-sudo mkdir -p /opt/virtuals-launch-hunter /var/www/virtuals-launch-hunter
-sudo chown -R $USER:$USER /opt/virtuals-launch-hunter /var/www/virtuals-launch-hunter
+sudo mkdir -p /opt/virtuals-whale-radar /var/www/virtuals-whale-radar
+sudo chown -R $USER:$USER /opt/virtuals-whale-radar /var/www/virtuals-whale-radar
 ```
 
-Upload or clone this repository into `/opt/virtuals-launch-hunter`.
+Upload or clone this repository into `/opt/virtuals-whale-radar`.
 If you already use legacy paths (`/opt/vpulse`, `/var/www/vpulse`), you can keep them.
 
 ## 3. Python environment
 
 ```bash
-cd /opt/virtuals-launch-hunter
+cd /opt/virtuals-whale-radar
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## 4. Backend config (`/opt/virtuals-launch-hunter/config.json`)
+## 4. Backend config (`/opt/virtuals-whale-radar/config.json`)
 
 Start from template:
 
 ```bash
-cp /opt/virtuals-launch-hunter/config.example.json /opt/virtuals-launch-hunter/config.json
+cp /opt/virtuals-whale-radar/config.example.json /opt/virtuals-whale-radar/config.json
 ```
 
 Edit required RPC/project values first, then set deployment-related fields:
@@ -98,8 +137,8 @@ Use the template unit:
 Install:
 
 ```bash
-SERVICE_PREFIX=virtuals-launch-hunter
-sudo cp /opt/virtuals-launch-hunter/deploy/systemd/vpulse@.service /etc/systemd/system/${SERVICE_PREFIX}@.service
+SERVICE_PREFIX=virtuals-whale-radar
+sudo cp /opt/virtuals-whale-radar/deploy/systemd/vpulse@.service /etc/systemd/system/${SERVICE_PREFIX}@.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now ${SERVICE_PREFIX}@writer ${SERVICE_PREFIX}@realtime ${SERVICE_PREFIX}@backfill
 ```
@@ -107,7 +146,7 @@ sudo systemctl enable --now ${SERVICE_PREFIX}@writer ${SERVICE_PREFIX}@realtime 
 Check status/logs:
 
 ```bash
-SERVICE_PREFIX=virtuals-launch-hunter
+SERVICE_PREFIX=virtuals-whale-radar
 sudo systemctl status ${SERVICE_PREFIX}@writer
 sudo systemctl status ${SERVICE_PREFIX}@realtime
 sudo systemctl status ${SERVICE_PREFIX}@backfill
@@ -119,11 +158,11 @@ sudo journalctl -u ${SERVICE_PREFIX}@writer -f
 Copy frontend assets:
 
 ```bash
-cp /opt/virtuals-launch-hunter/dashboard.html /var/www/virtuals-launch-hunter/dashboard.html
-cp /opt/virtuals-launch-hunter/favicon-vpulse.svg /var/www/virtuals-launch-hunter/favicon-vpulse.svg
-mkdir -p /var/www/virtuals-launch-hunter/favicon
-cp -r /opt/virtuals-launch-hunter/favicon/. /var/www/virtuals-launch-hunter/favicon/
-cp /opt/virtuals-launch-hunter/favicon/favicon.ico /var/www/virtuals-launch-hunter/favicon.ico
+cp /opt/virtuals-whale-radar/dashboard.html /var/www/virtuals-whale-radar/dashboard.html
+cp /opt/virtuals-whale-radar/favicon-vpulse.svg /var/www/virtuals-whale-radar/favicon-vpulse.svg
+mkdir -p /var/www/virtuals-whale-radar/favicon
+cp -r /opt/virtuals-whale-radar/favicon/. /var/www/virtuals-whale-radar/favicon/
+cp /opt/virtuals-whale-radar/favicon/favicon.ico /var/www/virtuals-whale-radar/favicon.ico
 ```
 
 Set API base in `dashboard.html` by editing:
@@ -150,8 +189,8 @@ Use:
 Install:
 
 ```bash
-sudo cp /opt/virtuals-launch-hunter/deploy/nginx/vpulse-split-app.conf /etc/nginx/sites-available/vpulse-split-app.conf
-sudo cp /opt/virtuals-launch-hunter/deploy/nginx/vpulse-split-api.conf /etc/nginx/sites-available/vpulse-split-api.conf
+sudo cp /opt/virtuals-whale-radar/deploy/nginx/vpulse-split-app.conf /etc/nginx/sites-available/vpulse-split-app.conf
+sudo cp /opt/virtuals-whale-radar/deploy/nginx/vpulse-split-api.conf /etc/nginx/sites-available/vpulse-split-api.conf
 sudo ln -s /etc/nginx/sites-available/vpulse-split-app.conf /etc/nginx/sites-enabled/
 sudo ln -s /etc/nginx/sites-available/vpulse-split-api.conf /etc/nginx/sites-enabled/
 sudo nginx -t
@@ -166,7 +205,7 @@ Use:
 Install:
 
 ```bash
-sudo cp /opt/virtuals-launch-hunter/deploy/nginx/vpulse-same-domain.conf /etc/nginx/sites-available/vpulse-same-domain.conf
+sudo cp /opt/virtuals-whale-radar/deploy/nginx/vpulse-same-domain.conf /etc/nginx/sites-available/vpulse-same-domain.conf
 sudo ln -s /etc/nginx/sites-available/vpulse-same-domain.conf /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
@@ -181,7 +220,7 @@ Use:
 Install (replace existing `v-pulse` or `vpulse` enabled site if present):
 
 ```bash
-sudo cp /opt/virtuals-launch-hunter/deploy/nginx/launch-http-bootstrap.conf /etc/nginx/sites-available/launch
+sudo cp /opt/virtuals-whale-radar/deploy/nginx/launch-http-bootstrap.conf /etc/nginx/sites-available/launch
 sudo rm -f /etc/nginx/sites-enabled/v-pulse /etc/nginx/sites-enabled/v-pulse.conf
 sudo rm -f /etc/nginx/sites-enabled/vpulse /etc/nginx/sites-enabled/vpulse.conf
 sudo rm -f /etc/nginx/sites-enabled/vpulse-same-domain.conf
@@ -189,7 +228,7 @@ sudo ln -sfn /etc/nginx/sites-available/launch /etc/nginx/sites-enabled/launch
 sudo nginx -t
 sudo systemctl reload nginx
 sudo certbot --nginx -d launch.licheng.website
-sudo cp /opt/virtuals-launch-hunter/deploy/nginx/launch.conf /etc/nginx/sites-available/launch
+sudo cp /opt/virtuals-whale-radar/deploy/nginx/launch.conf /etc/nginx/sites-available/launch
 sudo nginx -t
 sudo systemctl reload nginx
 ```
@@ -223,7 +262,7 @@ For same-domain, only request the single domain certificate.
 Use:
 
 ```bash
-cd /opt/virtuals-launch-hunter
+cd /opt/virtuals-whale-radar
 chmod +x deploy/update_server_oneclick.sh
 bash deploy/update_server_oneclick.sh
 ```
@@ -254,31 +293,31 @@ Default actions:
 ### 10.2 Migrate systemd service names (legacy `vpulse` -> new prefix)
 
 ```bash
-cd /opt/virtuals-launch-hunter
+cd /opt/virtuals-whale-radar
 chmod +x deploy/migrate_service_prefix.sh
-OLD_PREFIX=vpulse NEW_PREFIX=virtuals-launch-hunter bash deploy/migrate_service_prefix.sh
+OLD_PREFIX=vpulse NEW_PREFIX=virtuals-whale-radar bash deploy/migrate_service_prefix.sh
 ```
 
 Verify:
 
 ```bash
-systemctl is-active virtuals-launch-hunter@writer virtuals-launch-hunter@realtime virtuals-launch-hunter@backfill
-systemctl is-enabled virtuals-launch-hunter@writer virtuals-launch-hunter@realtime virtuals-launch-hunter@backfill
+systemctl is-active virtuals-whale-radar@writer virtuals-whale-radar@realtime virtuals-whale-radar@backfill
+systemctl is-enabled virtuals-whale-radar@writer virtuals-whale-radar@realtime virtuals-whale-radar@backfill
 ```
 
 ### 10.3 Manual fallback
 
 ```bash
-cd /opt/virtuals-launch-hunter
-SERVICE_PREFIX=virtuals-launch-hunter   # legacy deployments may still use: vpulse
-WEB_DIR=/var/www/virtuals-launch-hunter # legacy deployments may still use: /var/www/vpulse
+cd /opt/virtuals-whale-radar
+SERVICE_PREFIX=virtuals-whale-radar   # legacy deployments may still use: vpulse
+WEB_DIR=/var/www/virtuals-whale-radar # legacy deployments may still use: /var/www/vpulse
 git pull
 source .venv/bin/activate
 pip install -r requirements.txt
 sudo systemctl restart ${SERVICE_PREFIX}@writer ${SERVICE_PREFIX}@realtime ${SERVICE_PREFIX}@backfill
-cp /opt/virtuals-launch-hunter/dashboard.html ${WEB_DIR}/dashboard.html
+cp /opt/virtuals-whale-radar/dashboard.html ${WEB_DIR}/dashboard.html
 mkdir -p ${WEB_DIR}/favicon
-cp -r /opt/virtuals-launch-hunter/favicon/. ${WEB_DIR}/favicon/
-cp /opt/virtuals-launch-hunter/favicon/favicon.ico ${WEB_DIR}/favicon.ico
+cp -r /opt/virtuals-whale-radar/favicon/. ${WEB_DIR}/favicon/
+cp /opt/virtuals-whale-radar/favicon/favicon.ico ${WEB_DIR}/favicon.ico
 sudo systemctl reload nginx
 ```

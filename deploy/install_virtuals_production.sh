@@ -202,6 +202,7 @@ RestartSec=3
 TimeoutStopSec=30
 KillSignal=SIGINT
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
 
 [Install]
 WantedBy=multi-user.target

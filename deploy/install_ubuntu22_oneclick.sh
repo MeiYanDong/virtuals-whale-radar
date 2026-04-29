@@ -14,8 +14,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${APP_DIR:-$ROOT_DIR}"
-WEB_DIR="${WEB_DIR:-/var/www/virtuals-launch-hunter}"
-SERVICE_PREFIX="${SERVICE_PREFIX:-virtuals-launch-hunter}"
+WEB_DIR="${WEB_DIR:-/var/www/virtuals-whale-radar}"
+SERVICE_PREFIX="${SERVICE_PREFIX:-virtuals-whale-radar}"
 DOMAIN="${DOMAIN:-launch.licheng.website}"
 ENABLE_HTTPS="${ENABLE_HTTPS:-1}"
 
@@ -27,15 +27,15 @@ DASHBOARD_FILE="$APP_DIR/dashboard.html"
 FAVICON_FILE="$APP_DIR/favicon-vpulse.svg"
 
 log() {
-  echo "[virtuals-launch-hunter-install] $*"
+  echo "[virtuals-whale-radar-install] $*"
 }
 
 warn() {
-  echo "[virtuals-launch-hunter-install][WARN] $*" >&2
+  echo "[virtuals-whale-radar-install][WARN] $*" >&2
 }
 
 die() {
-  echo "[virtuals-launch-hunter-install][ERROR] $*" >&2
+  echo "[virtuals-whale-radar-install][ERROR] $*" >&2
   exit 1
 }
 
@@ -184,7 +184,7 @@ install_systemd_service() {
 
   sudo tee "$service_file" >/dev/null <<EOF
 [Unit]
-Description=Virtuals-Launch-Hunter role %i
+Description=Virtuals Whale Radar role %i
 After=network-online.target
 Wants=network-online.target
 
@@ -199,6 +199,7 @@ RestartSec=3
 TimeoutStopSec=30
 KillSignal=SIGINT
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
 
 [Install]
 WantedBy=multi-user.target

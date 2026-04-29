@@ -78,7 +78,7 @@
 - 用户通知支持 `未读 / 已读 / 全部已读`，并在顶栏显示未读提醒。
 - 当前不单独设置充值申请流程；用户微信付款后，管理员直接在 `Users` 页面手动补积分。
 - `billing_requests` / 付款凭证附件能力保留为备用后端能力，但不是当前产品主流程。
-- 链上 RPC 使用策略升级为：`实时采集 / 历史回扫 / SignalHub 识别` 分池使用；回扫池按 `专用 Chainstack -> 备用 Chainstack -> 主实时 Chainstack -> 公共 Base RPC` 顺序自动降级。
+- 链上 RPC 使用策略升级为：`实时采集 / 历史回扫 / SignalHub 识别` 分池使用；当前生产主路径为 `Ankr logs + Ankr receipt + Ankr block`，Base official / Alchemy / Chainstack current plan 只作为分工明确的备用路径。
 - `Billing` 顶部固定展示邀请文案与注册链接：
   - 文案：`Virtuals 新用户使用邀请码注册，后续付费一律五折`
   - 链接：`https://app.virtuals.io/referral?code=LFfW5x`
@@ -1753,8 +1753,10 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 
 ## 28. 当前剩余收口项（2026-04-16）
 
+> 2026-04-29 更新：`VOID` 缺失记录排查已收口；当前最高优先级已转移到第 31 节“项目完整性验收闭环”。
+
 - 当前不做异地备份；运行时备份维持“服务器本机每日快照 + 7 天保留”策略。
-- 当前最高优先级剩余项为：
+- 当时最高优先级剩余项为：
   - `VOID` 项目的缺失记录排查与收口
 - `VOID` 当前已确认的一层问题：
   - 历史回扫任务大量失败
@@ -1820,3 +1822,100 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - `tokenPriceV / tokenPriceUsd / liveFdvUsd` 通过独立 market 接口异步加载
   - 后端对单项目 market 结果做短 TTL 缓存
 - 当前设计上，`ended` 历史项目仍允许显示“当前实时价格 / 当前实时 FDV”，不因为项目已结束而隐藏；这与“买入市值（按成本）”属于不同口径。
+
+## 31. 项目完整性验收闭环（2026-04-29）
+
+当前最高杠杆已经从“继续追 RPC 极限”转为“每个项目结束后能自动判断数据是否可信”。
+
+已完成：
+
+- 新增 `scripts/ops/audit_project_window.py`，用于项目窗口完整性审计。
+- 审计口径固定为：
+  - 重新发现窗口候选 tx
+  - 对照 `events`
+  - 对照 `scanned_backfill_txs`
+  - 对照 `dead_letters`
+  - 输出 `green / red / observed` 状态
+- 审计工具发现缺口时，会输出 `scripts/ops/replay_project_txs.py --mark-scanned` 修复命令。
+- 后台手动 scan range 的 tx 处理改为按 `RECEIPT_WORKERS*` 配置并发执行，避免后台补扫继续走逐笔慢路径。
+- RPC 当前推荐已收口为：
+  - 主路径：`Ankr logs + Ankr receipt + Ankr block`
+  - 默认并发：`16`
+  - Base official：logs 备用
+  - Alchemy 免费 key：小窗口 / 低并发备用
+  - Chainstack 当前 plan：不作为 Base 历史 logs / block 主路径
+- 已完成一次生产级破坏性验证：
+  - 先用 `sqlite3 .backup` 备份生产主库和 bus 库
+  - 停止 `writer / realtime / backfill`
+  - 删除线上 `SR` 的派生数据
+  - 重启服务后投递真实生产 `scan_jobs`
+  - 自动扫描窗口 `44629927 -> 44632913`
+  - 最终恢复到 `events = 602`、`event_txs = 602`、`candidate_txs = 754`
+  - 完整性审计结果为 `green`
+  - 本次未触发 repair replay
+
+下一步：
+
+- 把项目完整性审计结果接入 Admin UI，让项目结束后直接显示验收状态。
+- 将公网 `/health` 与管理员 diagnostics 彻底拆分，避免运行态详情再次暴露到公开接口。
+
+## 32. 目标代币价格实时化（2026-04-29）
+
+价格口径必须区分项目状态：
+
+- `scheduled / prelaunch`：显示“开盘参考价”。此时项目尚未正式发射，即使内盘合约已经能返回 `getReserves()`，也不能把它表达成打新成交后的实时价格。
+- `live`：显示“实时价格”。前端按 `500ms` 轮询 market 接口，后端 market cache TTL 为 `0.35s`。
+- `ended`：显示“当前池价 / 当前 FDV”，低频刷新即可。
+
+实现边界：
+
+- Base 当前出块约 `2s` 一块，链上确认状态不会每 `0.5s` 真实变化；`500ms` 的含义是 UI/后端在新区块或相关交易出现后尽快刷新。
+- market 接口返回：
+  - `marketPriceMode`
+  - `marketPriceLabel`
+  - `recommendedRefreshMs`
+  - `priceUpdatedAt`
+  - `priceBlockNumber`
+  - `priceLatencyMs`
+- 对 `eth_call` 的 `execution reverted` 立即失败，不再走 `MAX_RPC_RETRIES` 指数退避。
+- 对非标准池缓存 fallback 布局，避免 `token0/token1` 每次刷新都重复 revert。
+- writer 会在 `prelaunch / live` 阶段预热 market snapshot，提前缓存池子布局和 decimals，避免发射瞬间第一次打开页面时出现布局探测延迟。
+- 目标状态是 live 阶段单次刷新只读最新块号与 `getReserves()`，常规延迟控制在 `0.5s` 左右。
+
+## 33. Virtuals 税率与含税估算 FDV（2026-04-29）
+
+目标是在项目进入发射前后，把 Virtuals 页面上的 `Tax Rate` 纳入价格判断，并把“含税估算 FDV”作为独立关键指标展示。
+
+税率来源：
+
+- 后端通过 `https://api2.virtuals.io/api/virtuals/{signalhub_project_id}?populate[0]=launchInfo` 读取项目公开 launch 信息。
+- 优先使用 Virtuals API 的 `launchedAt` 作为税率衰减起点；若不可得，再回退到本地 `managed_projects.start_at`。
+- 对 `BONDING_V5` 使用 `launchInfo.antiSniperTaxType` 判断反狙击税窗口：
+  - `0`：无反狙击税窗口
+  - `1`：`60s`
+  - 其他值：`98m`
+- 普通项目基准税率按 `1%` 处理；`ROBOTIC*` 工厂保留 `3%` 基准税率。
+
+展示口径：
+
+- `scheduled / prelaunch` 仍显示“开盘参考价”，但如果 Virtuals API 已能返回税率窗口，则同步展示含税估算 FDV，方便发射前判断开盘真实估值压力。
+- `live` 阶段显示“实时价格”，并继续同步展示含税估算 FDV。
+- `含税估算 FDV` 独立成 KPI 卡片，不再放在价格卡片的辅助说明里。
+- 卡片默认带微弱主题色灯光；当数值跨过 `10 万 USD` 档位时触发一次闪耀：
+  - 从低档位向高档位突破：主题色闪耀
+  - 从高档位跌落到低档位：红色闪耀
+- 本地调试入口保留为 `?taxFdvSim=up/down`，仅 `localhost / 127.0.0.1` 生效，用于不改数据库、不改 API 的灯光回放验证。
+- 卡片内展示：
+  - `Tax Rate xx%`
+  - `含税估算 FDV xx 万 USD`
+- 计算公式固定为：
+
+```text
+Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 10000
+```
+
+当前本地验证：
+
+- ISC `72752` 可从 Virtuals API 读取 `factory = BONDING_V5`、`antiSniperTaxType = 2`、`totalSupply = 1000000000`。
+- 按 Virtuals 页面同一衰减逻辑，历史时刻可复现 `27% -> 26% -> 25% -> 24%` 的税率变化。
+- ISC 反狙击税窗口结束后，当前税率回到 `1%` 基准税，此时前端不再展示含税 FDV 徽标。

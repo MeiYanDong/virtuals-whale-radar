@@ -2,19 +2,19 @@
 set -euo pipefail
 
 # Migrate systemd service prefix, e.g.:
-#   vpulse@writer -> virtuals-launch-hunter@writer
+#   vpulse@writer -> virtuals-whale-radar@writer
 #
 # Usage:
 #   bash deploy/migrate_service_prefix.sh
 #
 # Overrides:
-#   OLD_PREFIX=vpulse NEW_PREFIX=virtuals-launch-hunter bash deploy/migrate_service_prefix.sh
+#   OLD_PREFIX=vpulse NEW_PREFIX=virtuals-whale-radar bash deploy/migrate_service_prefix.sh
 #   SERVICE_ROLES="writer realtime backfill" bash deploy/migrate_service_prefix.sh
 
 OLD_PREFIX="${OLD_PREFIX:-vpulse}"
-NEW_PREFIX="${NEW_PREFIX:-virtuals-launch-hunter}"
+NEW_PREFIX="${NEW_PREFIX:-virtuals-whale-radar}"
 SERVICE_ROLES="${SERVICE_ROLES:-writer realtime backfill}"
-LOG_TAG="${LOG_TAG:-virtuals-launch-hunter-migrate}"
+LOG_TAG="${LOG_TAG:-virtuals-whale-radar-migrate}"
 
 log() {
   echo "[$LOG_TAG] $*"

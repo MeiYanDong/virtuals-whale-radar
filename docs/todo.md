@@ -712,6 +712,9 @@
 - [x] 使用更新后的解析器，对 `SR` 的 `447` 笔真实 tx hash 做全量重放。
 - [x] 确认 `SR` 的 `events / minute_agg / leaderboard` 已经非零。
 - [x] 将 `tax-only` fallback 作为正式生产规则提交到 GitHub 并同步服务器。
+- [x] 2026-04-29 在服务器隔离库中重跑 `SR` 发射窗口，并确认最终 replay 与当前生产 baseline 完全对齐。
+- [x] 沉淀 `SR` 重跑结论：自动 scan 可重建大部分数据，但仍需要正式化按 tx hash 强制 replay 缺口的运维工具。
+- [x] 新增 `scripts/ops/replay_project_txs.py`，正式支持按项目 tx hash / 区块窗口重放。
 
 ## Phase 36：RPC 池化与自动降级
 
@@ -731,6 +734,9 @@
 - [x] 为 `SignalHub` 的 trace / 自动识别链路补同样的池化与能力检测。
 - [x] 为 `SignalHub` 增加 `CHAINSTACK_BASE_HTTPS_URLS` 与 `CHAINSTACK_PUBLIC_HTTPS_URLS` 配置。
 - [x] 在 `SignalHub /system/status` 中暴露 trace RPC 池状态。
+- [x] 历史阶段曾将主项目公共回扫 RPC 顺序调整为 `mainnet.base.org -> publicnode -> llamarpc`；该结论已被 Phase 41 的 Ankr 主路径取代。
+- [x] 历史阶段曾明确重放工具的 RPC 分工：logs 走快速公共节点，receipt 优先走 Chainstack 自有节点；该结论已被 Phase 41 的 Ankr 主路径取代。
+- [x] 将历史 replay 的 block timestamp RPC 从 receipt RPC 中拆出，避免 Chainstack 当前 plan 的 archive 限制把单 tx 重放拖到 25 秒；当前默认主路径已切到 Ankr。
 - [x] 为 `SignalHub` 增加 `CHAINSTACK_BASE_WSS_URLS` 多节点顺序配置。
 - [x] 为 `SignalHub` 维护 WSS 节点运行状态：
   - `healthy`
@@ -800,3 +806,38 @@
 - [x] 为单项目实时价格增加短 TTL 缓存，减少重复读取池子与 decimals。
 - [x] 前端改为先加载主详情，再异步补 `实时价格 / 实时 FDV`。
 - [x] 历史项目详情继续允许显示“当前实时价格”，不因 `ended` 状态隐藏。
+
+## Phase 41：项目完整性验收与回扫执行优化
+
+- [x] 新增 `scripts/ops/audit_project_window.py`，把项目窗口结束后的完整性验收固化为可执行工具。
+- [x] 审计工具支持按项目窗口重新发现候选 tx，并对照 `events / scanned_backfill_txs / dead_letters` 输出 `green / red / observed` 状态。
+- [x] 审计工具支持输出 replay 修复命令，并可写出缺口 tx 文件。
+- [x] 将后台手动 scan range 的 tx 处理从逐笔执行改为按 `RECEIPT_WORKERS*` 配置并发执行。
+- [x] 将 Ankr 充值后的当前 RPC 推荐写入 benchmark 文档顶部，旧 Chainstack / mainnet.base.org 结论标注为历史记录。
+- [x] 在 SR replay 文档中补充完整性审计工具和当前 Ankr 主路径。
+- [x] 在线上删除 `SR` 派生数据后，用生产 scan job 完整重建，并通过 `green` 审计确认无需 repair replay。
+- [ ] 将项目完整性审计接入后台 Admin UI，形成项目结束后的可视化验收结果。
+- [ ] 将公网 `/health` 与管理员 diagnostics 彻底拆分，避免后续新增运行态字段时再次扩大暴露面。
+
+## Phase 42：目标代币价格实时化
+
+- [x] 明确价格语义：`scheduled / prelaunch` 显示“开盘参考价”，只有 `live` 打新中显示“实时价格”。
+- [x] `live` 项目 market 接口缓存 TTL 降到 `0.35s`，前端按 `500ms` 轮询。
+- [x] `scheduled / prelaunch / ended` 保持低频轮询，避免发射前无意义高频读链。
+- [x] 对 `eth_call` 的 `execution reverted` 做确定性失败处理，不再按 RPC transient error 指数退避重试。
+- [x] 为目标代币内盘缓存 `token0/token1` 或 fallback 布局，以及 token decimals，避免每次价格刷新重复探测。
+- [x] market 接口返回 `priceUpdatedAt / priceBlockNumber / priceLatencyMs / marketPriceMode / recommendedRefreshMs`。
+- [x] 前端价格卡片显示更新时间、区块号和读取耗时，避免把发射前参考价误认为成交后的实时价格。
+- [x] writer 在 `prelaunch / live` 阶段预热 market snapshot，提前缓存池子布局和 decimals。
+- [ ] 线上观察一次真实 `live` 发射窗口，确认 500ms 轮询不会触发 Ankr 限速。
+
+## Phase 43：Virtuals 税率与含税估算 FDV
+
+- [x] 通过 Virtuals API 读取 `signalhub_project_id` 对应的公开 launch 信息。
+- [x] 按 `BONDING_V5 + antiSniperTaxType` 计算反狙击税衰减，并叠加基准税率。
+- [x] 后端 market 接口返回 `buyTaxRate / taxStartAt / taxEndAt / estimatedFdvUsdWithTax / estimatedFdvWanUsdWithTax`。
+- [x] 前端把“含税估算 FDV”单独拎成 KPI 卡片；`scheduled / prelaunch` 可用于发射前估值判断，`live` 可用于打新中实时判断。
+- [x] 含税估算 FDV 卡片增加微弱灯光，并在跨过 `10 万 USD` 档位时闪耀：上破用主题色，下破用红色。
+- [x] 保留本地 `taxFdvSim=up/down` 回放入口，仅 `localhost / 127.0.0.1` 生效，方便复测灯光且不污染真实数据。
+- [x] 本地用 ISC `72752` 验证 Virtuals API 字段和历史税率：`27% -> 26% -> 25% -> 24%`。
+- [ ] 部署到生产后，在下一次真实 `live` 发射窗口观察税率徽标与含税 FDV 是否和 Virtuals 页面一致。

@@ -1,16 +1,16 @@
 {
   "CHAIN_ID": 8453,
-  "WS_RPC_URL": "wss://base-mainnet.core.chainstack.com/f182d37c5cbff7f1bb5fc314f5900f1c",
-  "HTTP_RPC_URL": "https://base-mainnet.core.chainstack.com/f182d37c5cbff7f1bb5fc314f5900f1c",
-  "BACKFILL_HTTP_RPC_URL": "https://base-mainnet.core.chainstack.com/03f07e9ef90c8db8e71fdca6ab243657",
+  "WS_RPC_URL": "${BASE_WS_RPC_URL}",
+  "HTTP_RPC_URL": "${ANKR_BASE_HTTP_RPC_URL}",
+  "BACKFILL_HTTP_RPC_URL": "${ANKR_BASE_HTTP_RPC_URL}",
   "BACKFILL_HTTP_RPC_URLS": [
-    "https://base-mainnet.core.chainstack.com/03f07e9ef90c8db8e71fdca6ab243657",
-    "https://base-mainnet.core.chainstack.com/f182d37c5cbff7f1bb5fc314f5900f1c"
+    "${ANKR_BASE_HTTP_RPC_URL}",
+    "${ALCHEMY_BASE_HTTP_RPC_URL}",
+    "https://mainnet.base.org"
   ],
   "BACKFILL_PUBLIC_HTTP_RPC_URLS": [
-    "https://base-rpc.publicnode.com",
-    "https://base.llamarpc.com",
-    "https://mainnet.base.org"
+    "https://mainnet.base.org",
+    "https://base-rpc.publicnode.com"
   ],
   "BACKFILL_RPC_QUOTA_COOLDOWN_SEC": 3600,
   "BACKFILL_RPC_TRANSIENT_COOLDOWN_SEC": 600,
@@ -49,11 +49,11 @@
   "DB_BATCH_SIZE": 1,
   "DB_FLUSH_MS": 150,
 
-  "RECEIPT_WORKERS": 4,
-  "RECEIPT_WORKERS_REALTIME": 8,
-  "RECEIPT_WORKERS_BACKFILL": 2,
+  "RECEIPT_WORKERS": 16,
+  "RECEIPT_WORKERS_REALTIME": 16,
+  "RECEIPT_WORKERS_BACKFILL": 16,
   "MAX_RPC_RETRIES": 5,
-  "BACKFILL_CHUNK_BLOCKS": 5,
+  "BACKFILL_CHUNK_BLOCKS": 1000,
   "BACKFILL_INTERVAL_SEC": 5,
 
   "JSONL_PATH": "./data/events.jsonl",

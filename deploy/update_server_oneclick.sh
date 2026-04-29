@@ -8,7 +8,7 @@ set -euo pipefail
 #   bash deploy/update_server_oneclick.sh
 #
 # Common overrides:
-#   BRANCH=main SERVICE_PREFIX=virtuals-launch-hunter WEB_DIR=/var/www/virtuals-launch-hunter bash deploy/update_server_oneclick.sh
+#   BRANCH=main SERVICE_PREFIX=virtuals-whale-radar WEB_DIR=/var/www/virtuals-whale-radar bash deploy/update_server_oneclick.sh
 #   FRONTEND_API_BASE=/api bash deploy/update_server_oneclick.sh
 #   SKIP_PIP=1 bash deploy/update_server_oneclick.sh
 
@@ -24,7 +24,7 @@ FRONTEND_API_BASE="${FRONTEND_API_BASE:-}"
 SKIP_PIP="${SKIP_PIP:-0}"
 SKIP_FRONTEND="${SKIP_FRONTEND:-0}"
 SKIP_NGINX="${SKIP_NGINX:-0}"
-LOG_TAG="${LOG_TAG:-virtuals-launch-hunter-update}"
+LOG_TAG="${LOG_TAG:-virtuals-whale-radar-update}"
 
 log() {
   echo "[$LOG_TAG] $*"
@@ -57,6 +57,10 @@ resolve_service_prefix() {
     echo "$SERVICE_PREFIX"
     return 0
   fi
+  if service_prefix_exists "virtuals-whale-radar"; then
+    echo "virtuals-whale-radar"
+    return 0
+  fi
   if service_prefix_exists "virtuals-launch-hunter"; then
     echo "virtuals-launch-hunter"
     return 0
@@ -65,12 +69,16 @@ resolve_service_prefix() {
     echo "vpulse"
     return 0
   fi
-  echo "virtuals-launch-hunter"
+  echo "virtuals-whale-radar"
 }
 
 resolve_web_dir() {
   if [[ -n "$WEB_DIR" ]]; then
     echo "$WEB_DIR"
+    return 0
+  fi
+  if [[ -d /var/www/virtuals-whale-radar ]]; then
+    echo "/var/www/virtuals-whale-radar"
     return 0
   fi
   if [[ -d /var/www/virtuals-launch-hunter ]]; then
@@ -81,7 +89,7 @@ resolve_web_dir() {
     echo "/var/www/vpulse"
     return 0
   fi
-  echo "/var/www/virtuals-launch-hunter"
+  echo "/var/www/virtuals-whale-radar"
 }
 
 run_root() {

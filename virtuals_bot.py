@@ -17,7 +17,8 @@ import urllib.parse
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation, getcontext
+from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, getcontext
 from email.message import EmailMessage
 from email.utils import formataddr
 from pathlib import Path
@@ -51,6 +52,8 @@ DECIMALS_SELECTOR = "0x313ce567"
 TOKEN0_SELECTOR = "0x0dfe1681"
 TOKEN1_SELECTOR = "0xd21220a7"
 GET_RESERVES_SELECTOR = "0x0902f1ac"
+VIRTUALS_API_BASE_URL = "https://api2.virtuals.io"
+VIRTUALS_LAUNCH_INFO_CACHE_TTL_SEC = 5 * 60
 
 
 def normalize_address(addr: str) -> str:
@@ -117,9 +120,44 @@ def parse_url_list(value: Any) -> List[str]:
     for item in candidates:
         if not item:
             continue
+        item = os.path.expandvars(item).strip()
+        if "$" in item:
+            continue
         if item not in urls:
             urls.append(item)
     return urls
+
+
+def parse_rpc_url(value: Any, field_name: str) -> str:
+    url = os.path.expandvars(str(value or "").strip()).strip()
+    if not url:
+        raise ValueError(f"{field_name} cannot be empty")
+    if "$" in url:
+        raise ValueError(f"{field_name} contains an unresolved environment variable: {url}")
+    return url
+
+
+def parse_optional_rpc_url(value: Any, field_name: str) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    return parse_rpc_url(raw, field_name)
+
+
+def redact_rpc_url(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return raw
+    parsed = urllib.parse.urlsplit(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return raw
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) <= 1:
+        redacted_path = parsed.path
+    else:
+        redacted_path = "/" + "/".join([*path_parts[:-1], "***"])
+    query = "***" if parsed.query else ""
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, redacted_path, query, ""))
 
 
 def parse_optional_int(value: Any, field_name: str) -> Optional[int]:
@@ -181,6 +219,20 @@ def decimal_to_str(v: Optional[Decimal], places: int = 18) -> Optional[str]:
         return None
     q = Decimal(10) ** -places
     return str(v.quantize(q))
+
+
+def parse_virtuals_timestamp(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
 
 
 def raw_to_decimal(value: int, decimals: int) -> Decimal:
@@ -440,6 +492,15 @@ def is_rpc_transient_error(exc: Exception) -> bool:
     return any(token in text for token in RPC_TRANSIENT_ERROR_TOKENS)
 
 
+def is_rpc_non_retryable_error_payload(error: Any) -> bool:
+    text = json.dumps(error, ensure_ascii=False).lower() if isinstance(error, dict) else str(error).lower()
+    return "execution reverted" in text
+
+
+class RpcNonRetryableError(RuntimeError):
+    pass
+
+
 @dataclass
 class LaunchConfig:
     name: str
@@ -556,10 +617,12 @@ def load_config(path: str) -> AppConfig:
         raise ValueError(f"v1.1 does not allow Supabase hot path config keys: {bad}")
 
     chain_id = int(raw.get("CHAIN_ID", 8453))
-    ws_rpc_url = str(raw["WS_RPC_URL"]).strip()
-    http_rpc_url = str(raw["HTTP_RPC_URL"]).strip()
-    backfill_http_rpc_url_raw = str(raw.get("BACKFILL_HTTP_RPC_URL", "")).strip()
-    backfill_http_rpc_url = backfill_http_rpc_url_raw or None
+    ws_rpc_url = parse_rpc_url(raw["WS_RPC_URL"], "WS_RPC_URL")
+    http_rpc_url = parse_rpc_url(raw["HTTP_RPC_URL"], "HTTP_RPC_URL")
+    backfill_http_rpc_url = parse_optional_rpc_url(
+        raw.get("BACKFILL_HTTP_RPC_URL", ""),
+        "BACKFILL_HTTP_RPC_URL",
+    )
     backfill_http_rpc_urls = parse_url_list(raw.get("BACKFILL_HTTP_RPC_URLS", []))
     if not backfill_http_rpc_urls:
         if backfill_http_rpc_url:
@@ -834,8 +897,13 @@ class RPCClient:
                 async with self._session.post(self.url, json=payload) as resp:
                     data = await resp.json(content_type=None)
                 if "error" in data:
-                    raise RuntimeError(f"RPC error: {data['error']}")
+                    message = f"RPC error: {data['error']}"
+                    if is_rpc_non_retryable_error_payload(data["error"]):
+                        raise RpcNonRetryableError(message)
+                    raise RuntimeError(message)
                 return data.get("result")
+            except RpcNonRetryableError:
+                raise
             except Exception:
                 if attempt >= self.max_retries:
                     raise
@@ -4413,9 +4481,11 @@ class VirtualsBot:
         self.pending_max_block = 0
         self.decimals_cache: Dict[str, int] = {}
         self.block_ts_cache: Dict[int, int] = {}
+        self.project_market_layout_cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self.project_market_cache: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         self.project_market_cache_ttl_sec = 20
         self.project_market_cache_lock = asyncio.Lock()
+        self.virtuals_launch_info_cache: Dict[str, Dict[str, Any]] = {}
         self.scan_jobs: Dict[str, Dict[str, Any]] = {}
         self.scan_lock = asyncio.Lock()
         self.stats: Dict[str, Any] = {
@@ -4686,7 +4756,7 @@ class VirtualsBot:
             payload.append(
                 {
                     "label": state.label,
-                    "url": state.url,
+                    "url": redact_rpc_url(state.url),
                     "supportsBasicRpc": state.supports_basic_rpc,
                     "supportsHistoricalBlocks": state.supports_historical_blocks,
                     "supportsLogs": state.supports_logs,
@@ -5546,52 +5616,216 @@ class VirtualsBot:
 
         return enriched
 
-    async def get_live_pool_market_snapshot(
-        self,
-        project_name: str,
-        token_addr: Optional[str],
-        internal_pool_addr: Optional[str],
-    ) -> Dict[str, Any]:
-        token = normalize_optional_address(token_addr)
-        pool = normalize_optional_address(internal_pool_addr)
-        virtual_token = self.cfg.virtual_token_addr
-        virtual_price_usd, virtual_price_stale = await self.price_service.get_price()
-        if virtual_price_usd is None:
-            try:
-                await self.price_service.refresh_once()
-                virtual_price_usd, virtual_price_stale = await self.price_service.get_price()
-            except Exception:
-                pass
-        out: Dict[str, Any] = {
-            "token_price_v": None,
-            "token_price_usd": None,
-            "live_fdv_usd": None,
-            "virtual_price_usd": virtual_price_usd,
-            "market_price_source": None,
-            "market_price_stale": virtual_price_stale,
+    def project_market_policy(self, status: Optional[str]) -> Dict[str, Any]:
+        normalized = str(status or "").strip().lower()
+        if normalized == "live":
+            return {
+                "market_price_mode": "live",
+                "market_price_label": "实时价格",
+                "cache_ttl_sec": 0.35,
+                "recommended_refresh_ms": 500,
+            }
+        if normalized == "prelaunch":
+            return {
+                "market_price_mode": "reference",
+                "market_price_label": "开盘参考价",
+                "cache_ttl_sec": 5.0,
+                "recommended_refresh_ms": 5000,
+            }
+        if normalized == "scheduled":
+            return {
+                "market_price_mode": "reference",
+                "market_price_label": "开盘参考价",
+                "cache_ttl_sec": 20.0,
+                "recommended_refresh_ms": 20000,
+            }
+        return {
+            "market_price_mode": "current_snapshot",
+            "market_price_label": "当前池价",
+            "cache_ttl_sec": 20.0,
+            "recommended_refresh_ms": 20000,
         }
-        if not token or not pool:
-            return out
 
-        reserves_hex = await self.http_rpc.eth_call(pool, GET_RESERVES_SELECTOR)
-        if not reserves_hex or reserves_hex == "0x":
-            return out
-        data = reserves_hex[2:]
-        if len(data) < 64 * 2:
-            return out
+    async def fetch_virtuals_launch_info(self, virtual_id: Optional[Any]) -> Dict[str, Any]:
+        project_id = str(virtual_id or "").strip()
+        if not project_id:
+            return {}
 
-        reserve0 = int(data[0:64], 16)
-        reserve1 = int(data[64:128], 16)
-        if reserve0 <= 0 or reserve1 <= 0:
-            return out
+        now_ts = time.time()
+        cached = self.virtuals_launch_info_cache.get(project_id)
+        if cached and float(cached.get("expires_at") or 0) > now_ts:
+            return dict(cached.get("payload") or {})
+
+        payload: Dict[str, Any] = {}
+        url = f"{VIRTUALS_API_BASE_URL}/api/virtuals/{urllib.parse.quote(project_id)}"
+        try:
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, params={"populate[0]": "launchInfo"}) as resp:
+                    if resp.status == 200:
+                        body = await resp.json()
+                        data = body.get("data") if isinstance(body, dict) else None
+                        if isinstance(data, dict):
+                            payload = data
+        except Exception:
+            payload = {}
+
+        self.virtuals_launch_info_cache[project_id] = {
+            "expires_at": now_ts + VIRTUALS_LAUNCH_INFO_CACHE_TTL_SEC,
+            "payload": dict(payload),
+        }
+        return dict(payload)
+
+    def anti_sniper_duration(
+        self,
+        *,
+        factory: Optional[Any],
+        category: Optional[Any],
+        anti_sniper_tax_type: Optional[Any],
+    ) -> Tuple[int, int]:
+        factory_key = str(factory or "").strip().upper()
+        category_key = str(category or "").strip().upper()
+        if factory_key == "BONDING_V5":
+            tax_type = str(anti_sniper_tax_type if anti_sniper_tax_type is not None else "1")
+            if tax_type == "0":
+                return 0, 1
+            if tax_type == "1":
+                return 60, 1
+            return 98, 60
+        if category_key == "X_LAUNCH":
+            return 98, 1
+        return 98, 60
+
+    def compute_buy_tax_rate(
+        self,
+        *,
+        tax_start_at: Optional[int],
+        factory: Optional[Any],
+        category: Optional[Any],
+        anti_sniper_tax_type: Optional[Any],
+        now_ts: Optional[int] = None,
+    ) -> Optional[int]:
+        if not tax_start_at:
+            return None
+        now_value = int(now_ts or time.time())
+        factory_key = str(factory or "").strip().upper()
+        old_no_anti_factories = {"ERC20", "ERC20_PRO", "BONDING"}
+        base_tax = Decimal(3 if factory_key.startswith("ROBOTIC") else 1)
+
+        if factory_key in old_no_anti_factories:
+            anti_tax = Decimal(0)
+        else:
+            duration_value, unit_seconds = self.anti_sniper_duration(
+                factory=factory,
+                category=category,
+                anti_sniper_tax_type=anti_sniper_tax_type,
+            )
+            if now_value < int(tax_start_at):
+                anti_tax = Decimal(99)
+            elif duration_value == 0 and unit_seconds == 1:
+                anti_tax = Decimal(0)
+            else:
+                elapsed_steps = (now_value - int(tax_start_at)) // max(1, unit_seconds)
+                if elapsed_steps >= duration_value:
+                    anti_tax = Decimal(0)
+                else:
+                    anti_tax = Decimal(99) - (
+                        Decimal(elapsed_steps) * Decimal(99) / Decimal(duration_value)
+                    )
+
+        tax_rate = min(anti_tax + base_tax, Decimal(99))
+        return int(tax_rate.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    async def get_project_tax_market_snapshot(
+        self,
+        project_row: Dict[str, Any],
+        *,
+        token_price_usd: Optional[Decimal],
+    ) -> Dict[str, Any]:
+        signalhub_project_id = str(project_row.get("signalhub_project_id") or "").strip()
+        virtuals_data = await self.fetch_virtuals_launch_info(signalhub_project_id)
+        launch_info = virtuals_data.get("launchInfo") if isinstance(virtuals_data, dict) else None
+        launch_info = launch_info if isinstance(launch_info, dict) else {}
+
+        factory = virtuals_data.get("factory") or None
+        category = virtuals_data.get("category") or None
+        anti_sniper_tax_type = launch_info.get("antiSniperTaxType")
+        tax_start_at = parse_virtuals_timestamp(virtuals_data.get("launchedAt"))
+        tax_source = None
+        if tax_start_at:
+            tax_source = "virtuals_api_launched_at"
+
+        if not tax_start_at:
+            with contextlib.suppress(Exception):
+                tax_start_at = int(project_row.get("start_at") or 0) or None
+            if tax_start_at:
+                tax_source = "managed_project_start_at"
+
+        duration_value, unit_seconds = self.anti_sniper_duration(
+            factory=factory,
+            category=category,
+            anti_sniper_tax_type=anti_sniper_tax_type,
+        )
+        tax_end_at = int(tax_start_at) + duration_value * unit_seconds if tax_start_at else None
+        buy_tax_rate = self.compute_buy_tax_rate(
+            tax_start_at=tax_start_at,
+            factory=factory,
+            category=category,
+            anti_sniper_tax_type=anti_sniper_tax_type,
+        )
 
         total_supply = None
-        launch_cfg = self.storage.get_launch_config_by_name(project_name)
-        if launch_cfg is not None:
-            total_supply = launch_cfg.token_total_supply
-        else:
-            total_supply = self.fixed_token_total_supply
+        with contextlib.suppress(Exception):
+            total_supply = Decimal(str(virtuals_data.get("totalSupply")))
+        if total_supply is None:
+            launch_cfg = self.storage.get_launch_config_by_name(str(project_row.get("name") or ""))
+            total_supply = (
+                launch_cfg.token_total_supply
+                if launch_cfg is not None
+                else self.fixed_token_total_supply
+            )
 
+        estimated_fdv_usd = None
+        if (
+            token_price_usd is not None
+            and buy_tax_rate is not None
+            and Decimal(0) <= Decimal(buy_tax_rate) < Decimal(100)
+            and total_supply is not None
+            and total_supply > 0
+        ):
+            net_rate = Decimal(1) - (Decimal(buy_tax_rate) / Decimal(100))
+            if net_rate > 0:
+                estimated_fdv_usd = total_supply * token_price_usd / net_rate
+
+        return {
+            "buy_tax_rate": buy_tax_rate,
+            "buy_tax_rate_source": tax_source,
+            "tax_start_at": tax_start_at,
+            "tax_end_at": tax_end_at,
+            "anti_sniper_tax_type": int(anti_sniper_tax_type)
+            if anti_sniper_tax_type is not None and str(anti_sniper_tax_type).strip().isdigit()
+            else None,
+            "estimated_fdv_usd_with_tax": estimated_fdv_usd,
+            "estimated_fdv_wan_usd_with_tax": (
+                estimated_fdv_usd / Decimal(10000) if estimated_fdv_usd is not None else None
+            ),
+        }
+
+    async def resolve_live_pool_market_layout(
+        self,
+        *,
+        token: str,
+        pool: str,
+        reserve0: int,
+        reserve1: int,
+        total_supply: Decimal,
+    ) -> Dict[str, Any]:
+        cache_key = (token, pool)
+        cached = self.project_market_layout_cache.get(cache_key)
+        if cached:
+            return dict(cached)
+
+        virtual_token = self.cfg.virtual_token_addr
         token_decimals = await self.get_token_decimals(token, rpc=self.http_rpc)
         virtual_decimals = await self.get_token_decimals(virtual_token, rpc=self.http_rpc)
 
@@ -5604,52 +5838,142 @@ class VirtualsBot:
             token0 = None
             token1 = None
 
-        market_price_source = "internal_pool_reserves"
         if token0 and token1:
             if {token0, token1} != {token, virtual_token}:
-                return out
+                layout = {
+                    "supported": False,
+                    "market_price_source": None,
+                    "reason": "pool token0/token1 do not match target token and VIRTUAL",
+                }
+                self.project_market_layout_cache[cache_key] = layout
+                return dict(layout)
+
             token0_decimals = await self.get_token_decimals(token0, rpc=self.http_rpc)
             token1_decimals = await self.get_token_decimals(token1, rpc=self.http_rpc)
-            if token0 == token:
-                token_reserve = raw_to_decimal(reserve0, token0_decimals)
-                virtual_reserve = raw_to_decimal(reserve1, token1_decimals)
-            else:
-                token_reserve = raw_to_decimal(reserve1, token1_decimals)
-                virtual_reserve = raw_to_decimal(reserve0, token0_decimals)
+            layout = {
+                "supported": True,
+                "market_price_source": "internal_pool_reserves",
+                "token_index": 0 if token0 == token else 1,
+                "token_decimals": token0_decimals if token0 == token else token1_decimals,
+                "virtual_decimals": token1_decimals if token0 == token else token0_decimals,
+                "token0_supported": True,
+            }
+            self.project_market_layout_cache[cache_key] = layout
+            return dict(layout)
+
+        reserve0_as_token = raw_to_decimal(reserve0, token_decimals)
+        reserve1_as_virtual = raw_to_decimal(reserve1, virtual_decimals)
+        reserve1_as_token = raw_to_decimal(reserve1, token_decimals)
+        reserve0_as_virtual = raw_to_decimal(reserve0, virtual_decimals)
+
+        def score_layout(token_reserve: Decimal, virtual_reserve: Decimal) -> Tuple[int, Decimal]:
+            score = 0
+            if token_reserve > 0 and virtual_reserve > 0:
+                score += 1
+            if total_supply > 0 and token_reserve <= total_supply * Decimal("1.05"):
+                score += 3
+            if token_reserve > virtual_reserve:
+                score += 2
+            if virtual_reserve <= Decimal("1000000"):
+                score += 1
+            return score, token_reserve / virtual_reserve if virtual_reserve > 0 else Decimal(0)
+
+        left_score, left_ratio = score_layout(reserve0_as_token, reserve1_as_virtual)
+        right_score, right_ratio = score_layout(reserve1_as_token, reserve0_as_virtual)
+        choose_left = left_score > right_score or (
+            left_score == right_score and left_ratio >= right_ratio
+        )
+        layout = {
+            "supported": True,
+            "market_price_source": "internal_pool_reserves_fallback",
+            "token_index": 0 if choose_left else 1,
+            "token_decimals": token_decimals,
+            "virtual_decimals": virtual_decimals,
+            "token0_supported": False,
+        }
+        self.project_market_layout_cache[cache_key] = layout
+        return dict(layout)
+
+    async def get_live_pool_market_snapshot(
+        self,
+        project_name: str,
+        token_addr: Optional[str],
+        internal_pool_addr: Optional[str],
+    ) -> Dict[str, Any]:
+        started = time.perf_counter()
+        token = normalize_optional_address(token_addr)
+        pool = normalize_optional_address(internal_pool_addr)
+        virtual_price_usd, virtual_price_stale = await self.price_service.get_price()
+        if virtual_price_usd is None:
+            try:
+                await self.price_service.refresh_once()
+                virtual_price_usd, virtual_price_stale = await self.price_service.get_price()
+            except Exception:
+                pass
+
+        out: Dict[str, Any] = {
+            "token_price_v": None,
+            "token_price_usd": None,
+            "live_fdv_usd": None,
+            "virtual_price_usd": virtual_price_usd,
+            "market_price_source": None,
+            "market_price_stale": virtual_price_stale,
+            "price_updated_at": int(time.time()),
+            "price_latency_ms": 0,
+            "price_block_number": None,
+        }
+
+        def finish() -> Dict[str, Any]:
+            out["price_updated_at"] = int(time.time())
+            out["price_latency_ms"] = int(round((time.perf_counter() - started) * 1000))
+            return out
+
+        if not token or not pool:
+            return finish()
+
+        latest_block, reserves_hex = await asyncio.gather(
+            self.http_rpc.get_latest_block_number(),
+            self.http_rpc.eth_call(pool, GET_RESERVES_SELECTOR),
+        )
+        out["price_block_number"] = latest_block
+        if not reserves_hex or reserves_hex == "0x":
+            return finish()
+        data = reserves_hex[2:]
+        if len(data) < 64 * 2:
+            return finish()
+
+        reserve0 = int(data[0:64], 16)
+        reserve1 = int(data[64:128], 16)
+        if reserve0 <= 0 or reserve1 <= 0:
+            return finish()
+
+        launch_cfg = self.storage.get_launch_config_by_name(project_name)
+        if launch_cfg is not None:
+            total_supply = launch_cfg.token_total_supply
         else:
-            reserve0_as_token = raw_to_decimal(reserve0, token_decimals)
-            reserve1_as_virtual = raw_to_decimal(reserve1, virtual_decimals)
-            reserve1_as_token = raw_to_decimal(reserve1, token_decimals)
-            reserve0_as_virtual = raw_to_decimal(reserve0, virtual_decimals)
+            total_supply = self.fixed_token_total_supply
 
-            def score_layout(token_reserve: Decimal, virtual_reserve: Decimal) -> Tuple[int, Decimal]:
-                score = 0
-                if token_reserve > 0 and virtual_reserve > 0:
-                    score += 1
-                if total_supply is not None and total_supply > 0 and token_reserve <= total_supply * Decimal("1.05"):
-                    score += 3
-                if token_reserve > virtual_reserve:
-                    score += 2
-                if virtual_reserve <= Decimal("1000000"):
-                    score += 1
-                return score, token_reserve / virtual_reserve if virtual_reserve > 0 else Decimal(0)
+        layout = await self.resolve_live_pool_market_layout(
+            token=token,
+            pool=pool,
+            reserve0=reserve0,
+            reserve1=reserve1,
+            total_supply=total_supply,
+        )
+        if not layout.get("supported"):
+            return finish()
 
-            left_score, left_ratio = score_layout(reserve0_as_token, reserve1_as_virtual)
-            right_score, right_ratio = score_layout(reserve1_as_token, reserve0_as_virtual)
-            choose_left = left_score > right_score or (
-                left_score == right_score and left_ratio >= right_ratio
-            )
-
-            if choose_left:
-                token_reserve = reserve0_as_token
-                virtual_reserve = reserve1_as_virtual
-            else:
-                token_reserve = reserve1_as_token
-                virtual_reserve = reserve0_as_virtual
-            market_price_source = "internal_pool_reserves_fallback"
+        token_decimals = int(layout["token_decimals"])
+        virtual_decimals = int(layout["virtual_decimals"])
+        if int(layout["token_index"]) == 0:
+            token_reserve = raw_to_decimal(reserve0, token_decimals)
+            virtual_reserve = raw_to_decimal(reserve1, virtual_decimals)
+        else:
+            token_reserve = raw_to_decimal(reserve1, token_decimals)
+            virtual_reserve = raw_to_decimal(reserve0, virtual_decimals)
 
         if token_reserve <= 0 or virtual_reserve <= 0:
-            return out
+            return finish()
 
         token_price_v = virtual_reserve / token_reserve
         token_price_usd = (
@@ -5664,32 +5988,43 @@ class VirtualsBot:
         out["token_price_v"] = token_price_v
         out["token_price_usd"] = token_price_usd
         out["live_fdv_usd"] = live_fdv_usd
-        out["market_price_source"] = market_price_source
-        return out
+        out["market_price_source"] = layout.get("market_price_source")
+        return finish()
 
     async def get_cached_live_pool_market_snapshot(
         self,
         project_name: str,
         token_addr: Optional[str],
         internal_pool_addr: Optional[str],
+        cache_ttl_sec: Optional[float] = None,
     ) -> Dict[str, Any]:
         token = normalize_optional_address(token_addr)
         pool = normalize_optional_address(internal_pool_addr)
         cache_key = (str(project_name or "").strip().upper(), token or "", pool or "")
         now_ts = time.time()
+        ttl = self.project_market_cache_ttl_sec if cache_ttl_sec is None else max(0.0, float(cache_ttl_sec))
         async with self.project_market_cache_lock:
             cached = self.project_market_cache.get(cache_key)
             if cached and float(cached.get("expires_at") or 0) > now_ts:
-                return dict(cached.get("payload") or {})
+                payload = dict(cached.get("payload") or {})
+                payload["market_cache_hit"] = True
+                return payload
         payload = await self.get_live_pool_market_snapshot(project_name, token, pool)
+        payload["market_cache_hit"] = False
         async with self.project_market_cache_lock:
             self.project_market_cache[cache_key] = {
-                "expires_at": now_ts + self.project_market_cache_ttl_sec,
+                "expires_at": now_ts + ttl,
                 "payload": dict(payload),
             }
         return payload
 
-    def build_project_market_payload(self, live_market: Dict[str, Any]) -> Dict[str, Any]:
+    def build_project_market_payload(
+        self,
+        live_market: Dict[str, Any],
+        *,
+        project_status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        policy = self.project_market_policy(project_status)
         return {
             "ok": True,
             "tokenPriceV": decimal_to_str(live_market.get("token_price_v"), 18)
@@ -5705,6 +6040,29 @@ class VirtualsBot:
             "marketPriceStale": bool(live_market.get("market_price_stale")),
             "virtualPriceUsd": decimal_to_str(live_market.get("virtual_price_usd"), 18)
             if live_market.get("virtual_price_usd") is not None
+            else None,
+            "marketPriceMode": policy["market_price_mode"],
+            "marketPriceLabel": policy["market_price_label"],
+            "recommendedRefreshMs": int(policy["recommended_refresh_ms"]),
+            "marketCacheTtlMs": int(float(policy["cache_ttl_sec"]) * 1000),
+            "marketCacheHit": bool(live_market.get("market_cache_hit")),
+            "priceUpdatedAt": live_market.get("price_updated_at"),
+            "priceLatencyMs": live_market.get("price_latency_ms"),
+            "priceBlockNumber": live_market.get("price_block_number"),
+            "buyTaxRate": live_market.get("buy_tax_rate"),
+            "buyTaxRateSource": live_market.get("buy_tax_rate_source"),
+            "taxStartAt": live_market.get("tax_start_at"),
+            "taxEndAt": live_market.get("tax_end_at"),
+            "antiSniperTaxType": live_market.get("anti_sniper_tax_type"),
+            "estimatedFdvUsdWithTax": decimal_to_str(
+                live_market.get("estimated_fdv_usd_with_tax"), 18
+            )
+            if live_market.get("estimated_fdv_usd_with_tax") is not None
+            else None,
+            "estimatedFdvWanUsdWithTax": decimal_to_str(
+                live_market.get("estimated_fdv_wan_usd_with_tax"), 18
+            )
+            if live_market.get("estimated_fdv_wan_usd_with_tax") is not None
             else None,
         }
 
@@ -6184,9 +6542,26 @@ class VirtualsBot:
         while not self.stop_event.is_set():
             try:
                 self.reconcile_managed_projects_schedule(force_launch_sync=False)
+                await self.prewarm_project_market_snapshots()
             except Exception:
                 pass
             await asyncio.sleep(max(5, int(self.project_scheduler_interval_sec)))
+
+    async def prewarm_project_market_snapshots(self) -> None:
+        for row in self.storage.list_managed_projects():
+            status = self.derive_managed_project_status(row)
+            if status not in {"prelaunch", "live"}:
+                continue
+            if not row.get("token_addr") or not row.get("internal_pool_addr"):
+                continue
+            policy = self.project_market_policy(status)
+            with contextlib.suppress(Exception):
+                await self.get_cached_live_pool_market_snapshot(
+                    str(row.get("name") or ""),
+                    row.get("token_addr"),
+                    row.get("internal_pool_addr"),
+                    cache_ttl_sec=policy["cache_ttl_sec"],
+                )
 
     async def bus_writer_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -6914,19 +7289,16 @@ class VirtualsBot:
                             job["skippedTx"] = int(job.get("skippedTx", 0)) + len(known)
                             todo_list = [x for x in tx_list if x not in known]
 
-                    for tx_hash in todo_list:
-                        if not await self.wait_until_resumed():
-                            break
-                        if job.get("cancelRequested"):
-                            canceled = True
-                            break
-                        await self.process_tx(
-                            tx_hash,
-                            end_block,
-                            launch_configs=launch_configs,
-                            rpc=scan_rpc,
-                        )
-                        job["processedTx"] = int(job.get("processedTx", 0)) + 1
+                    processed_now = await self.process_scan_tx_batch(
+                        tx_hashes=todo_list,
+                        hint_block=end_block,
+                        launch_configs=launch_configs,
+                        rpc=scan_rpc,
+                        is_canceled=lambda: bool(job.get("cancelRequested")),
+                    )
+                    job["processedTx"] = int(job.get("processedTx", 0)) + processed_now
+                    if job.get("cancelRequested"):
+                        canceled = True
                     if canceled:
                         break
                     if project and todo_list:
@@ -6956,6 +7328,46 @@ class VirtualsBot:
                 job["status"] = "failed"
                 job["error"] = str(e)
                 job["finishedAt"] = int(time.time())
+
+    def scan_receipt_worker_count(self) -> int:
+        if self.role == "realtime":
+            return max(1, int(self.cfg.receipt_workers_realtime))
+        if self.role == "backfill":
+            return max(1, int(self.cfg.receipt_workers_backfill))
+        return max(1, int(self.cfg.receipt_workers))
+
+    async def process_scan_tx_batch(
+        self,
+        *,
+        tx_hashes: List[str],
+        hint_block: int,
+        launch_configs: List[LaunchConfig],
+        rpc: RPCClient,
+        is_canceled: Callable[[], bool],
+    ) -> int:
+        if not tx_hashes:
+            return 0
+
+        processed = 0
+        processed_lock = asyncio.Lock()
+        semaphore = asyncio.Semaphore(self.scan_receipt_worker_count())
+
+        async def process_one(tx_hash: str) -> None:
+            nonlocal processed
+            async with semaphore:
+                if is_canceled() or not await self.wait_until_resumed():
+                    return
+                await self.process_tx(
+                    tx_hash,
+                    hint_block,
+                    launch_configs=launch_configs,
+                    rpc=rpc,
+                )
+                async with processed_lock:
+                    processed += 1
+
+        await asyncio.gather(*(process_one(tx_hash) for tx_hash in tx_hashes))
+        return processed
 
     async def run_scan_range_job_bus(self, job: Dict[str, Any]) -> None:
         job_id = str(job["id"])
@@ -7029,19 +7441,15 @@ class VirtualsBot:
                             skipped_tx += len(known)
                             todo_list = [x for x in tx_list if x not in known]
 
-                    for tx_hash in todo_list:
-                        if not await self.wait_until_resumed():
-                            break
-                        if self.event_bus.is_scan_job_cancel_requested(job_id):
-                            canceled = True
-                            break
-                        await self.process_tx(
-                            tx_hash,
-                            end_block,
-                            launch_configs=launch_configs,
-                            rpc=scan_rpc,
-                        )
-                        processed_tx += 1
+                    processed_tx += await self.process_scan_tx_batch(
+                        tx_hashes=todo_list,
+                        hint_block=end_block,
+                        launch_configs=launch_configs,
+                        rpc=scan_rpc,
+                        is_canceled=lambda: self.event_bus.is_scan_job_cancel_requested(job_id),
+                    )
+                    if self.event_bus.is_scan_job_cancel_requested(job_id):
+                        canceled = True
                     if canceled:
                         break
                     if project and todo_list:
@@ -7372,12 +7780,23 @@ class VirtualsBot:
             project_row = self.storage.get_managed_project(project_id)
             if not project_row:
                 return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+            project_status = self.derive_managed_project_status(project_row)
+            policy = self.project_market_policy(project_status)
             live_market = await self.get_cached_live_pool_market_snapshot(
                 str(project_row.get("name") or ""),
                 project_row.get("token_addr"),
                 project_row.get("internal_pool_addr"),
+                cache_ttl_sec=policy["cache_ttl_sec"],
             )
-            return web.json_response(self.build_project_market_payload(live_market))
+            live_market.update(
+                await self.get_project_tax_market_snapshot(
+                    project_row,
+                    token_price_usd=live_market.get("token_price_usd"),
+                )
+            )
+            return web.json_response(
+                self.build_project_market_payload(live_market, project_status=project_status)
+            )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -7952,12 +8371,23 @@ class VirtualsBot:
         if not bool(access.get("isUnlocked")):
             return web.json_response({"error": "project market is locked", "code": "project_locked", "access": access}, status=403)
         try:
+            project_status = self.derive_managed_project_status(project_row)
+            policy = self.project_market_policy(project_status)
             live_market = await self.get_cached_live_pool_market_snapshot(
                 str(project_row.get("name") or ""),
                 project_row.get("token_addr"),
                 project_row.get("internal_pool_addr"),
+                cache_ttl_sec=policy["cache_ttl_sec"],
             )
-            return web.json_response(self.build_project_market_payload(live_market))
+            live_market.update(
+                await self.get_project_tax_market_snapshot(
+                    project_row,
+                    token_price_usd=live_market.get("token_price_usd"),
+                )
+            )
+            return web.json_response(
+                self.build_project_market_payload(live_market, project_status=project_status)
+            )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -9349,7 +9779,7 @@ async def main_async(config_path: str, role: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Virtuals-Launch-Hunter v1.0 split-role runtime"
+        description="Virtuals Whale Radar split-role runtime"
     )
     parser.add_argument(
         "--config",
