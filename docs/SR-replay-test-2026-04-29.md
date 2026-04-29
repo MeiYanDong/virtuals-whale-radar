@@ -276,3 +276,26 @@
 - 当前生产 scan job 工作流可以在删除 `SR` 派生数据后，独立从链上重建完整数据。
 - 本次没有触发 repair replay，说明 Ankr 主路径在 `SR` 完整窗口上足以支撑真实重建。
 - `scanned_backfill_txs` 从历史 baseline 的 `374` 增加到 `754` 是预期结果：本次生产重建把所有候选 tx 都标记为已扫描，不影响 `events` 和聚合结果。
+
+## 2026-04-30 部署后复核
+
+含税估算 FDV 功能随 commit `44047aa` 直接同步到阿里云轻量应用服务器后，复跑 `SR` 完整性审计。
+
+- 审计产物：`/opt/virtuals-whale-radar/output/deploy-validation-20260430-012221-sr-audit.json`
+- `audit_status = green`
+- `events = 602`
+- `event_txs = 602`
+- `candidate_txs = 754`
+- `covered_candidates = 754`
+- `candidate_with_event = 602`
+- `scanned_without_event = 152`
+- `repair_candidates = 0`
+- `unresolved_dead = 0`
+
+部署后健康检查：
+
+- `vwr@writer / vwr@realtime / vwr@backfill / vwr-signalhub / nginx` 全部 `active`
+- `/health` 返回 `ok = true`，`queue = 0`，`pending = 0`，`runtime_paused = false`
+- `/healthz` 返回 `status = ok`
+
+结论：本次生产发布没有破坏 `SR` 历史完整性，仍无需 repair replay。

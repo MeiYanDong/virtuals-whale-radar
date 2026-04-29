@@ -1853,6 +1853,14 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - 最终恢复到 `events = 602`、`event_txs = 602`、`candidate_txs = 754`
   - 完整性审计结果为 `green`
   - 本次未触发 repair replay
+- 2026-04-30 生产部署后复核：
+  - 直接 `rsync` 同步到阿里云轻量应用服务器 `/opt/virtuals-whale-radar`，未通过服务器端 `git pull`
+  - 部署 commit 记录在 `/opt/virtuals-whale-radar/DEPLOYED_COMMIT`，值为 `44047aa20c154980a8bcbf9b75ec7deab812d3e5`
+  - 部署前备份位于 `/opt/virtuals-whale-radar/output/deploy-backup-20260430-011602/source-before-sync.tgz`
+  - `vwr@writer / vwr@realtime / vwr@backfill / vwr-signalhub / nginx` 全部 `active`
+  - `/health` 返回 `ok = true`，`queue = 0`，`pending = 0`，`runtime_paused = false`
+  - `/healthz` 返回 `status = ok`
+  - 复跑 `SR` 完整性审计：`status = green`，`events = 602`，`event_txs = 602`，`candidate_txs = 754`，`repairCandidateTxCount = 0`
 
 下一步：
 
@@ -1919,3 +1927,11 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
 - ISC `72752` 可从 Virtuals API 读取 `factory = BONDING_V5`、`antiSniperTaxType = 2`、`totalSupply = 1000000000`。
 - 按 Virtuals 页面同一衰减逻辑，历史时刻可复现 `27% -> 26% -> 25% -> 24%` 的税率变化。
 - ISC 反狙击税窗口结束后，当前税率回到 `1%` 基准税，此时前端不再展示含税 FDV 徽标。
+
+2026-04-30 生产部署：
+
+- 含税估算 FDV 卡片、税率徽标、`10 万 USD` 档位闪耀逻辑已随 commit `44047aa` 部署到生产。
+- 生产前端资源已刷新为本次构建产物，`https://virtuals.club/admin` 返回 `HTTP/2 200`。
+- 本地模拟入口 `taxFdvSim=up/down` 仍只在 `localhost / 127.0.0.1` 生效，生产域名不会启用模拟数据。
+- 部署后曾出现 `SignalHub-main/exports/token-pools.json` 文件属主不正确，导致 SignalHub 启动时无权写入；已修复 `exports/` 目录属主为 `vwr:vwr`，并确认 `/healthz` 正常。
+- 仍需在下一次真实 `live` 发射窗口观察税率徽标与含税 FDV 是否和 Virtuals 页面一致。
