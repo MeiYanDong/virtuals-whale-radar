@@ -1908,14 +1908,16 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 
 - `scheduled / prelaunch` 仍显示“开盘参考价”，但如果 Virtuals API 已能返回税率窗口，则同步展示含税估算 FDV，方便发射前判断开盘真实估值压力。
 - `live` 阶段显示“实时价格”，并继续同步展示含税估算 FDV。
-- `含税估算 FDV` 独立成 KPI 卡片，不再放在价格卡片的辅助说明里。
+- `代币价格（V）` 不在前端展示，保留为后端/API 调试字段。
+- `有效市值（万 USD）` 使用不含税 `liveFdvUsd`，并入 USD 价格卡片展示。
+- `估算市值（万 USD）` 使用含税估算 `estimatedFdvWanUsdWithTax`，与 `Tax Rate` 保持独立 KPI 卡片。
 - 卡片默认带微弱主题色灯光；当数值跨过 `10 万 USD` 档位时触发一次闪耀：
   - 从低档位向高档位突破：主题色闪耀
   - 从高档位跌落到低档位：红色闪耀
 - 本地调试入口保留为 `?taxFdvSim=up/down`，仅 `localhost / 127.0.0.1` 生效，用于不改数据库、不改 API 的灯光回放验证。
 - 卡片内展示：
   - `Tax Rate xx%`
-  - `含税估算 FDV xx 万 USD`
+  - `估算市值 xx 万 USD`
 - 计算公式固定为：
 
 ```text

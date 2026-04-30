@@ -46,11 +46,6 @@ function formatBreakevenFdvUsd(value: number | null) {
   return formatDecimal(value / 10000, 2);
 }
 
-function formatLiveTokenPriceV(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "-";
-  return `${formatDecimal(value, 10)} V`;
-}
-
 function formatLiveTokenPriceUsd(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "-";
   return `${formatDecimal(value, 10)} USD`;
@@ -107,16 +102,6 @@ function marketBaseLabel(item: OverviewActiveProjectItem) {
   if (status === "live") return "实时价格";
   if (status === "scheduled" || status === "prelaunch") return "开盘参考价";
   return "当前池价";
-}
-
-function marketFdvLabel(item: OverviewActiveProjectItem) {
-  const mode = String(item.marketPriceMode || "").toLowerCase();
-  const status = String(item.projectedStatus || item.status || "").toLowerCase();
-  if (mode === "reference" || status === "scheduled" || status === "prelaunch") {
-    return "参考 FDV（万 USD）";
-  }
-  if (mode === "live" || status === "live") return "实时 FDV（万 USD）";
-  return "当前 FDV（万 USD）";
 }
 
 function formatMarketMeta(item: OverviewActiveProjectItem) {
@@ -276,8 +261,6 @@ export function ProjectOverviewSections({
 }) {
   const whaleRows = toBoardRows(whaleBoard);
   const trackedWalletRows = toBoardRows(trackedWallets);
-  const tokenPriceV =
-    item.tokenPriceV === null || item.tokenPriceV === undefined ? null : toNumber(item.tokenPriceV);
   const tokenPriceUsd =
     item.tokenPriceUsd === null || item.tokenPriceUsd === undefined ? null : toNumber(item.tokenPriceUsd);
   const liveFdvUsd =
@@ -427,21 +410,17 @@ export function ProjectOverviewSections({
             </div>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4 xl:col-span-2">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">当前项目累计税收</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">当前项目累计税收（V）</div>
             <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{formatCurrency(item.sumTaxV)}</div>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{priceLabel}（USD）</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceUsd(tokenPriceUsd)}</div>
+            <div className="mt-4 border-t border-border/60 pt-3">
+              <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">有效市值（万 USD）</div>
+              <div className="mt-1 text-lg font-semibold tracking-[-0.03em]">{formatLiveFdvUsd(liveFdvUsd)}</div>
+            </div>
             {marketMeta ? <div className="mt-2 text-xs text-muted-foreground">{marketMeta}</div> : null}
-          </div>
-          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{priceLabel}（V）</div>
-            <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceV(tokenPriceV)}</div>
-          </div>
-          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
-            <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{marketFdvLabel(item)}</div>
-            <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveFdvUsd(liveFdvUsd)}</div>
           </div>
           <div
             className="tax-fdv-card min-h-[150px] rounded-[22px] border border-primary/35 bg-[color:var(--surface-soft)] px-4 py-4"
@@ -451,7 +430,7 @@ export function ProjectOverviewSections({
             <div className="relative z-10 flex h-full flex-col justify-between gap-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                  含税估算 FDV（万 USD）
+                  估算市值（万 USD）
                 </div>
                 {buyTaxRate !== null ? <Badge variant="warning">Tax Rate {formatBuyTaxRate(buyTaxRate)}</Badge> : null}
               </div>
@@ -460,7 +439,7 @@ export function ProjectOverviewSections({
                   {hasTaxAdjustedFdv ? formatWanUsd(estimatedFdvWanUsdWithTax) : "-"}
                 </div>
                 <div className="mt-2 text-xs text-muted-foreground">
-                  {hasTaxAdjustedFdv ? `按${priceLabel}与当前税率折算` : "等待价格与税率数据"}
+                  {hasTaxAdjustedFdv ? "按当前税率折算" : "等待价格与税率数据"}
                 </div>
               </div>
             </div>
