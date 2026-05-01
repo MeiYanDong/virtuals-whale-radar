@@ -26,6 +26,10 @@ copy_file_if_exists() {
   local src="$1"
   local dest="$2"
   if [[ -f "${src}" ]]; then
+    if [[ ! -r "${src}" ]]; then
+      printf 'skip unreadable file: %s\n' "${src}" >&2
+      return
+    fi
     install -m 600 "${src}" "${dest}"
   fi
 }
@@ -34,6 +38,10 @@ copy_dir_if_exists() {
   local src="$1"
   local dest="$2"
   if [[ -d "${src}" ]]; then
+    if [[ ! -r "${src}" ]]; then
+      printf 'skip unreadable directory: %s\n' "${src}" >&2
+      return
+    fi
     mkdir -p "${dest}"
     cp -a "${src}/." "${dest}/"
   fi
@@ -49,11 +57,13 @@ copy_file_if_exists "${APP_DIR}/SignalHub-main/.env" "${STAGE_DIR}/config/signal
 copy_file_if_exists "/etc/nginx/sites-available/virtuals-whale-radar.conf" "${STAGE_DIR}/system/nginx-virtuals-whale-radar.conf"
 copy_file_if_exists "/etc/systemd/system/vwr@.service" "${STAGE_DIR}/system/vwr@.service"
 copy_file_if_exists "/etc/systemd/system/vwr-signalhub.service" "${STAGE_DIR}/system/vwr-signalhub.service"
+copy_file_if_exists "/etc/systemd/system/vwr-signalhub.service.d/rpc-env.conf" "${STAGE_DIR}/system/vwr-signalhub-rpc-env.conf"
 copy_file_if_exists "/etc/systemd/system/vwr-backup.service" "${STAGE_DIR}/system/vwr-backup.service"
 copy_file_if_exists "/etc/systemd/system/vwr-backup.timer" "${STAGE_DIR}/system/vwr-backup.timer"
 copy_file_if_exists "/etc/logrotate.d/virtuals-whale-radar" "${STAGE_DIR}/system/logrotate-virtuals-whale-radar"
 copy_dir_if_exists "${APP_DIR}/data/uploads" "${STAGE_DIR}/data/uploads"
-copy_dir_if_exists "${APP_DIR}/ssl" "${STAGE_DIR}/system/ssl"
+# SSL private keys are host-level secrets. Keep them out of the app runtime backup
+# instead of relaxing permissions for the vwr service account.
 
 python3 - <<PY
 import json

@@ -34,6 +34,7 @@ FILES=(
   docs/PLAN.md
   docs/todo.md
   docs/ISC-native-replay-test-2026-04-30.md
+  scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/deploy_production_safe.sh
 )
