@@ -885,3 +885,6 @@
 - [x] 新增 `scripts/ops/deploy_production_safe.sh`：生产同步只走白名单文件，默认 `--dry-run`，显式 `--apply` 才会推送。
 - [x] 部署脚本排除 `.venv / node_modules / data / secrets / config.json / SignalHub-main/.env / SignalHub-main/signalhub.db`，并使用 `--no-owner --no-group`，避免把 macOS 属主同步到 Linux。
 - [x] 文档记录误同步恢复顺序：停服务、备份现场、恢复服务器 DB 备份、删 WAL/SHM、重建 venv、恢复生产 config、修复属主、重启健康检查。
+- [x] 2026-05-01 生产已部署 commit `2995c95`，健康检查通过；主程序 backfill RPC 顺序确认为 `Ankr -> Alchemy -> Base public -> PublicNode`。
+- [x] 2026-05-01 为 `vwr-signalhub.service` 增加 `/etc/virtuals-whale-radar/signalhub-rpc.env` drop-in，SignalHub HTTPS 识别链路同样走 Ankr 优先。
+- [x] runtime backup 排除应用目录下的 SSL 私钥目录，不通过放宽私钥权限来修备份失败；已手动执行 `vwr-backup.service` 并确认成功。
