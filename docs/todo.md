@@ -888,3 +888,13 @@
 - [x] 2026-05-01 生产已部署 commit `2995c95`，健康检查通过；主程序 backfill RPC 顺序确认为 `Ankr -> Alchemy -> Base public -> PublicNode`。
 - [x] 2026-05-01 为 `vwr-signalhub.service` 增加 `/etc/virtuals-whale-radar/signalhub-rpc.env` drop-in，SignalHub HTTPS 识别链路同样走 Ankr 优先。
 - [x] runtime backup 排除应用目录下的 SSL 私钥目录，不通过放宽私钥权限来修备份失败；已手动执行 `vwr-backup.service` 并确认成功。
+
+## Phase 48：生产最终验收记录（2026-05-01）
+
+- [x] 线上 `/opt/virtuals-whale-radar/DEPLOYED_COMMIT` 已跟随文档同步更新；最终 live commit 以后续同步完成后的 `DEPLOYED_COMMIT` 为准。
+- [x] 生产健康检查通过：`SignalHub /healthz = 200`，主程序 `/health ok=true`，`runtimePaused=false`，`writer / realtime / backfill / SignalHub` 均为 running。
+- [x] 生产 `backfillRpcPool` 验证为 `rpc.ankr.com -> base-mainnet.g.alchemy.com -> mainnet.base.org -> base-rpc.publicnode.com`。
+- [x] 线上 `https://virtuals.club/admin/projects/12?project=ISC` 返回 `HTTP/2 200`，加载本次前端构建 `index-DC4selLQ.js`。
+- [x] ISC 生产 market 接口已返回关键字段：`Robotic Launch`、`antiSniperTaxType=2`、`taxConfigKnown=true`、`taxConfigStatus=bonding_v5_98m`、`estimatedFdvWanUsdWithTax`、`taxEvidenceStatus=chain_stale`。
+- [x] ISC 生产 overview 接口已返回打新成本位所需结构：`whaleBoard=20`、`trackedWallets=5`、`minutes=75`，且榜单项包含 `breakevenFdvUsd / breakevenFdvV / isTeamCandidate / costExcluded`。
+- [ ] 下次发版前补一个可复用的 authenticated frontend smoke test，自动检查登录后页面 console error、关键指标文案和 replay 控制开关。

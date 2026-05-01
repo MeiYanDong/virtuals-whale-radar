@@ -2016,8 +2016,13 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - `SignalHub-main/.env`
   - `SignalHub-main/signalhub.db`
 - 如果误同步运行态文件，恢复顺序固定为：停止服务、备份现场、从服务器本地 DB 备份恢复主库、删除 WAL/SHM、重建 Linux venv、恢复生产 config 备份、修复属主、重启服务和健康检查。
-- 2026-05-01 生产部署收口到 commit `2995c95`：
-  - `/opt/virtuals-whale-radar/DEPLOYED_COMMIT` 已更新为 `2995c95`。
+- 2026-05-01 生产代码与运维修复先收口到 commit `2995c95`，最终 live commit 以后续文档同步完成后的 `/opt/virtuals-whale-radar/DEPLOYED_COMMIT` 为准：
   - 主程序 `config.json` 只保留环境变量占位，实际 RPC 由 `/etc/virtuals-whale-radar/rpc.env` 提供；当前 backfill 顺序为 `Ankr -> Alchemy -> Base public -> PublicNode`。
   - `vwr-signalhub.service` 通过 `/etc/virtuals-whale-radar/signalhub-rpc.env` drop-in 使用 Ankr 优先的 HTTPS RPC；该文件是服务器运行态 secret，不进入 Git。
   - runtime backup 不再备份应用目录下的 SSL 私钥目录；证书私钥属于服务器级 secret，不通过放宽权限解决备份问题。
+- 2026-05-01 生产最终验收：
+  - `SignalHub /healthz = 200`，主程序 `/health ok=true`，`runtimePaused=false`。
+  - `writer / realtime / backfill / SignalHub` 均为 running；`vwr-backup.service` 是 oneshot，手动执行成功后回到 `inactive dead` 属正常状态。
+  - 线上页面 `https://virtuals.club/admin/projects/12?project=ISC` 返回 `HTTP/2 200`，加载前端资源 `index-DC4selLQ.js`。
+  - ISC market 接口确认返回 `Robotic Launch`、`antiSniperTaxType=2`、`taxConfigKnown=true`、`taxConfigStatus=bonding_v5_98m`、`estimatedFdvWanUsdWithTax`。
+  - ISC overview 接口确认返回 `whaleBoard=20`、`trackedWallets=5`、`minutes=75`，榜单项包含成本位计算所需字段。
