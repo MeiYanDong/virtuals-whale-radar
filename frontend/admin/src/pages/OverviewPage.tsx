@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LockKeyhole, WalletCards } from "lucide-react";
+import { Gauge, LockKeyhole, Pause, Play, RotateCcw, WalletCards } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -14,17 +14,27 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
-import type { ProjectLockedResponse } from "@/types/api";
+import type { OverviewActiveResponse, ProjectLockedResponse, ReplayStatusResponse } from "@/types/api";
 
 function isRealtimeStatus(status: string) {
   return ["prelaunch", "live"].includes(String(status || "").toLowerCase());
 }
 
-function marketRefreshIntervalMs(status: string) {
+const LIVE_FAST_REFRESH_MS = 250;
+const PRELAUNCH_REFRESH_MS = 5_000;
+const DEFAULT_REFRESH_MS = 20_000;
+
+function normalizeFastRefreshMs(value: number | null | undefined, fallback: number) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(150, Math.min(Math.round(parsed), DEFAULT_REFRESH_MS));
+}
+
+function marketRefreshIntervalMs(status: string, recommendedRefreshMs?: number | null) {
   const key = String(status || "").toLowerCase();
-  if (key === "live") return 500;
-  if (key === "prelaunch") return 5_000;
-  return 20_000;
+  if (key === "live") return normalizeFastRefreshMs(recommendedRefreshMs, LIVE_FAST_REFRESH_MS);
+  if (key === "prelaunch") return PRELAUNCH_REFRESH_MS;
+  return DEFAULT_REFRESH_MS;
 }
 
 function marketStaleTimeMs(status: string) {
@@ -32,6 +42,16 @@ function marketStaleTimeMs(status: string) {
   if (key === "live") return 0;
   if (key === "prelaunch") return 2_000;
   return 15_000;
+}
+
+function overviewRefreshIntervalMs(data: OverviewActiveResponse | undefined) {
+  const item = data?.item;
+  if (!item) return false;
+
+  const status = String(item.projectedStatus || item.status || "").toLowerCase();
+  if (status === "live") return normalizeFastRefreshMs(item.recommendedRefreshMs, LIVE_FAST_REFRESH_MS);
+  if (status === "prelaunch") return PRELAUNCH_REFRESH_MS;
+  return false;
 }
 
 function detailPageTitle(status: string) {
@@ -53,6 +73,106 @@ function detailStatusVariant(status: string) {
   if (key === "prelaunch") return "warning" as const;
   if (key === "ended") return "secondary" as const;
   return "default" as const;
+}
+
+function isReplayControlCandidate() {
+  if (typeof window === "undefined") return false;
+  const hostname = window.location.hostname;
+  const params = new URLSearchParams(window.location.search);
+  return (
+    (hostname === "127.0.0.1" || hostname === "localhost") &&
+    params.get("replayControl") === "1"
+  );
+}
+
+function replayStateLabel(state: ReplayStatusResponse["state"]) {
+  if (state === "running") return "自动模拟中";
+  if (state === "ended") return "已结束";
+  return "等待手动开始";
+}
+
+function replayStateVariant(state: ReplayStatusResponse["state"]) {
+  if (state === "running") return "success" as const;
+  if (state === "ended") return "secondary" as const;
+  return "warning" as const;
+}
+
+function ReplayControlPanel({
+  status,
+  pending,
+  onAction,
+}: {
+  status?: ReplayStatusResponse;
+  pending: boolean;
+  onAction: (action: "start" | "pause" | "resume" | "speed" | "reset", speed?: number) => void;
+}) {
+  if (!status?.ok || !status.manual) return null;
+
+  const progressPercent = Math.round((status.progress ?? 0) * 100);
+  const isRunning = status.state === "running";
+  const isEnded = status.state === "ended";
+  const hasStarted = status.elapsedSec > 0 || status.insertedEvents > 0;
+  const startAction = hasStarted ? "resume" : "start";
+  const startLabel = hasStarted ? "继续模拟" : "开始自动模拟";
+
+  return (
+    <section className="rounded-[28px] border border-primary/25 bg-primary/5 px-5 py-4 shadow-sm">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Gauge className="size-4 text-primary" />
+            <div className="text-sm font-semibold tracking-[-0.02em]">手动模拟模式</div>
+            <Badge variant={replayStateVariant(status.state)}>{replayStateLabel(status.state)}</Badge>
+            <Badge variant="secondary">{status.speed}x</Badge>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>模拟时间 {formatDateTime(status.now)}</span>
+            <span>进度 {progressPercent}%</span>
+            <span>
+              事件 {status.insertedEvents}/{status.totalEvents}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            className="h-10 w-24"
+            value={String(status.speed)}
+            onChange={(event) => onAction("speed", Number(event.target.value))}
+            disabled={pending || isEnded}
+          >
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5">5x</option>
+            <option value="10">10x</option>
+          </Select>
+          {isRunning ? (
+            <Button variant="outline" onClick={() => onAction("pause")} disabled={pending}>
+              <Pause className="size-4" />
+              暂停
+            </Button>
+          ) : (
+            <Button onClick={() => onAction(startAction, status.speed)} disabled={pending || isEnded}>
+              <Play className="size-4" />
+              {isEnded ? "已结束" : startLabel}
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (!window.confirm("这会清空当前临时回放数据并回到发射起点，只影响 18080 模拟环境。确认继续吗？")) {
+                return;
+              }
+              onAction("reset");
+            }}
+            disabled={pending}
+          >
+            <RotateCcw className="size-4" />
+            回到起点
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function confirmProjectUnlock(projectName: string, unlockCost: number) {
@@ -96,6 +216,10 @@ export function OverviewPage() {
         : dashboardApi.app.getOverviewActive(selectedProject);
     },
     enabled: Boolean(meta) && !hasInvalidProjectId && (!isProjectDetailView || detailProjectId !== null),
+    staleTime: 0,
+    refetchInterval: (query) => overviewRefreshIntervalMs(query.state.data as OverviewActiveResponse | undefined),
+    refetchIntervalInBackground: false,
+    gcTime: 60_000,
   });
 
   const lockedDetails =
@@ -145,7 +269,7 @@ export function OverviewPage() {
   const currentItem = overviewQuery.data?.item ?? null;
   const marketProjectId = currentItem?.id ?? null;
   const marketStatus = String(currentItem?.projectedStatus || currentItem?.status || "");
-  const marketRefreshMs = marketRefreshIntervalMs(marketStatus);
+  const marketRefreshMs = marketRefreshIntervalMs(marketStatus, currentItem?.recommendedRefreshMs);
   const marketQuery = useQuery({
     queryKey:
       marketProjectId !== null
@@ -174,6 +298,7 @@ export function OverviewPage() {
             ...currentItem,
             tokenPriceV: marketQuery.data.tokenPriceV,
             tokenPriceUsd: marketQuery.data.tokenPriceUsd,
+            virtualPriceUsd: marketQuery.data.virtualPriceUsd,
             liveFdvUsd: marketQuery.data.liveFdvUsd,
             marketPriceSource: marketQuery.data.marketPriceSource ?? undefined,
             marketPriceStale: marketQuery.data.marketPriceStale ?? undefined,
@@ -187,15 +312,76 @@ export function OverviewPage() {
             priceBlockNumber: marketQuery.data.priceBlockNumber ?? undefined,
             buyTaxRate: marketQuery.data.buyTaxRate ?? undefined,
             buyTaxRateSource: marketQuery.data.buyTaxRateSource ?? undefined,
+            predictedBuyTaxRate: marketQuery.data.predictedBuyTaxRate ?? undefined,
+            observedBuyTaxRate: marketQuery.data.observedBuyTaxRate ?? undefined,
+            observedBuyTaxRateRaw: marketQuery.data.observedBuyTaxRateRaw ?? undefined,
+            observedBuyTaxAt: marketQuery.data.observedBuyTaxAt ?? undefined,
+            observedBuyTaxAgeSec: marketQuery.data.observedBuyTaxAgeSec ?? undefined,
+            observedBuyTaxFresh: marketQuery.data.observedBuyTaxFresh ?? undefined,
+            observedBuyTaxFreshSec: marketQuery.data.observedBuyTaxFreshSec ?? undefined,
+            observedBuyTaxSamples: marketQuery.data.observedBuyTaxSamples ?? undefined,
+            taxEvidenceStatus: marketQuery.data.taxEvidenceStatus ?? undefined,
+            taxEvidenceDivergencePct: marketQuery.data.taxEvidenceDivergencePct ?? undefined,
+            taxConfigKnown: marketQuery.data.taxConfigKnown ?? undefined,
+            taxConfigStatus: marketQuery.data.taxConfigStatus ?? undefined,
+            taxConfigWarning: marketQuery.data.taxConfigWarning ?? undefined,
+            taxScheduleDurationValue: marketQuery.data.taxScheduleDurationValue ?? undefined,
+            taxScheduleUnitSeconds: marketQuery.data.taxScheduleUnitSeconds ?? undefined,
             taxStartAt: marketQuery.data.taxStartAt ?? undefined,
             taxEndAt: marketQuery.data.taxEndAt ?? undefined,
             antiSniperTaxType: marketQuery.data.antiSniperTaxType ?? undefined,
+            launchMode: marketQuery.data.launchMode ?? undefined,
+            launchModeLabel: marketQuery.data.launchModeLabel ?? undefined,
+            launchModeRaw: marketQuery.data.launchModeRaw ?? undefined,
+            isRobotics: marketQuery.data.isRobotics ?? undefined,
+            isProject60days: marketQuery.data.isProject60days ?? undefined,
+            airdropPercent: marketQuery.data.airdropPercent ?? undefined,
+            virtualsStatus: marketQuery.data.virtualsStatus ?? undefined,
+            virtualsFactory: marketQuery.data.virtualsFactory ?? undefined,
+            virtualsCategory: marketQuery.data.virtualsCategory ?? undefined,
             estimatedFdvUsdWithTax: marketQuery.data.estimatedFdvUsdWithTax ?? undefined,
             estimatedFdvWanUsdWithTax: marketQuery.data.estimatedFdvWanUsdWithTax ?? undefined,
           }
         : currentItem,
     [currentItem, marketQuery.data],
   );
+  const replayControlEnabled = viewer === "admin" && isReplayControlCandidate();
+  const replayStatusQuery = useQuery({
+    queryKey: queryKeys.replayStatus,
+    queryFn: dashboardApi.replay.getStatus,
+    enabled: replayControlEnabled,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: (query) => ((query.state.data as ReplayStatusResponse | undefined)?.ok ? 500 : false),
+    refetchIntervalInBackground: false,
+  });
+  const replayControlMutation = useMutation({
+    mutationFn: async ({
+      action,
+      speed,
+    }: {
+      action: "start" | "pause" | "resume" | "speed" | "reset";
+      speed?: number;
+    }) => dashboardApi.replay.control(action, speed),
+    onSuccess: async () => {
+      const invalidations = [queryClient.invalidateQueries({ queryKey: queryKeys.replayStatus })];
+      if (detailProjectId !== null) {
+        invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.adminProjectOverview(detailProjectId) }));
+      }
+      if (marketProjectId !== null) {
+        invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.adminProjectMarket(marketProjectId) }));
+      }
+      await Promise.all(invalidations);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const replayControl = replayControlEnabled ? (
+    <ReplayControlPanel
+      status={replayStatusQuery.data}
+      pending={replayControlMutation.isPending}
+      onAction={(action, speed) => void replayControlMutation.mutateAsync({ action, speed })}
+    />
+  ) : null;
 
   useEffect(() => {
     if (displayItem && displayItem.name !== selectedProject) {
@@ -416,6 +602,8 @@ export function OverviewPage() {
           }
         />
 
+        {replayControl}
+
         <ProjectOverviewSections
           item={detailItem}
           minutes={overviewQuery.data?.minutes ?? []}
@@ -502,6 +690,8 @@ export function OverviewPage() {
           </>
         }
       />
+
+      {replayControl}
 
       <ProjectOverviewSections
         item={activeItem}

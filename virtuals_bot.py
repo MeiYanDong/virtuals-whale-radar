@@ -54,6 +54,11 @@ TOKEN1_SELECTOR = "0xd21220a7"
 GET_RESERVES_SELECTOR = "0x0902f1ac"
 VIRTUALS_API_BASE_URL = "https://api2.virtuals.io"
 VIRTUALS_LAUNCH_INFO_CACHE_TTL_SEC = 5 * 60
+TAX_OBSERVED_OVERRIDE_THRESHOLD_PCT = Decimal("3")
+TAX_OBSERVED_FAST_WINDOW_FRESH_SEC = 8
+TAX_OBSERVED_FAST_WINDOW_STABLE_SEC = 30
+TAX_OBSERVED_MINUTE_WINDOW_FRESH_SEC = 90
+KNOWN_BONDING_V5_ANTI_SNIPER_TYPES = {"0", "1", "2"}
 
 
 def normalize_address(addr: str) -> str:
@@ -94,6 +99,17 @@ def parse_bool_like(value: Any) -> bool:
         return False
     raw = str(value).strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def normalize_anti_sniper_tax_type(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    with contextlib.suppress(Exception):
+        return str(int(Decimal(raw)))
+    return raw
 
 
 def parse_bool_request(value: Any) -> bool:
@@ -3835,6 +3851,68 @@ class Storage:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def query_project_first_buy_features(
+        self,
+        project: str,
+        wallets: List[str],
+    ) -> Dict[str, Dict[str, Any]]:
+        project = str(project).strip()
+        normalized_wallets: List[str] = []
+        for wallet in wallets:
+            try:
+                normalized_wallet = normalize_address(str(wallet or ""))
+            except ValueError:
+                continue
+            if normalized_wallet not in normalized_wallets:
+                normalized_wallets.append(normalized_wallet)
+        if not project or not normalized_wallets:
+            return {}
+
+        first_project_row = self.conn.execute(
+            """
+            SELECT MIN(block_timestamp) AS first_project_ts
+            FROM events
+            WHERE project = ?
+            """,
+            (project,),
+        ).fetchone()
+        first_project_ts = int(first_project_row["first_project_ts"] or 0) if first_project_row else 0
+
+        features: Dict[str, Dict[str, Any]] = {}
+        placeholders = ",".join("?" for _ in normalized_wallets)
+        rows = self.conn.execute(
+            f"""
+            SELECT
+                buyer,
+                tx_hash,
+                block_number,
+                block_timestamp,
+                tax_v,
+                spent_v_est,
+                token_bought,
+                breakeven_fdv_v
+            FROM events
+            WHERE project = ? AND buyer IN ({placeholders})
+            ORDER BY buyer ASC, block_timestamp ASC, created_at ASC, id ASC
+            """,
+            (project, *normalized_wallets),
+        ).fetchall()
+        for row in rows:
+            wallet = normalize_address(str(row["buyer"] or ""))
+            if wallet in features:
+                continue
+            features[wallet] = {
+                "projectFirstBlockTimestamp": first_project_ts,
+                "firstTxHash": str(row["tx_hash"] or ""),
+                "firstBlockNumber": int(row["block_number"] or 0),
+                "firstBlockTimestamp": int(row["block_timestamp"] or 0),
+                "firstTaxV": str(row["tax_v"] or "0"),
+                "firstSpentV": str(row["spent_v_est"] or "0"),
+                "firstTokenBought": str(row["token_bought"] or "0"),
+                "firstBreakevenFdvV": str(row["breakeven_fdv_v"] or "0"),
+            }
+        return features
+
     def query_event_delays(self, project: str, limit_n: int) -> List[Dict[str, Any]]:
         rows = self.conn.execute(
             """
@@ -3896,6 +3974,43 @@ class Storage:
         )
         self.conn.commit()
         return {"project": project, "sum_tax_v": total_tax_str, "updated_at": now_ts}
+
+    def query_recent_tax_observations(
+        self,
+        project: str,
+        *,
+        since_ts: Optional[int] = None,
+        limit_n: int = 12,
+    ) -> List[Dict[str, Any]]:
+        project = str(project).strip()
+        if not project:
+            return []
+        clauses = [
+            "project = ?",
+            "CAST(spent_v_est AS REAL) > 0",
+            "CAST(tax_v AS REAL) > 0",
+        ]
+        params: List[Any] = [project]
+        if since_ts is not None and int(since_ts) > 0:
+            clauses.append("block_timestamp >= ?")
+            params.append(int(since_ts))
+        params.append(max(1, int(limit_n)))
+        rows = self.conn.execute(
+            f"""
+            SELECT
+                tx_hash,
+                block_number,
+                block_timestamp,
+                spent_v_est,
+                tax_v
+            FROM events
+            WHERE {" AND ".join(clauses)}
+            ORDER BY block_timestamp DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def rebuild_wallet_position_for_project_wallet(self, project: str, wallet: str) -> Dict[str, Any]:
         project = str(project).strip()
@@ -5461,6 +5576,28 @@ class VirtualsBot:
                 return dict(row)
         return None
 
+    def _find_managed_project_for_signalhub_item(
+        self,
+        managed_projects: List[Dict[str, Any]],
+        item: Dict[str, Any],
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
+        signalhub_id = str(item.get("projectId") or "").strip()
+        if signalhub_id:
+            for row in managed_projects:
+                if str(row.get("signalhub_project_id") or "").strip() == signalhub_id:
+                    return dict(row), "signalhub_id"
+
+        import_name = str(item.get("importName") or "").strip().upper()
+        if not import_name:
+            return None, ""
+        for row in managed_projects:
+            managed_signalhub_id = str(row.get("signalhub_project_id") or "").strip()
+            if managed_signalhub_id:
+                continue
+            if str(row.get("name") or "").strip().upper() == import_name:
+                return dict(row), "name_unbound"
+        return None, ""
+
     def _managed_project_has_active_scan_job(self, project_row: Dict[str, Any]) -> bool:
         project_id = int(project_row.get("id") or 0)
         if project_id <= 0:
@@ -5596,23 +5733,93 @@ class VirtualsBot:
             launch_cfg.token_total_supply if launch_cfg is not None else self.fixed_token_total_supply
         )
         virtual_price_usd, _ = await self.price_service.get_price()
+        first_buy_features = self.storage.query_project_first_buy_features(
+            project_name,
+            [str(item.get("wallet") or "") for item in items],
+        )
+        cost_fdv_by_wallet: Dict[str, Decimal] = {}
+        token_by_wallet: Dict[str, Decimal] = {}
 
         enriched: List[Dict[str, Any]] = []
         for item in items:
             row = dict(item)
+            spent = Decimal(str(row.get("spentV") or "0"))
+            token = Decimal(str(row.get("tokenBought") or "0"))
+            avg_cost_v = (spent / token) if token > 0 else Decimal(0)
+            fdv_v = avg_cost_v * total_supply if total_supply > 0 else Decimal(0)
+            row["breakevenFdvV"] = decimal_to_str(fdv_v, 18) if fdv_v > 0 else None
+            row["isTeamCandidate"] = False
+            row["costExcluded"] = False
+            row["costExclusionReason"] = None
+
+            try:
+                wallet = normalize_address(str(row.get("wallet") or ""))
+                cost_fdv_by_wallet[wallet] = fdv_v
+                token_by_wallet[wallet] = token
+            except ValueError:
+                wallet = ""
+
             existing_fdv_usd = row.get("breakevenFdvUsd")
             if existing_fdv_usd not in (None, ""):
                 row["breakevenFdvUsd"] = str(existing_fdv_usd)
                 enriched.append(row)
                 continue
 
-            spent = Decimal(str(row.get("spentV") or "0"))
-            token = Decimal(str(row.get("tokenBought") or "0"))
-            avg_cost_v = (spent / token) if token > 0 else Decimal(0)
-            fdv_v = avg_cost_v * total_supply
             fdv_usd = (fdv_v * virtual_price_usd) if virtual_price_usd is not None else None
             row["breakevenFdvUsd"] = decimal_to_str(fdv_usd, 18) if fdv_usd is not None else None
             enriched.append(row)
+
+        total_board_token = sum(token_by_wallet.values(), Decimal(0))
+        for row in enriched:
+            try:
+                wallet = normalize_address(str(row.get("wallet") or ""))
+            except ValueError:
+                continue
+
+            feature = first_buy_features.get(wallet)
+            if not feature:
+                continue
+
+            token = token_by_wallet.get(wallet, Decimal(0))
+            fdv_v = cost_fdv_by_wallet.get(wallet, Decimal(0))
+            other_costs = [
+                cost
+                for other_wallet, cost in cost_fdv_by_wallet.items()
+                if other_wallet != wallet and cost > 0
+            ]
+            lowest_other_cost = min(other_costs) if other_costs else None
+            first_block_ts = int(feature.get("firstBlockTimestamp") or 0)
+            project_first_ts = int(feature.get("projectFirstBlockTimestamp") or 0)
+            first_buy_delay_sec = (
+                first_block_ts - project_first_ts
+                if first_block_ts > 0 and project_first_ts > 0 and first_block_ts >= project_first_ts
+                else None
+            )
+            first_tax_v = Decimal(str(feature.get("firstTaxV") or "0"))
+            token_share_total = (token / total_supply) if total_supply > 0 else Decimal(0)
+            token_share_board = (token / total_board_token) if total_board_token > 0 else Decimal(0)
+            large_token_share = token_share_total >= Decimal("0.05") or token_share_board >= Decimal("0.50")
+            opening_buy = first_buy_delay_sec is not None and first_buy_delay_sec <= 300
+            zero_or_near_zero_tax = first_tax_v <= Decimal("0.000001")
+            extreme_low_cost = (
+                lowest_other_cost is not None
+                and lowest_other_cost > 0
+                and fdv_v > 0
+                and fdv_v <= lowest_other_cost * Decimal("0.25")
+            )
+            strong_size_signal = token_share_total >= Decimal("0.20") or token_share_board >= Decimal("0.70")
+            is_team_candidate = (
+                large_token_share
+                and opening_buy
+                and (zero_or_near_zero_tax or extreme_low_cost)
+                and (extreme_low_cost or strong_size_signal)
+            )
+            if not is_team_candidate:
+                continue
+
+            row["isTeamCandidate"] = True
+            row["costExcluded"] = True
+            row["costExclusionReason"] = "开盘极早期、低税/无税且买到占比异常高，默认不计入打新成本位。"
 
         return enriched
 
@@ -5622,8 +5829,8 @@ class VirtualsBot:
             return {
                 "market_price_mode": "live",
                 "market_price_label": "实时价格",
-                "cache_ttl_sec": 0.35,
-                "recommended_refresh_ms": 500,
+                "cache_ttl_sec": 0.25,
+                "recommended_refresh_ms": 250,
             }
         if normalized == "prelaunch":
             return {
@@ -5682,19 +5889,92 @@ class VirtualsBot:
         factory: Optional[Any],
         category: Optional[Any],
         anti_sniper_tax_type: Optional[Any],
+        is_project_60days: Optional[Any] = None,
     ) -> Tuple[int, int]:
+        schedule = self.resolve_buy_tax_schedule(
+            factory=factory,
+            category=category,
+            anti_sniper_tax_type=anti_sniper_tax_type,
+            is_project_60days=is_project_60days,
+        )
+        return int(schedule.get("duration_value") or 0), int(schedule.get("unit_seconds") or 1)
+
+    def resolve_buy_tax_schedule(
+        self,
+        *,
+        factory: Optional[Any],
+        category: Optional[Any],
+        anti_sniper_tax_type: Optional[Any],
+        is_project_60days: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         factory_key = str(factory or "").strip().upper()
         category_key = str(category or "").strip().upper()
+        tax_type = normalize_anti_sniper_tax_type(anti_sniper_tax_type)
+        if not factory_key and not category_key and tax_type is None:
+            return {
+                "known": False,
+                "status": "official_config_missing",
+                "warning": "未拿到 Virtuals 官方 launchInfo，先不预测税率，等待官网配置或链上实测。",
+                "duration_value": 0,
+                "unit_seconds": 1,
+            }
+        if factory_key in {"ERC20", "ERC20_PRO", "BONDING"}:
+            return {
+                "known": True,
+                "status": "legacy_no_anti_sniper",
+                "warning": None,
+                "duration_value": 0,
+                "unit_seconds": 1,
+            }
         if factory_key == "BONDING_V5":
-            tax_type = str(anti_sniper_tax_type if anti_sniper_tax_type is not None else "1")
             if tax_type == "0":
-                return 0, 1
+                return {
+                    "known": True,
+                    "status": "bonding_v5_anti_sniper_off",
+                    "warning": None,
+                    "duration_value": 0,
+                    "unit_seconds": 1,
+                }
             if tax_type == "1":
-                return 60, 1
-            return 98, 60
+                return {
+                    "known": True,
+                    "status": "bonding_v5_60s",
+                    "warning": None,
+                    "duration_value": 60,
+                    "unit_seconds": 1,
+                }
+            if tax_type == "2":
+                return {
+                    "known": True,
+                    "status": "bonding_v5_98m",
+                    "warning": None,
+                    "duration_value": 98,
+                    "unit_seconds": 60,
+                }
+            label = tax_type if tax_type is not None else "missing"
+            suffix = "，isProject60days=true 只能说明发射/解锁标签，不能当税率窗口使用。" if parse_bool_like(is_project_60days) else "。"
+            return {
+                "known": False,
+                "status": "unknown_bonding_v5_anti_sniper_type",
+                "warning": f"Virtuals 返回未知 antiSniperTaxType={label}，先不预测税率{suffix}",
+                "duration_value": 0,
+                "unit_seconds": 1,
+            }
         if category_key == "X_LAUNCH":
-            return 98, 1
-        return 98, 60
+            return {
+                "known": True,
+                "status": "x_launch_98s",
+                "warning": None,
+                "duration_value": 98,
+                "unit_seconds": 1,
+            }
+        return {
+            "known": True,
+            "status": "default_98m",
+            "warning": None,
+            "duration_value": 98,
+            "unit_seconds": 60,
+        }
 
     def compute_buy_tax_rate(
         self,
@@ -5703,38 +5983,182 @@ class VirtualsBot:
         factory: Optional[Any],
         category: Optional[Any],
         anti_sniper_tax_type: Optional[Any],
+        is_project_60days: Optional[Any] = None,
         now_ts: Optional[int] = None,
     ) -> Optional[int]:
         if not tax_start_at:
             return None
         now_value = int(now_ts or time.time())
         factory_key = str(factory or "").strip().upper()
-        old_no_anti_factories = {"ERC20", "ERC20_PRO", "BONDING"}
         base_tax = Decimal(3 if factory_key.startswith("ROBOTIC") else 1)
+        schedule = self.resolve_buy_tax_schedule(
+            factory=factory,
+            category=category,
+            anti_sniper_tax_type=anti_sniper_tax_type,
+            is_project_60days=is_project_60days,
+        )
+        if not schedule.get("known"):
+            return None
 
-        if factory_key in old_no_anti_factories:
+        duration_value = int(schedule.get("duration_value") or 0)
+        unit_seconds = int(schedule.get("unit_seconds") or 1)
+        if now_value < int(tax_start_at):
+            anti_tax = Decimal(99)
+        elif duration_value == 0 and unit_seconds == 1:
             anti_tax = Decimal(0)
         else:
-            duration_value, unit_seconds = self.anti_sniper_duration(
-                factory=factory,
-                category=category,
-                anti_sniper_tax_type=anti_sniper_tax_type,
-            )
-            if now_value < int(tax_start_at):
-                anti_tax = Decimal(99)
-            elif duration_value == 0 and unit_seconds == 1:
+            elapsed_steps = (now_value - int(tax_start_at)) // max(1, unit_seconds)
+            if elapsed_steps >= duration_value:
                 anti_tax = Decimal(0)
+            elif unit_seconds == 1:
+                anti_tax = Decimal(99) - (
+                    Decimal(elapsed_steps) * Decimal(99) / Decimal(duration_value)
+                )
             else:
-                elapsed_steps = (now_value - int(tax_start_at)) // max(1, unit_seconds)
-                if elapsed_steps >= duration_value:
-                    anti_tax = Decimal(0)
-                else:
-                    anti_tax = Decimal(99) - (
-                        Decimal(elapsed_steps) * Decimal(99) / Decimal(duration_value)
-                    )
+                anti_tax = Decimal(max(0, duration_value - elapsed_steps))
 
         tax_rate = min(anti_tax + base_tax, Decimal(99))
         return int(tax_rate.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    def classify_virtuals_launch_mode(
+        self,
+        virtuals_data: Dict[str, Any],
+        launch_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        is_robotics = parse_bool_like(launch_info.get("isRobotics"))
+        is_project_60days = parse_bool_like(launch_info.get("isProject60days"))
+        raw_launch_mode = launch_info.get("launchMode")
+        airdrop_percent = None
+        with contextlib.suppress(Exception):
+            if launch_info.get("airdropPercent") not in {None, ""}:
+                airdrop_percent = int(launch_info.get("airdropPercent"))
+
+        if is_robotics:
+            mode = "robotic"
+            label = "Robotic Launch"
+        elif is_project_60days:
+            mode = "unicorn"
+            label = "Unicorn Launch"
+        else:
+            mode = "unknown"
+            label = "Launch Mode Unknown"
+
+        return {
+            "launch_mode": mode,
+            "launch_mode_label": label,
+            "launch_mode_raw": raw_launch_mode,
+            "is_robotics": is_robotics,
+            "is_project_60days": is_project_60days,
+            "airdrop_percent": airdrop_percent,
+            "virtuals_status": str(virtuals_data.get("status") or "").strip() or None,
+        }
+
+    def build_observed_tax_evidence(
+        self,
+        project_name: str,
+        *,
+        now_ts: int,
+        tax_start_at: Optional[int],
+        tax_end_at: Optional[int],
+        unit_seconds: int,
+    ) -> Dict[str, Any]:
+        project = str(project_name or "").strip()
+        if not project:
+            return {
+                "observed_buy_tax_rate": None,
+                "observed_buy_tax_rate_raw": None,
+                "observed_buy_tax_at": None,
+                "observed_buy_tax_age_sec": None,
+                "observed_buy_tax_fresh": False,
+                "observed_buy_tax_fresh_sec": None,
+                "observed_buy_tax_samples": [],
+            }
+
+        if tax_start_at:
+            since_ts = max(0, int(tax_start_at) - 30)
+        else:
+            since_ts = max(0, int(now_ts) - 600)
+        rows = self.storage.query_recent_tax_observations(project, since_ts=since_ts, limit_n=12)
+        samples: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                spent = Decimal(str(row.get("spent_v_est") or "0"))
+                tax = Decimal(str(row.get("tax_v") or "0"))
+            except (InvalidOperation, ValueError):
+                continue
+            if spent <= 0 or tax <= 0:
+                continue
+            observed_pct = (tax * Decimal(100)) / spent
+            samples.append(
+                {
+                    "txHash": str(row.get("tx_hash") or ""),
+                    "blockNumber": int(row.get("block_number") or 0),
+                    "blockTimestamp": int(row.get("block_timestamp") or 0),
+                    "spentV": decimal_to_str(spent, 18),
+                    "taxV": decimal_to_str(tax, 18),
+                    "observedTaxRate": decimal_to_str(observed_pct, 6),
+                    "_spent": spent,
+                    "_tax": tax,
+                }
+            )
+
+        if not samples:
+            return {
+                "observed_buy_tax_rate": None,
+                "observed_buy_tax_rate_raw": None,
+                "observed_buy_tax_at": None,
+                "observed_buy_tax_age_sec": None,
+                "observed_buy_tax_fresh": False,
+                "observed_buy_tax_fresh_sec": None,
+                "observed_buy_tax_samples": [],
+            }
+
+        latest_ts = max(int(sample["blockTimestamp"]) for sample in samples)
+        if unit_seconds <= 1 and (not tax_end_at or int(now_ts) <= int(tax_end_at)):
+            fresh_sec = TAX_OBSERVED_FAST_WINDOW_FRESH_SEC
+            combine_window_sec = 4
+        elif unit_seconds <= 1:
+            fresh_sec = TAX_OBSERVED_FAST_WINDOW_STABLE_SEC
+            combine_window_sec = 10
+        else:
+            fresh_sec = TAX_OBSERVED_MINUTE_WINDOW_FRESH_SEC
+            combine_window_sec = 90
+
+        selected = [
+            sample
+            for sample in samples
+            if latest_ts - int(sample["blockTimestamp"]) <= combine_window_sec
+        ]
+        if not selected:
+            selected = samples[:1]
+
+        total_spent = sum((sample["_spent"] for sample in selected), Decimal(0))
+        total_tax = sum((sample["_tax"] for sample in selected), Decimal(0))
+        observed_rate_raw = (total_tax * Decimal(100)) / total_spent if total_spent > 0 else None
+        observed_rate = (
+            int(observed_rate_raw.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            if observed_rate_raw is not None
+            else None
+        )
+        age_sec = max(0, int(now_ts) - latest_ts)
+        public_samples = []
+        for sample in selected[:5]:
+            public_sample = dict(sample)
+            public_sample.pop("_spent", None)
+            public_sample.pop("_tax", None)
+            public_samples.append(public_sample)
+
+        return {
+            "observed_buy_tax_rate": observed_rate,
+            "observed_buy_tax_rate_raw": decimal_to_str(observed_rate_raw, 6)
+            if observed_rate_raw is not None
+            else None,
+            "observed_buy_tax_at": latest_ts,
+            "observed_buy_tax_age_sec": age_sec,
+            "observed_buy_tax_fresh": age_sec <= int(fresh_sec),
+            "observed_buy_tax_fresh_sec": int(fresh_sec),
+            "observed_buy_tax_samples": public_samples,
+        }
 
     async def get_project_tax_market_snapshot(
         self,
@@ -5750,6 +6174,7 @@ class VirtualsBot:
         factory = virtuals_data.get("factory") or None
         category = virtuals_data.get("category") or None
         anti_sniper_tax_type = launch_info.get("antiSniperTaxType")
+        launch_mode = self.classify_virtuals_launch_mode(virtuals_data, launch_info)
         tax_start_at = parse_virtuals_timestamp(virtuals_data.get("launchedAt"))
         tax_source = None
         if tax_start_at:
@@ -5761,18 +6186,59 @@ class VirtualsBot:
             if tax_start_at:
                 tax_source = "managed_project_start_at"
 
-        duration_value, unit_seconds = self.anti_sniper_duration(
+        tax_schedule = self.resolve_buy_tax_schedule(
             factory=factory,
             category=category,
             anti_sniper_tax_type=anti_sniper_tax_type,
+            is_project_60days=launch_mode.get("is_project_60days"),
         )
-        tax_end_at = int(tax_start_at) + duration_value * unit_seconds if tax_start_at else None
-        buy_tax_rate = self.compute_buy_tax_rate(
+        duration_value = int(tax_schedule.get("duration_value") or 0)
+        unit_seconds = int(tax_schedule.get("unit_seconds") or 1)
+        tax_end_at = (
+            int(tax_start_at) + duration_value * unit_seconds
+            if tax_start_at and tax_schedule.get("known")
+            else None
+        )
+        predicted_buy_tax_rate = self.compute_buy_tax_rate(
             tax_start_at=tax_start_at,
             factory=factory,
             category=category,
             anti_sniper_tax_type=anti_sniper_tax_type,
+            is_project_60days=launch_mode.get("is_project_60days"),
         )
+        observed_tax = self.build_observed_tax_evidence(
+            str(project_row.get("name") or ""),
+            now_ts=int(time.time()),
+            tax_start_at=tax_start_at,
+            tax_end_at=tax_end_at,
+            unit_seconds=unit_seconds,
+        )
+        observed_buy_tax_rate = observed_tax.get("observed_buy_tax_rate")
+        observed_fresh = bool(observed_tax.get("observed_buy_tax_fresh"))
+        buy_tax_rate = predicted_buy_tax_rate
+        tax_evidence_status = (
+            "api_only" if predicted_buy_tax_rate is not None else str(tax_schedule.get("status") or "unknown")
+        )
+        tax_divergence_pct = None
+
+        if observed_buy_tax_rate is not None:
+            if predicted_buy_tax_rate is not None:
+                tax_divergence_pct = Decimal(observed_buy_tax_rate) - Decimal(predicted_buy_tax_rate)
+            if observed_fresh:
+                if predicted_buy_tax_rate is None:
+                    buy_tax_rate = int(observed_buy_tax_rate)
+                    tax_source = "chain_observed_tax"
+                    tax_evidence_status = "chain_observed"
+                elif abs(tax_divergence_pct or Decimal(0)) >= TAX_OBSERVED_OVERRIDE_THRESHOLD_PCT:
+                    buy_tax_rate = int(observed_buy_tax_rate)
+                    tax_source = "chain_observed_tax_override"
+                    tax_evidence_status = "chain_override"
+                else:
+                    tax_evidence_status = "chain_confirmed"
+            else:
+                tax_evidence_status = (
+                    "chain_stale" if predicted_buy_tax_rate is not None else "chain_stale_no_prediction"
+                )
 
         total_supply = None
         with contextlib.suppress(Exception):
@@ -5800,11 +6266,31 @@ class VirtualsBot:
         return {
             "buy_tax_rate": buy_tax_rate,
             "buy_tax_rate_source": tax_source,
+            "predicted_buy_tax_rate": predicted_buy_tax_rate,
+            "observed_buy_tax_rate": observed_buy_tax_rate,
+            "observed_buy_tax_rate_raw": observed_tax.get("observed_buy_tax_rate_raw"),
+            "observed_buy_tax_at": observed_tax.get("observed_buy_tax_at"),
+            "observed_buy_tax_age_sec": observed_tax.get("observed_buy_tax_age_sec"),
+            "observed_buy_tax_fresh": observed_tax.get("observed_buy_tax_fresh"),
+            "observed_buy_tax_fresh_sec": observed_tax.get("observed_buy_tax_fresh_sec"),
+            "observed_buy_tax_samples": observed_tax.get("observed_buy_tax_samples") or [],
+            "tax_evidence_status": tax_evidence_status,
+            "tax_evidence_divergence_pct": decimal_to_str(tax_divergence_pct, 6)
+            if tax_divergence_pct is not None
+            else None,
+            "tax_config_known": bool(tax_schedule.get("known")),
+            "tax_config_status": tax_schedule.get("status"),
+            "tax_config_warning": tax_schedule.get("warning"),
+            "tax_schedule_duration_value": duration_value,
+            "tax_schedule_unit_seconds": unit_seconds,
             "tax_start_at": tax_start_at,
             "tax_end_at": tax_end_at,
             "anti_sniper_tax_type": int(anti_sniper_tax_type)
             if anti_sniper_tax_type is not None and str(anti_sniper_tax_type).strip().isdigit()
             else None,
+            **launch_mode,
+            "virtuals_factory": str(factory or "").strip() or None,
+            "virtuals_category": str(category or "").strip() or None,
             "estimated_fdv_usd_with_tax": estimated_fdv_usd,
             "estimated_fdv_wan_usd_with_tax": (
                 estimated_fdv_usd / Decimal(10000) if estimated_fdv_usd is not None else None
@@ -6051,9 +6537,33 @@ class VirtualsBot:
             "priceBlockNumber": live_market.get("price_block_number"),
             "buyTaxRate": live_market.get("buy_tax_rate"),
             "buyTaxRateSource": live_market.get("buy_tax_rate_source"),
+            "predictedBuyTaxRate": live_market.get("predicted_buy_tax_rate"),
+            "observedBuyTaxRate": live_market.get("observed_buy_tax_rate"),
+            "observedBuyTaxRateRaw": live_market.get("observed_buy_tax_rate_raw"),
+            "observedBuyTaxAt": live_market.get("observed_buy_tax_at"),
+            "observedBuyTaxAgeSec": live_market.get("observed_buy_tax_age_sec"),
+            "observedBuyTaxFresh": live_market.get("observed_buy_tax_fresh"),
+            "observedBuyTaxFreshSec": live_market.get("observed_buy_tax_fresh_sec"),
+            "observedBuyTaxSamples": live_market.get("observed_buy_tax_samples") or [],
+            "taxEvidenceStatus": live_market.get("tax_evidence_status"),
+            "taxEvidenceDivergencePct": live_market.get("tax_evidence_divergence_pct"),
+            "taxConfigKnown": live_market.get("tax_config_known"),
+            "taxConfigStatus": live_market.get("tax_config_status"),
+            "taxConfigWarning": live_market.get("tax_config_warning"),
+            "taxScheduleDurationValue": live_market.get("tax_schedule_duration_value"),
+            "taxScheduleUnitSeconds": live_market.get("tax_schedule_unit_seconds"),
             "taxStartAt": live_market.get("tax_start_at"),
             "taxEndAt": live_market.get("tax_end_at"),
             "antiSniperTaxType": live_market.get("anti_sniper_tax_type"),
+            "launchMode": live_market.get("launch_mode"),
+            "launchModeLabel": live_market.get("launch_mode_label"),
+            "launchModeRaw": live_market.get("launch_mode_raw"),
+            "isRobotics": live_market.get("is_robotics"),
+            "isProject60days": live_market.get("is_project_60days"),
+            "airdropPercent": live_market.get("airdrop_percent"),
+            "virtualsStatus": live_market.get("virtuals_status"),
+            "virtualsFactory": live_market.get("virtuals_factory"),
+            "virtualsCategory": live_market.get("virtuals_category"),
             "estimatedFdvUsdWithTax": decimal_to_str(
                 live_market.get("estimated_fdv_usd_with_tax"), 18
             )
@@ -6192,6 +6702,7 @@ class VirtualsBot:
         )
         whale_board = await self.enrich_overview_board_items(project_name, whale_board)
         tracked_wallets = await self.enrich_overview_board_items(project_name, tracked_wallets)
+        market_policy = self.project_market_policy(projected_status)
         return {
             "ok": True,
             "viewMode": view_mode,
@@ -6214,6 +6725,10 @@ class VirtualsBot:
                 "liveFdvUsd": None,
                 "marketPriceSource": None,
                 "marketPriceStale": None,
+                "marketPriceMode": market_policy["market_price_mode"],
+                "marketPriceLabel": market_policy["market_price_label"],
+                "recommendedRefreshMs": int(market_policy["recommended_refresh_ms"]),
+                "marketCacheTtlMs": int(float(market_policy["cache_ttl_sec"]) * 1000),
                 "chartFromAt": chart_from_at,
                 "chartToAt": chart_to_at,
             },
@@ -8420,25 +8935,17 @@ class VirtualsBot:
         if not payload.get("items"):
             return web.json_response(payload)
         managed_projects = self.list_public_managed_projects(user)
-        by_signalhub_id = {
-            str(item.get("signalhub_project_id") or "").strip(): item
-            for item in managed_projects
-            if str(item.get("signalhub_project_id") or "").strip()
-        }
-        by_name = {
-            str(item.get("name") or "").strip().upper(): item
-            for item in managed_projects
-            if str(item.get("name") or "").strip()
-        }
         enriched_items: List[Dict[str, Any]] = []
         for item in payload.get("items") or []:
             enriched = dict(item)
-            managed = by_signalhub_id.get(str(item.get("projectId") or "").strip()) or by_name.get(
-                str(item.get("importName") or "").strip().upper()
+            managed, match_type = self._find_managed_project_for_signalhub_item(
+                managed_projects,
+                item,
             )
             access = self.build_project_access_payload(user, managed)
             enriched["managedProjectId"] = int(managed.get("id") or 0) if managed else None
             enriched["managedStatus"] = str(managed.get("status") or "") if managed else ""
+            enriched["managedMatchType"] = match_type
             enriched["resolvedEndAt"] = int(managed.get("resolved_end_at") or 0) if managed else None
             enriched["isUnlocked"] = bool(access.get("isUnlocked"))
             enriched["unlockCost"] = int(access.get("unlockCost"))
@@ -9448,24 +9955,16 @@ class VirtualsBot:
         user = self.get_request_user(request)
         if payload.get("items") and user and str(user.get("role") or "").lower() == "admin":
             managed_projects = self.storage.list_managed_projects()
-            by_signalhub_id = {
-                str(item.get("signalhub_project_id") or "").strip(): item
-                for item in managed_projects
-                if str(item.get("signalhub_project_id") or "").strip()
-            }
-            by_name = {
-                str(item.get("name") or "").strip().upper(): item
-                for item in managed_projects
-                if str(item.get("name") or "").strip()
-            }
             enriched_items: List[Dict[str, Any]] = []
             for item in payload.get("items") or []:
                 enriched = dict(item)
-                managed = by_signalhub_id.get(str(item.get("projectId") or "").strip()) or by_name.get(
-                    str(item.get("importName") or "").strip().upper()
+                managed, match_type = self._find_managed_project_for_signalhub_item(
+                    managed_projects,
+                    item,
                 )
                 enriched["managedProjectId"] = int(managed.get("id") or 0) if managed else None
                 enriched["managedStatus"] = str(managed.get("status") or "") if managed else ""
+                enriched["managedMatchType"] = match_type
                 enriched["resolvedEndAt"] = int(managed.get("resolved_end_at") or 0) if managed else None
                 enriched["watchlist"] = bool(managed)
                 enriched_items.append(enriched)

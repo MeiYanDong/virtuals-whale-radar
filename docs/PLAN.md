@@ -1872,12 +1872,13 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 价格口径必须区分项目状态：
 
 - `scheduled / prelaunch`：显示“开盘参考价”。此时项目尚未正式发射，即使内盘合约已经能返回 `getReserves()`，也不能把它表达成打新成交后的实时价格。
-- `live`：显示“实时价格”。前端按 `500ms` 轮询 market 接口，后端 market cache TTL 为 `0.35s`。
+- `live`：显示“实时价格”。前端按 `250ms` 轮询 market 接口，后端 market cache TTL 为 `0.25s`。
+- `live`：项目详情 / 实时看板的 overview 聚合也按 `250ms` 轮询，让大户榜单、打新成本位和价格侧一起刷新。
 - `ended`：显示“当前池价 / 当前 FDV”，低频刷新即可。
 
 实现边界：
 
-- Base 当前出块约 `2s` 一块，链上确认状态不会每 `0.5s` 真实变化；`500ms` 的含义是 UI/后端在新区块或相关交易出现后尽快刷新。
+- Base 当前出块约 `2s` 一块，链上确认状态不会每 `0.25s` 真实变化；`250ms` 的含义是 UI/后端在新区块或相关交易出现后尽快刷新。
 - market 接口返回：
   - `marketPriceMode`
   - `marketPriceLabel`
@@ -1888,7 +1889,7 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 - 对 `eth_call` 的 `execution reverted` 立即失败，不再走 `MAX_RPC_RETRIES` 指数退避。
 - 对非标准池缓存 fallback 布局，避免 `token0/token1` 每次刷新都重复 revert。
 - writer 会在 `prelaunch / live` 阶段预热 market snapshot，提前缓存池子布局和 decimals，避免发射瞬间第一次打开页面时出现布局探测延迟。
-- 目标状态是 live 阶段单次刷新只读最新块号与 `getReserves()`，常规延迟控制在 `0.5s` 左右。
+- 目标状态是 live 阶段单次 market 刷新只读最新块号与 `getReserves()`，常规延迟控制在 `0.5s` 以内；成本位链路依赖 writer `DB_BATCH_SIZE=1`、`DB_FLUSH_MS=150` 和前端 overview `250ms` 轮询。
 
 ## 33. Virtuals 税率与含税估算 FDV（2026-04-29）
 
@@ -1898,31 +1899,58 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
 
 - 后端通过 `https://api2.virtuals.io/api/virtuals/{signalhub_project_id}?populate[0]=launchInfo` 读取项目公开 launch 信息。
 - 优先使用 Virtuals API 的 `launchedAt` 作为税率衰减起点；若不可得，再回退到本地 `managed_projects.start_at`。
-- 对 `BONDING_V5` 使用 `launchInfo.antiSniperTaxType` 判断反狙击税窗口：
+- 对 `BONDING_V5` 必须优先使用 `launchInfo.antiSniperTaxType` 判断反狙击税窗口；`isProject60days` 不能覆盖 `antiSniperTaxType = 1`：
   - `0`：无反狙击税窗口
-  - `1`：`60s`
-  - 其他值：`98m`
+  - `antiSniperTaxType = 1`：`60s` 秒级线性衰减，即从 `99%` 开始约每秒下降，直到基准税
+  - `antiSniperTaxType = 2`：`98m` 分钟级衰减，即从 `99%` 开始每分钟降低 `1%`，直到基准税
+  - `isProject60days = true` 是发射/解锁机制标签，不可单独推断为 `98m` 税率窗口
+- `BONDING_V5` 如果出现缺失或未知的 `antiSniperTaxType`，系统必须把 `taxConfigKnown=false` 返回给前端，不再兜底成 `98m`。这类项目先显示 `Tax Rate ?` 和风险提示，直到拿到官网明确配置或链上实测税率。
 - 普通项目基准税率按 `1%` 处理；`ROBOTIC*` 工厂保留 `3%` 基准税率。
+- 发射后不能只相信官网预测：后端会从最新链上买入事件计算 `observed_tax_pct = tax_v / spent_v_est * 100`。
+  - 若链上观察税率仍在新鲜窗口内，且和官网预测偏差达到 `3` 个百分点以上，market 接口用链上观察税率覆盖 `buyTaxRate`，从而保护 `含税估算 FDV` 与打新成本位比较基准。
+  - 若链上观察税率和预测接近，则标记为 `chain_confirmed`。
+  - 若链上观察值已过期，则只作为证据展示，不覆盖官网预测。
+  - 若官网配置未知但链上实测足够新鲜，则以链上实测税率作为 `buyTaxRate`，证据状态为 `chain_observed`。
+
+TDS 实盘证据：
+
+- TDS `72562` 的 Virtuals API 为 `antiSniperTaxType = 1`、`isProject60days = true`、`isRobotics = false`。
+- 生产链上事件显示 `21:31:37` 约 `59%`、`21:32:05` 约 `13%`、`21:32:11` 约 `3%`，符合 60 秒级快速衰减，不符合 98 分钟衰减。
+- 后续判断税率时必须先看真实事件/Virtuals 原始字段，不能只凭 `isProject60days` 名称推断。
 
 展示口径：
 
 - `scheduled / prelaunch` 仍显示“开盘参考价”，但如果 Virtuals API 已能返回税率窗口，则同步展示含税估算 FDV，方便发射前判断开盘真实估值压力。
 - `live` 阶段显示“实时价格”，并继续同步展示含税估算 FDV。
 - `代币价格（V）` 不在前端展示，保留为后端/API 调试字段。
-- `有效市值（万 USD）` 使用不含税 `liveFdvUsd`，并入 USD 价格卡片展示。
-- `估算市值（万 USD）` 使用含税估算 `estimatedFdvWanUsdWithTax`，与 `Tax Rate` 保持独立 KPI 卡片。
+- `当前 FDV（不含税，万 USD）` 使用 `liveFdvUsd`，并入 USD 价格卡片展示；前端不再使用“有效市值”作为标签。
+- `含税估算 FDV（万 USD）` 使用 `estimatedFdvWanUsdWithTax`，与 `Tax Rate` 保持独立 KPI 卡片。
+- `Tax Rate` 卡片下方展示证据状态：官网预测、链上确认、链上覆盖、链上观察过期或未知官方配置，避免把 `Launch Type` 当税率事实。
+- 发射阶段 `含税估算 FDV` 与 `代币价格` 共用同一次 market 接口刷新，刷新节奏保持一致。
 - 卡片默认带微弱主题色灯光；当数值跨过 `10 万 USD` 档位时触发一次闪耀：
   - 从低档位向高档位突破：主题色闪耀
   - 从高档位跌落到低档位：红色闪耀
 - 本地调试入口保留为 `?taxFdvSim=up/down`，仅 `localhost / 127.0.0.1` 生效，用于不改数据库、不改 API 的灯光回放验证。
 - 卡片内展示：
   - `Tax Rate xx%`
-  - `估算市值 xx 万 USD`
+  - `含税估算 FDV xx 万 USD`
 - 计算公式固定为：
 
 ```text
 Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 10000
 ```
+
+打新成本位指标：
+
+- 比较基准优先使用 `含税估算 FDV`；如果税率数据不可得，再回退到当前不含税 FDV。
+- 比较规则使用严格小于：只有大户成本 FDV `< 当前比较基准` 才算低于当前估值。
+- `榜单 V`：参与成本位计算的大户榜单 `sum(spentV)`。如果自动识别出疑似团队买入，成本位卡片默认排除该地址，并在卡片内显示排除数量和原始榜单 V。
+- `榜单含税成本`：参与成本位计算的大户加权平均回本 FDV，前端显示 `ⓘ` 说明。它不是当前市值；计算口径为 `sum(实际总支出 V) / sum(扣税后到手 token) * totalSupply`，展示时按当前 VIRTUAL/USD 折算为 `万 USD`。有税窗口内该指标天然是含税成本。
+- `成本位`：`低于当前比较基准的大户数 + 1 / 可比较大户数`，例如 `3/20` 表示仅有 2 名参与成本位计算的大户成本 FDV 低于当前含税估算 FDV。
+- `V 成本位`：`成本低于当前比较基准的大户 spentV 合计 / 参与成本位计算的榜单 spentV 合计`，例如 `2,000/20,000` 表示参与成本位计算的大户里仅有 2,000 V 的买入成本低于当前含税估算 FDV。
+- `榜单含税成本 / 成本位 / V 成本位` 都保留 `ⓘ` hover 说明，避免把加权回本 FDV、名次和 V 视角误读成普通市值或普通均值。
+- 疑似团队买入识别只影响成本位计算，不删除原始榜单数据。当前默认规则看三类信号：开盘极早期、低税/无税、大额低成本买入占比异常高。命中的地址在大户榜单中显示 `疑似团队` 标记。
+- 刷新速度：live 阶段 overview 和 market 都按 `250ms` 刷新；leaderboard 入库依赖 writer 配置 `DB_BATCH_SIZE=1`、`DB_FLUSH_MS=150`，这是当前打新成本位的最低延迟口径。
 
 当前本地验证：
 
@@ -1937,3 +1965,54 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
 - 本地模拟入口 `taxFdvSim=up/down` 仍只在 `localhost / 127.0.0.1` 生效，生产域名不会启用模拟数据。
 - 部署后曾出现 `SignalHub-main/exports/token-pools.json` 文件属主不正确，导致 SignalHub 启动时无权写入；已修复 `exports/` 目录属主为 `vwr:vwr`，并确认 `/healthz` 正常。
 - 仍需在下一次真实 `live` 发射窗口观察税率徽标与含税 FDV 是否和 Virtuals 页面一致。
+
+## 34. SignalHub 项目身份与发射模式防错（2026-04-30）
+
+背景：
+
+- TDS 出现两个同名同符号项目：旧项目 `72336` 已被 Virtuals 标记为 `REJECTED`，新项目 `72562` 才是当前有效发射项目。
+- SignalHub 的 upcoming feed 过去只按未来 `launch_time` 过滤，因此已拒绝但仍带未来发射时间的旧项目可能继续进入候选列表。
+- 主项目过去允许用 `name/importName` 兜底匹配已关注项目，同名新项目会被旧项目误判为同一个关注项，进而带出旧 token 与旧内盘地址。
+
+修正原则：
+
+- 项目身份优先使用 `signalhub_project_id` 和链上地址，不再把名称当作主身份。
+- 同名兜底只允许用于本地手工创建、尚未绑定 SignalHub ID 的项目；只要已有 `signalhub_project_id`，就必须精确匹配。
+- `SignalHub-main` 的 upcoming feed 排除 `REJECTED / CANCELED / ARCHIVED / INACTIVE` 等终态项目，避免上游候选流本身污染。
+- 主项目的 `signalhub_client` 也做同样的终态过滤，用于兼容还没重启或还没部署新 SignalHub 的环境。
+
+发射模式识别：
+
+- 后端 market 接口继续通过 Virtuals API 读取 `launchInfo`。
+- `launchInfo.isRobotics = true` 时标记为 `Robotic Launch`。
+- `launchInfo.isProject60days = true` 且非 robotics 时标记为 `Unicorn Launch`。
+- market 接口返回：
+  - `launchMode`
+  - `launchModeLabel`
+  - `launchModeRaw`
+  - `isRobotics`
+  - `isProject60days`
+  - `airdropPercent`
+  - `virtualsStatus`
+  - `virtualsFactory`
+  - `virtualsCategory`
+- 前端在 `含税估算 FDV` 卡片内展示发射模式徽标，便于打新时直接判断当前项目属于哪类发射机制。
+
+线上修正记录：
+
+- 已把生产主库中的 TDS 从 `signalhub_project_id = 72336` 修正为 `72562`。
+- 旧地址为 `0x388beeb977fca78a7624d673e0a1ca6915f67833`，旧内盘为 `0x9daeac9c6001aca079efe055b7839293fa8f8aa2`。
+- 新地址为 `0x2fb742df1e8707247e75c620c694245ec5f2eced`，新内盘为 `0x7caabe5fdb0c393d205ded2d1e27b8a457fd1957`。
+- 修正前已备份生产主库：`/opt/virtuals-whale-radar/data/virtuals_v11.db.bak-tds-72562-20260430T183502+0800`。
+
+## 35. 生产同步安全边界（2026-05-01）
+
+- 生产同步必须走 `scripts/ops/deploy_production_safe.sh` 的白名单文件清单，先执行 `--dry-run`，确认只包含代码、前端 dist、文档和 ops 脚本后再 `--apply`。
+- 禁止对生产目录执行裸 `rsync ./` 或整仓同步。运行态文件不能从本地覆盖到服务器，尤其是：
+  - `.venv/`
+  - `data/`
+  - `secrets/`
+  - `config.json`
+  - `SignalHub-main/.env`
+  - `SignalHub-main/signalhub.db`
+- 如果误同步运行态文件，恢复顺序固定为：停止服务、备份现场、从服务器本地 DB 备份恢复主库、删除 WAL/SHM、重建 Linux venv、恢复生产 config 备份、修复属主、重启服务和健康检查。

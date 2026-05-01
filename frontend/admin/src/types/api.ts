@@ -108,6 +108,28 @@ export interface HealthResponse {
   runtimePauseUpdatedAt: number | null;
 }
 
+export interface ReplayStatusResponse {
+  ok: boolean;
+  manual: boolean;
+  project: string;
+  projectId: number;
+  virtualsId: string;
+  state: "paused" | "running" | "ended";
+  speed: number;
+  startAt: number;
+  endAt: number;
+  now: number;
+  durationSec: number;
+  elapsedSec: number;
+  progress: number;
+  insertedEvents: number;
+  totalEvents: number;
+  lastAction: string;
+  resetCount: number;
+  apiProjectUrl: string;
+  lastSample?: Record<string, unknown> | null;
+}
+
 export interface BackfillRpcPoolItem {
   label: string;
   url: string;
@@ -155,11 +177,22 @@ export interface SignalHubItem {
   watchlist: boolean;
   links: Array<{ label?: string; url?: string }>;
   liquidityPool: string | null;
+  virtualsFactory?: string | null;
+  virtualsCategory?: string | null;
+  virtualsStatus?: string | null;
+  virtualsTotalSupply?: number | null;
+  launchInfo?: Record<string, unknown>;
+  antiSniperTaxType?: number | null;
+  launchModeRaw?: number | string | null;
+  isRobotics?: boolean | null;
+  isProject60days?: boolean | null;
+  airdropPercent?: number | null;
   treasuryAddress: string | null;
   analysisError: string | null;
   syncReady: boolean;
   managedProjectId?: number | null;
   managedStatus?: string;
+  managedMatchType?: string;
   resolvedEndAt?: number | null;
   isUnlocked?: boolean;
   unlockCost?: number;
@@ -348,7 +381,11 @@ export interface OverviewBoardItem {
   name: string;
   spentV: string;
   tokenBought: string;
+  breakevenFdvV?: string | null;
   breakevenFdvUsd?: string | null;
+  isTeamCandidate?: boolean;
+  costExcluded?: boolean;
+  costExclusionReason?: string | null;
   updatedAt: number;
 }
 
@@ -374,6 +411,7 @@ export interface OverviewActiveProjectItem {
   sumTaxV: string;
   tokenPriceV?: string | null;
   tokenPriceUsd?: string | null;
+  virtualPriceUsd?: string | null;
   liveFdvUsd?: string | null;
   marketPriceSource?: string | null;
   marketPriceStale?: boolean;
@@ -387,9 +425,33 @@ export interface OverviewActiveProjectItem {
   priceBlockNumber?: number | null;
   buyTaxRate?: number | null;
   buyTaxRateSource?: string | null;
+  predictedBuyTaxRate?: number | null;
+  observedBuyTaxRate?: number | null;
+  observedBuyTaxRateRaw?: string | null;
+  observedBuyTaxAt?: number | null;
+  observedBuyTaxAgeSec?: number | null;
+  observedBuyTaxFresh?: boolean | null;
+  observedBuyTaxFreshSec?: number | null;
+  observedBuyTaxSamples?: Array<Record<string, unknown>>;
+  taxEvidenceStatus?: string | null;
+  taxEvidenceDivergencePct?: string | null;
+  taxConfigKnown?: boolean | null;
+  taxConfigStatus?: string | null;
+  taxConfigWarning?: string | null;
+  taxScheduleDurationValue?: number | null;
+  taxScheduleUnitSeconds?: number | null;
   taxStartAt?: number | null;
   taxEndAt?: number | null;
   antiSniperTaxType?: number | null;
+  launchMode?: string | null;
+  launchModeLabel?: string | null;
+  launchModeRaw?: number | string | null;
+  isRobotics?: boolean | null;
+  isProject60days?: boolean | null;
+  airdropPercent?: number | null;
+  virtualsStatus?: string | null;
+  virtualsFactory?: string | null;
+  virtualsCategory?: string | null;
   estimatedFdvUsdWithTax?: string | null;
   estimatedFdvWanUsdWithTax?: string | null;
   chartFromAt: number;
@@ -427,9 +489,33 @@ export interface ProjectMarketResponse {
   priceBlockNumber?: number | null;
   buyTaxRate?: number | null;
   buyTaxRateSource?: string | null;
+  predictedBuyTaxRate?: number | null;
+  observedBuyTaxRate?: number | null;
+  observedBuyTaxRateRaw?: string | null;
+  observedBuyTaxAt?: number | null;
+  observedBuyTaxAgeSec?: number | null;
+  observedBuyTaxFresh?: boolean | null;
+  observedBuyTaxFreshSec?: number | null;
+  observedBuyTaxSamples?: Array<Record<string, unknown>>;
+  taxEvidenceStatus?: string | null;
+  taxEvidenceDivergencePct?: string | null;
+  taxConfigKnown?: boolean | null;
+  taxConfigStatus?: string | null;
+  taxConfigWarning?: string | null;
+  taxScheduleDurationValue?: number | null;
+  taxScheduleUnitSeconds?: number | null;
   taxStartAt?: number | null;
   taxEndAt?: number | null;
   antiSniperTaxType?: number | null;
+  launchMode?: string | null;
+  launchModeLabel?: string | null;
+  launchModeRaw?: number | string | null;
+  isRobotics?: boolean | null;
+  isProject60days?: boolean | null;
+  airdropPercent?: number | null;
+  virtualsStatus?: string | null;
+  virtualsFactory?: string | null;
+  virtualsCategory?: string | null;
   estimatedFdvUsdWithTax?: string | null;
   estimatedFdvWanUsdWithTax?: string | null;
 }

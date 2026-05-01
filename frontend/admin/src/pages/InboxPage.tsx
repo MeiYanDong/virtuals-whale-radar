@@ -90,6 +90,29 @@ function watchStateVariant(managed?: ManagedProjectItem | null) {
   return "danger" as const;
 }
 
+function launchModeLabel(item: SignalHubItem) {
+  if (item.isRobotics) return "Robotic Launch";
+  if (item.isProject60days) return "Unicorn Launch";
+  return item.virtualsFactory || "Launch";
+}
+
+function antiSniperLabel(item: SignalHubItem) {
+  if (item.antiSniperTaxType === 0) return "Anti-sniper Off";
+  if (item.antiSniperTaxType === 1) return "Anti-sniper 60s";
+  if (item.antiSniperTaxType === 2) return "Anti-sniper 98m";
+  if (item.virtualsFactory === "BONDING_V5") return "Anti-sniper 未知";
+  if (!item.virtualsFactory) return "Anti-sniper 待同步";
+  return "Anti-sniper 默认";
+}
+
+function antiSniperBadgeVariant(item: SignalHubItem) {
+  if (item.virtualsFactory === "BONDING_V5" && ![0, 1, 2].includes(Number(item.antiSniperTaxType))) {
+    return "danger" as const;
+  }
+  if (item.antiSniperTaxType === 1) return "warning" as const;
+  return "secondary" as const;
+}
+
 function buildWatchEditorState(item: SignalHubItem, managed?: ManagedProjectItem | null): WatchEditorState {
   const startAt = managed?.start_at ?? startTsFromSignalHub(item);
   return {
@@ -187,6 +210,9 @@ export function InboxPage() {
   const managedByName = useMemo(() => {
     const map = new Map<string, ManagedProjectItem>();
     for (const item of managedProjectsQuery.data?.items ?? []) {
+      if (item.signalhub_project_id) {
+        continue;
+      }
       map.set(item.name.toUpperCase(), item);
     }
     return map;
@@ -500,6 +526,14 @@ export function InboxPage() {
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {item.symbol ? `Symbol ${item.symbol}` : "无 symbol"} / 倒计时 {formatCountdown(item.secondsToLaunch)}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant={item.isRobotics || item.isProject60days ? "secondary" : "warning"}>
+                              {launchModeLabel(item)}
+                            </Badge>
+                            <Badge variant={antiSniperBadgeVariant(item)}>
+                              {antiSniperLabel(item)}
+                            </Badge>
                           </div>
                         </div>
                       </TableCell>

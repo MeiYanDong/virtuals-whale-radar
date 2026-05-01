@@ -1,4 +1,4 @@
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Info } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { EmptyState, SectionCard } from "@/components/app-primitives";
@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   formatAddress,
-  formatCurrency,
   formatDateTime,
   formatDecimal,
   formatInteger,
@@ -24,13 +23,23 @@ type BoardRow = {
   name?: string;
   spentV: number;
   tokenBought: number;
+  breakevenFdvV: number | null;
   breakevenFdvUsd: number | null;
+  isTeamCandidate: boolean;
+  costExcluded: boolean;
+  costExclusionReason?: string | null;
   updatedAt: number;
 };
 
 function toNumber(value: number | string | null | undefined) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toOptionalNumber(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function tokenWan(value: number) {
@@ -61,9 +70,86 @@ function formatWanUsd(value: number | null) {
   return formatDecimal(value, 2);
 }
 
+function formatVPair(value: number | null, total: number | null) {
+  if (value === null || total === null || !Number.isFinite(value) || !Number.isFinite(total) || total <= 0) {
+    return "-";
+  }
+  return `${formatInteger(Math.round(value))}/${formatInteger(Math.round(total))}`;
+}
+
 function formatBuyTaxRate(value: number | null) {
   if (value === null || !Number.isFinite(value)) return "-";
   return `${formatDecimal(value, 0)}%`;
+}
+
+function taxEvidenceLabel(item: OverviewActiveProjectItem, buyTaxRate: number | null) {
+  const observed = toOptionalNumber(item.observedBuyTaxRate);
+  const predicted = toOptionalNumber(item.predictedBuyTaxRate);
+  const age = toOptionalNumber(item.observedBuyTaxAgeSec);
+  const suffix = age !== null ? ` · ${formatInteger(Math.round(age))}s 前` : "";
+  switch (item.taxEvidenceStatus) {
+    case "chain_override":
+      return `链上实测覆盖官网预测：${formatBuyTaxRate(observed)}（预测 ${formatBuyTaxRate(predicted)}）${suffix}`;
+    case "chain_confirmed":
+      return `链上实测已确认：${formatBuyTaxRate(observed)}${suffix}`;
+    case "chain_observed":
+      return `链上实测税率：${formatBuyTaxRate(observed)}${suffix}`;
+    case "chain_stale":
+      return `官网预测税率 ${formatBuyTaxRate(buyTaxRate)}，最近链上实测 ${formatBuyTaxRate(observed)} 已过期${suffix}`;
+    case "chain_stale_no_prediction":
+      return `最近链上实测 ${formatBuyTaxRate(observed)} 已过期${suffix}`;
+    case "api_only":
+      return `官网预测税率：${formatBuyTaxRate(buyTaxRate)}`;
+    case "unknown_bonding_v5_anti_sniper_type":
+      return item.taxConfigWarning || "发现未知 anti-sniper 类型，先不预测税率，等待链上实测。";
+    case "official_config_missing":
+      return item.taxConfigWarning || "未拿到 Virtuals 官方税率配置，等待官网配置或链上实测。";
+    default:
+      if (item.taxConfigWarning) return item.taxConfigWarning;
+      return buyTaxRate !== null ? `当前税率：${formatBuyTaxRate(buyTaxRate)}` : "等待税率证据";
+  }
+}
+
+function taxRateBadgeLabel(item: OverviewActiveProjectItem, buyTaxRate: number | null) {
+  if (buyTaxRate !== null) return `Tax Rate ${formatBuyTaxRate(buyTaxRate)}`;
+  if (item.taxEvidenceStatus || item.taxConfigStatus) return "Tax Rate ?";
+  return null;
+}
+
+function taxEvidenceBadgeVariant(item: OverviewActiveProjectItem): "success" | "danger" | "warning" {
+  if (item.taxEvidenceStatus === "chain_override") return "danger";
+  if (item.taxEvidenceStatus === "unknown_bonding_v5_anti_sniper_type") return "danger";
+  if (item.taxEvidenceStatus === "chain_confirmed" || item.taxEvidenceStatus === "chain_observed") return "success";
+  return "warning";
+}
+
+function InfoHint({ label }: { label: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        className="inline-flex size-5 shrink-0 cursor-help items-center justify-center rounded-full text-muted-foreground transition hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+      >
+        <Info className="size-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-[14px] border border-border bg-popover px-3 py-2 text-left text-xs font-normal leading-5 tracking-normal text-foreground opacity-0 shadow-[var(--shadow-soft)] transition duration-150 group-focus-within:opacity-100 group-hover:opacity-100 sm:w-80"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function MetricLabel({ children, hint }: { children: ReactNode; hint?: string }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+      <span>{children}</span>
+      {hint ? <InfoHint label={hint} /> : null}
+    </div>
+  );
 }
 
 // Local-only visual replay for checking the cross-threshold glow without mutating DB/API data.
@@ -111,7 +197,7 @@ function formatMarketMeta(item: OverviewActiveProjectItem) {
   if (item.priceLatencyMs !== null && item.priceLatencyMs !== undefined) {
     parts.push(`${item.priceLatencyMs}ms`);
   }
-  if (item.marketPriceStale) parts.push("VIRTUAL/USD 价格源过期");
+  if (item.marketPriceStale) parts.push("VIRTUAL 美元价格源过期");
   return parts.join(" / ");
 }
 
@@ -204,7 +290,7 @@ function BoardTable({
           <TableHead>钱包地址</TableHead>
           <TableHead>累计花费 V</TableHead>
           <TableHead>累计代币数量（万）</TableHead>
-          <TableHead>买入市值（万 USD）</TableHead>
+          <TableHead>含税成本 FDV（万 USD）</TableHead>
           <TableHead>更新时间</TableHead>
         </TableRow>
       </TableHeader>
@@ -214,8 +300,23 @@ function BoardTable({
             <TableRow key={row.wallet}>
               <TableCell>
                 <div className="space-y-1">
-                  {row.name ? <div className="text-sm font-medium">{row.name}</div> : null}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {row.name ? <div className="text-sm font-medium">{row.name}</div> : null}
+                    {row.costExcluded ? (
+                      <Badge
+                        variant="warning"
+                        className="shrink-0 px-2 py-0.5 text-[11px] font-semibold tracking-normal"
+                      >
+                        疑似团队
+                      </Badge>
+                    ) : null}
+                  </div>
                   <div className="font-mono text-xs text-muted-foreground">{row.wallet}</div>
+                  {row.costExcluded ? (
+                    <div className="max-w-xl text-xs leading-5 text-muted-foreground">
+                      已排除成本位：{row.costExclusionReason || "开盘极早期的大额低成本买入。"}
+                    </div>
+                  ) : null}
                 </div>
               </TableCell>
               <TableCell>{formatSpentVInteger(row.spentV)}</TableCell>
@@ -236,10 +337,15 @@ function toBoardRows(items: OverviewBoardItem[]) {
     name: item.name || undefined,
     spentV: toNumber(item.spentV),
     tokenBought: toNumber(item.tokenBought),
+    breakevenFdvV:
+      item.breakevenFdvV === null || item.breakevenFdvV === undefined ? null : toNumber(item.breakevenFdvV),
     breakevenFdvUsd:
       item.breakevenFdvUsd === null || item.breakevenFdvUsd === undefined
         ? null
         : toNumber(item.breakevenFdvUsd),
+    isTeamCandidate: Boolean(item.isTeamCandidate),
+    costExcluded: Boolean(item.costExcluded),
+    costExclusionReason: item.costExclusionReason ?? null,
     updatedAt: item.updatedAt,
   }));
 }
@@ -265,8 +371,14 @@ export function ProjectOverviewSections({
     item.tokenPriceUsd === null || item.tokenPriceUsd === undefined ? null : toNumber(item.tokenPriceUsd);
   const liveFdvUsd =
     item.liveFdvUsd === null || item.liveFdvUsd === undefined ? null : toNumber(item.liveFdvUsd);
+  const virtualPriceUsd =
+    item.virtualPriceUsd === null || item.virtualPriceUsd === undefined ? null : toNumber(item.virtualPriceUsd);
   const buyTaxRate =
     item.buyTaxRate === null || item.buyTaxRate === undefined ? null : toNumber(item.buyTaxRate);
+  const taxEvidence = taxEvidenceLabel(item, buyTaxRate);
+  const taxBadgeLabel = taxRateBadgeLabel(item, buyTaxRate);
+  const launchModeLabel =
+    item.launchModeLabel && item.launchMode !== "unknown" ? item.launchModeLabel : null;
   const rawEstimatedFdvWanUsdWithTax =
     item.estimatedFdvWanUsdWithTax !== null && item.estimatedFdvWanUsdWithTax !== undefined
       ? toNumber(item.estimatedFdvWanUsdWithTax)
@@ -281,6 +393,69 @@ export function ProjectOverviewSections({
   const marketMeta = formatMarketMeta(item);
   const hasTaxAdjustedFdv =
     estimatedFdvWanUsdWithTax !== null && Number.isFinite(estimatedFdvWanUsdWithTax);
+  const taxEvidenceText =
+    hasTaxAdjustedFdv || taxBadgeLabel || item.taxConfigWarning ? taxEvidence : "等待价格与税率数据";
+  const comparisonFdvUsd = hasTaxAdjustedFdv
+    ? estimatedFdvWanUsdWithTax * 10000
+    : liveFdvUsd !== null && Number.isFinite(liveFdvUsd)
+      ? liveFdvUsd
+      : null;
+  const comparisonFdvV =
+    comparisonFdvUsd !== null && virtualPriceUsd !== null && virtualPriceUsd > 0
+      ? comparisonFdvUsd / virtualPriceUsd
+      : null;
+  const comparisonLabel = hasTaxAdjustedFdv ? "含税估算 FDV" : "当前 FDV（不含税）";
+  const rawWhaleSpentV = whaleRows.reduce((sum, row) => sum + row.spentV, 0);
+  const comparableWhaleRows = whaleRows.filter(
+    (row) =>
+      row.spentV > 0 &&
+      row.tokenBought > 0 &&
+      row.breakevenFdvV !== null &&
+      Number.isFinite(row.breakevenFdvV),
+  );
+  const costExcludedRows = comparableWhaleRows.filter((row) => row.costExcluded);
+  const costMetricRows = comparableWhaleRows.filter((row) => !row.costExcluded);
+  const totalComparableSpentV = costMetricRows.reduce((sum, row) => sum + row.spentV, 0);
+  const totalComparableToken = costMetricRows.reduce((sum, row) => sum + row.tokenBought, 0);
+  const weightedCostFdvV =
+    totalComparableToken > 0
+      ? costMetricRows.reduce((sum, row) => sum + (row.breakevenFdvV ?? 0) * row.tokenBought, 0) /
+        totalComparableToken
+      : null;
+  const usdCostRows = costMetricRows.filter(
+    (row) => row.breakevenFdvUsd !== null && Number.isFinite(row.breakevenFdvUsd),
+  );
+  const totalUsdCostToken = usdCostRows.reduce((sum, row) => sum + row.tokenBought, 0);
+  const weightedCostFdvUsdFromRows =
+    totalUsdCostToken > 0
+      ? usdCostRows.reduce((sum, row) => sum + (row.breakevenFdvUsd ?? 0) * row.tokenBought, 0) /
+        totalUsdCostToken
+      : null;
+  const weightedCostFdvWanUsd =
+    weightedCostFdvV !== null && virtualPriceUsd !== null && virtualPriceUsd > 0
+      ? (weightedCostFdvV * virtualPriceUsd) / 10000
+      : weightedCostFdvUsdFromRows !== null && weightedCostFdvUsdFromRows > 0
+        ? weightedCostFdvUsdFromRows / 10000
+        : null;
+  const belowCostRows =
+    comparisonFdvV !== null
+      ? costMetricRows.filter((row) => (row.breakevenFdvV ?? 0) < comparisonFdvV)
+      : [];
+  const costPosition =
+    comparisonFdvV !== null && costMetricRows.length
+      ? `${Math.min(belowCostRows.length + 1, costMetricRows.length)}/${costMetricRows.length}`
+      : "-";
+  const belowCostSpentV = belowCostRows.reduce((sum, row) => sum + row.spentV, 0);
+  const excludedSpentV = costExcludedRows.reduce((sum, row) => sum + row.spentV, 0);
+  const costPositionHint =
+    comparisonFdvV !== null && costMetricRows.length
+      ? `仅有 ${formatInteger(belowCostRows.length)} 名榜单大户的买入成本低于当前${comparisonLabel}，当前估值排在第 ${costPosition}。`
+      : "等待榜单成本与当前估值数据。";
+  const vCostPositionHint =
+    comparisonFdvV !== null && totalComparableSpentV > 0
+      ? `榜单里仅有 ${formatInteger(Math.round(belowCostSpentV))} V 的买入资金成本低于当前${comparisonLabel}，分母是参与成本位计算的榜单 V。`
+      : "等待榜单成本与当前估值数据。";
+  const vCostPosition = comparisonFdvV !== null ? formatVPair(belowCostSpentV, totalComparableSpentV) : "-";
   const taxFdvBucket = hasTaxAdjustedFdv ? Math.floor(estimatedFdvWanUsdWithTax / 10) : null;
   const [taxFdvGlow, setTaxFdvGlow] = useState<"up" | "down" | null>(null);
   const previousTaxFdvBucketRef = useRef<number | null>(null);
@@ -364,6 +539,7 @@ export function ProjectOverviewSections({
               <Badge variant={projectStatusVariant(item.projectedStatus || item.status)}>
                 {projectStatusLabel(item.projectedStatus || item.status)}
               </Badge>
+              {launchModeLabel ? <Badge variant="secondary">{launchModeLabel}</Badge> : null}
             </div>
           </div>
 
@@ -411,13 +587,13 @@ export function ProjectOverviewSections({
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4 xl:col-span-2">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">当前项目累计税收（V）</div>
-            <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{formatCurrency(item.sumTaxV)}</div>
+            <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">{formatSpentVInteger(toNumber(item.sumTaxV))}</div>
           </div>
           <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{priceLabel}（USD）</div>
             <div className="mt-2 text-lg font-semibold tracking-[-0.03em]">{formatLiveTokenPriceUsd(tokenPriceUsd)}</div>
             <div className="mt-4 border-t border-border/60 pt-3">
-              <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">有效市值（万 USD）</div>
+              <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">当前 FDV（不含税，万 USD）</div>
               <div className="mt-1 text-lg font-semibold tracking-[-0.03em]">{formatLiveFdvUsd(liveFdvUsd)}</div>
             </div>
             {marketMeta ? <div className="mt-2 text-xs text-muted-foreground">{marketMeta}</div> : null}
@@ -430,17 +606,58 @@ export function ProjectOverviewSections({
             <div className="relative z-10 flex h-full flex-col justify-between gap-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                  估算市值（万 USD）
+                  含税估算 FDV（万 USD）
                 </div>
-                {buyTaxRate !== null ? <Badge variant="warning">Tax Rate {formatBuyTaxRate(buyTaxRate)}</Badge> : null}
+                {taxBadgeLabel ? (
+                  <Badge variant={taxEvidenceBadgeVariant(item)}>
+                    {taxBadgeLabel}
+                  </Badge>
+                ) : null}
               </div>
               <div>
                 <div className="text-3xl font-semibold tracking-[-0.04em]">
                   {hasTaxAdjustedFdv ? formatWanUsd(estimatedFdvWanUsdWithTax) : "-"}
                 </div>
                 <div className="mt-2 text-xs text-muted-foreground">
-                  {hasTaxAdjustedFdv ? "按当前税率折算" : "等待价格与税率数据"}
+                  {taxEvidenceText}
                 </div>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-[22px] border border-border/80 bg-[color:var(--surface-soft)] px-4 py-4 xl:col-span-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">打新成本位</div>
+              <Badge variant="secondary">对比 {comparisonLabel}</Badge>
+            </div>
+            <div className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2">
+              <div>
+                <MetricLabel>榜单 V</MetricLabel>
+                <div className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
+                  {formatSpentVInteger(totalComparableSpentV)}
+                </div>
+                {costExcludedRows.length ? (
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    已排除 {costExcludedRows.length} 个疑似团队地址（{formatSpentVInteger(excludedSpentV)}），原始榜单{" "}
+                    {formatSpentVInteger(rawWhaleSpentV)}
+                  </div>
+                ) : null}
+              </div>
+              <div>
+                <MetricLabel hint="不是当前市值。这里用榜单大户实际总支出 V 除以扣税后到手代币数量，再乘以总供应量，反推这批大户的含税回本 FDV；展示时按当前 VIRTUAL 美元价格折算为万 USD。">
+                  榜单含税成本
+                </MetricLabel>
+                <div className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
+                  {formatWanUsd(weightedCostFdvWanUsd)}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">万 USD</div>
+              </div>
+              <div>
+                <MetricLabel hint={costPositionHint}>成本位</MetricLabel>
+                <div className="mt-1 text-2xl font-semibold tracking-[-0.04em]">{costPosition}</div>
+              </div>
+              <div>
+                <MetricLabel hint={vCostPositionHint}>V 成本位</MetricLabel>
+                <div className="mt-1 text-2xl font-semibold tracking-[-0.04em]">{vCostPosition}</div>
               </div>
             </div>
           </div>

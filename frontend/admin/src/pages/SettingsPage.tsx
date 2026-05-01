@@ -81,7 +81,7 @@ export function SettingsPage() {
           </div>
         </SectionCard>
 
-        <SectionCard title="采集节奏" description="控制管理后台自身的数据刷新频率。">
+        <SectionCard title="后台刷新节奏" description="控制管理后台外壳状态的全局刷新频率。">
           <div className="space-y-3">
             <div>
               <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -96,8 +96,9 @@ export function SettingsPage() {
                 <option value="super">超速 2.5s</option>
               </Select>
             </div>
-            <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4 text-sm text-muted-foreground">
-              这里控制的是管理员后台轮询节奏，不改变链上采集逻辑本身。
+            <div className="rounded-[22px] border border-border bg-white/70 px-4 py-4 text-sm leading-6 text-muted-foreground">
+              这里控制的是后台外壳状态刷新频率，例如顶部健康状态、SignalHub 预览和项目调度器。
+              发射中的核心指标会使用独立的快速刷新策略；当前池价、含税估算 FDV、Tax Rate 和打新成本位不会被这里的 2.5s / 5s / 15s 限制。
             </div>
           </div>
         </SectionCard>

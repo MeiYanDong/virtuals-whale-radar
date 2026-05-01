@@ -823,14 +823,14 @@
 ## Phase 42：目标代币价格实时化
 
 - [x] 明确价格语义：`scheduled / prelaunch` 显示“开盘参考价”，只有 `live` 打新中显示“实时价格”。
-- [x] `live` 项目 market 接口缓存 TTL 降到 `0.35s`，前端按 `500ms` 轮询。
+- [x] `live` 项目 market 接口缓存 TTL 降到 `0.25s`，前端按 `250ms` 轮询。
 - [x] `scheduled / prelaunch / ended` 保持低频轮询，避免发射前无意义高频读链。
 - [x] 对 `eth_call` 的 `execution reverted` 做确定性失败处理，不再按 RPC transient error 指数退避重试。
 - [x] 为目标代币内盘缓存 `token0/token1` 或 fallback 布局，以及 token decimals，避免每次价格刷新重复探测。
 - [x] market 接口返回 `priceUpdatedAt / priceBlockNumber / priceLatencyMs / marketPriceMode / recommendedRefreshMs`。
 - [x] 前端价格卡片显示更新时间、区块号和读取耗时，避免把发射前参考价误认为成交后的实时价格。
 - [x] writer 在 `prelaunch / live` 阶段预热 market snapshot，提前缓存池子布局和 decimals。
-- [ ] 线上观察一次真实 `live` 发射窗口，确认 500ms 轮询不会触发 Ankr 限速。
+- [ ] 线上观察一次真实 `live` 发射窗口，确认 250ms 轮询不会触发 Ankr 限速。
 
 ## Phase 43：Virtuals 税率与含税估算 FDV
 
@@ -842,5 +842,46 @@
 - [x] 保留本地 `taxFdvSim=up/down` 回放入口，仅 `localhost / 127.0.0.1` 生效，方便复测灯光且不污染真实数据。
 - [x] 本地用 ISC `72752` 验证 Virtuals API 字段和历史税率：`27% -> 26% -> 25% -> 24%`。
 - [x] 2026-04-30 已直接同步到阿里云轻量应用服务器生产环境，部署 commit `44047aa`，生产健康检查通过。
-- [x] 项目详情展示口径调整：累计税收明确为 `V`，前端隐藏 `代币价格（V）`，有效市值并入 USD 价格卡，估算市值与税率保持独立卡片并保留灯光。
+- [x] 项目详情展示口径调整：累计税收明确为 `V`，前端隐藏 `代币价格（V）`，`当前 FDV（不含税）` 并入 USD 价格卡，`含税估算 FDV` 与税率保持独立卡片并保留灯光。
+- [x] 发射阶段 `含税估算 FDV` 与 `代币价格` 共用 market 刷新节奏，前端 live 轮询提升到 `250ms`。
+- [x] market 接口新增链上观察税率证据：最新买入事件按 `tax_v / spent_v_est` 反推税率；新鲜且偏离官网预测 `3` 个百分点以上时覆盖 `buyTaxRate`，保护含税 FDV 与成本位比较。
+- [x] 前端 Tax Rate 区域展示证据状态：官网预测、链上确认、链上覆盖或链上观察过期。
+- [x] 对未知/缺失的 `BONDING_V5 antiSniperTaxType` 增加保护：后端返回 `taxConfigKnown=false`，前端显示 `Tax Rate ?` 与风险提示，不再把未知配置默认为 `98m`。
 - [ ] 部署到生产后，在下一次真实 `live` 发射窗口观察税率徽标与含税 FDV 是否和 Virtuals 页面一致。
+
+## Phase 44：打新过程大户成本位指标
+
+- [x] 前端标签统一为 `当前 FDV（不含税）` 与 `含税估算 FDV`，不再使用容易歧义的“有效市值”。
+- [x] 后端 overview 榜单补充 `breakevenFdvV`，让前端能用 V-native 成本和当前含税估算 FDV 做同口径比较。
+- [x] 项目详情新增 `榜单 V / 榜单成本 / 成本位 / V 成本位`，其中 `榜单成本 / 成本位 / V 成本位` 都带 `ⓘ` hover 解释。
+- [x] 成本位比较规则固定为严格小于：仅当大户成本 FDV `< 当前含税估算 FDV` 时计入低于当前估值。
+- [x] 大户榜单保留原始数据，但成本位计算默认排除疑似团队买入；命中地址在榜单中显示 `疑似团队` 标记。
+- [x] `live` 阶段 overview 聚合按 `250ms` 轮询，打新成本位跟随大户榜单入库和含税 FDV 一起刷新。
+- [x] 本地构建并重启 writer 验证，不影响当前云端生产服务。
+
+## Phase 45：SignalHub 身份防错与发射模式识别
+
+- [x] 线上 TDS 从已拒绝的 Virtuals 项目 `72336` 修正为当前有效项目 `72562`，主库已保留修正前备份。
+- [x] `SignalHub-main` upcoming feed 排除 `REJECTED / CANCELED / ARCHIVED / INACTIVE` 等终态项目，避免旧项目仅因未来 `launch_time` 继续混入候选列表。
+- [x] 主项目消费 SignalHub 时优先按 `signalhub_project_id` 精确匹配；同名兜底只允许用于尚未绑定 SignalHub ID 的手工项目。
+- [x] 前端 SignalHub 页面同步收紧同名兜底，避免同名旧项目把新项目误判为已关注。
+- [x] market 接口返回 `launchMode / launchModeLabel / isRobotics / isProject60days / virtualsStatus` 等字段；项目详情在含税估算 FDV 卡片展示 `Robotic Launch / Unicorn Launch` 徽标。
+- [x] 修正 TDS 税率窗口误判：`BONDING_V5 + antiSniperTaxType=1` 必须按 `60s` 秒级衰减处理，即使 `isProject60days=true`；`antiSniperTaxType=2` 才按 `98m` 分钟级衰减处理。
+- [x] 将大户榜单 `成本 FDV` 文案修正为 `含税成本 FDV`，明确它是用实际总支出 V / 扣税后到手 token 反推的回本 FDV，不是当前市值。
+- [x] SignalHub `/bot/feed/upcoming` 透出 `launchInfo / antiSniperTaxType / isProject60days / isRobotics / launchMode` 等官网原始税率配置，主项目归一化消费这些字段；SignalHub 页面展示 Launch Type 与 Anti-sniper 标签。
+- [ ] 下一次真实发射前，在 SignalHub 页面确认同名项目不会被错误复用；如 Virtuals API 已返回 `REJECTED`，候选列表应不再显示该项目。
+
+## Phase 46：ISC 原生发射回放测试
+
+- [x] 新增 `scripts/ops/native_launch_replay.py`，用于本地/服务器临时库原生回放发射窗口。
+- [x] replay 默认优先使用 `ANKR_BASE_HTTP_RPC_URL`，避免误走 Chainstack 非 archive 套餐。
+- [x] 2026-04-30 在服务器用 ANKR 跑完 ISC 前 `10` 分钟 `5x` replay：`89` 笔 tx、`74` 条事件、`115` 个采样点。
+- [x] 验证 `含税估算 FDV` 公式误差为 `0`，历史 `eth_call(getReserves)` 没有降级。
+- [x] 验证 `打新成本位` 会随原生事件入库变化，并默认排除 ISC 榜一疑似团队低成本买入。
+- [x] 结果记录见 `docs/ISC-native-replay-test-2026-04-30.md`。
+
+## Phase 47：生产同步安全加固
+
+- [x] 新增 `scripts/ops/deploy_production_safe.sh`：生产同步只走白名单文件，默认 `--dry-run`，显式 `--apply` 才会推送。
+- [x] 部署脚本排除 `.venv / node_modules / data / secrets / config.json / SignalHub-main/.env / SignalHub-main/signalhub.db`，并使用 `--no-owner --no-group`，避免把 macOS 属主同步到 Linux。
+- [x] 文档记录误同步恢复顺序：停服务、备份现场、恢复服务器 DB 备份、删 WAL/SHM、重建 venv、恢复生产 config、修复属主、重启健康检查。

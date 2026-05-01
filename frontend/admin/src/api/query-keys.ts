@@ -26,6 +26,7 @@ export const queryKeys = {
   tax: (project: string) => ["project-tax", project] as const,
   runtimePause: ["runtime-pause"] as const,
   dbBatch: ["runtime-db-batch"] as const,
+  replayStatus: ["replay-status"] as const,
   projectScheduler: ["project-scheduler-status"] as const,
   overviewActive: (project: string) => ["overview-active", project] as const,
   adminProjectOverview: (projectId: number) => ["admin-project-overview", projectId] as const,

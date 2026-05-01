@@ -27,6 +27,7 @@ import type {
   ProjectMarketResponse,
   ProjectSchedulerStatusResponse,
   ProjectUnlockResponse,
+  ReplayStatusResponse,
   ProjectTaxResponse,
   RuntimePauseResponse,
   ScanJobResponse,
@@ -70,6 +71,18 @@ export const dashboardApi = {
       return requestJson<{ ok: boolean }>("/api/auth/logout", {
         method: "POST",
         body: {},
+      });
+    },
+  },
+
+  replay: {
+    getStatus() {
+      return requestJson<ReplayStatusResponse>("/api/replay/status");
+    },
+    control(action: "start" | "pause" | "resume" | "speed" | "reset", speed?: number) {
+      return requestJson<ReplayStatusResponse>(`/api/replay/${action}`, {
+        method: "POST",
+        body: speed === undefined ? {} : { speed },
       });
     },
   },

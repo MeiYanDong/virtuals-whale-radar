@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Literal
@@ -627,6 +628,8 @@ def _decorate_project(project: dict[str, Any]) -> dict[str, Any]:
 def _bot_project(project: dict[str, Any]) -> dict[str, Any]:
     launch_time = project.get("launch_time")
     score_value = _coerce_score(project.get("project_score"))
+    virtuals_raw = _project_latest_raw(project)
+    launch_info = virtuals_raw.get("launchInfo") if isinstance(virtuals_raw.get("launchInfo"), dict) else {}
     return {
         "project_id": project["project_id"],
         "display_title": _display_title(project),
@@ -653,7 +656,30 @@ def _bot_project(project: dict[str, Any]) -> dict[str, Any]:
         "score_grade": _score_grade(score_value),
         "risk_level": _score_risk(score_value, project.get("risk_level")),
         "watchlist": bool(project.get("watchlist")),
+        "virtuals_factory": virtuals_raw.get("factory"),
+        "virtuals_category": virtuals_raw.get("category"),
+        "virtuals_status": virtuals_raw.get("status"),
+        "virtuals_total_supply": virtuals_raw.get("totalSupply"),
+        "launch_info": launch_info,
+        "anti_sniper_tax_type": launch_info.get("antiSniperTaxType"),
+        "launch_mode_raw": launch_info.get("launchMode"),
+        "is_robotics": launch_info.get("isRobotics"),
+        "is_project_60days": launch_info.get("isProject60days"),
+        "airdrop_percent": launch_info.get("airdropPercent"),
     }
+
+
+def _project_latest_raw(project: dict[str, Any]) -> dict[str, Any]:
+    raw = project.get("latest_raw_data")
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _bot_internal_market_item(item: dict[str, Any]) -> dict[str, Any]:

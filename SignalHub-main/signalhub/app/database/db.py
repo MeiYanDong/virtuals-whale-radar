@@ -16,6 +16,10 @@ from signalhub.app.database.models import (
 )
 
 
+TERMINAL_UPCOMING_STATUSES = ("REJECTED", "CANCELED", "CANCELLED", "ARCHIVED", "INACTIVE")
+TERMINAL_UPCOMING_STATUS_SQL = ", ".join(f"'{status}'" for status in TERMINAL_UPCOMING_STATUSES)
+
+
 TABLES_SQL = """
 CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -485,11 +489,12 @@ class Database:
     def count_upcoming_launches(self) -> int:
         with self._connect() as connection:
             row = connection.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS count
                 FROM entities
                 WHERE launch_time IS NOT NULL
                   AND datetime(launch_time) > datetime('now')
+                  AND UPPER(COALESCE(status, '')) NOT IN ({TERMINAL_UPCOMING_STATUS_SQL})
                 """
             ).fetchone()
         return int(row["count"])
@@ -531,11 +536,12 @@ class Database:
         return [self._entity_row_to_dict(row) for row in rows]
 
     def list_upcoming_launches(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
-        query = """
+        query = f"""
             SELECT *
             FROM entities
             WHERE launch_time IS NOT NULL
               AND datetime(launch_time) > datetime('now')
+              AND UPPER(COALESCE(status, '')) NOT IN ({TERMINAL_UPCOMING_STATUS_SQL})
             ORDER BY launch_time ASC, id DESC
             LIMIT ? OFFSET ?
         """
@@ -554,6 +560,7 @@ class Database:
         clauses = [
             "launch_time IS NOT NULL",
             "datetime(launch_time) > datetime('now')",
+            f"UPPER(COALESCE(status, '')) NOT IN ({TERMINAL_UPCOMING_STATUS_SQL})",
         ]
         params: list[Any] = []
 
@@ -567,7 +574,15 @@ class Database:
         params.append(limit)
         where_sql = " AND ".join(clauses)
         query = f"""
-            SELECT *
+            SELECT
+                entities.*,
+                (
+                    SELECT raw_data
+                    FROM project_snapshots AS snapshots
+                    WHERE snapshots.project_id = entities.project_id
+                    ORDER BY snapshot_time DESC, id DESC
+                    LIMIT 1
+                ) AS latest_raw_data
             FROM entities
             WHERE {where_sql}
             ORDER BY launch_time ASC, id DESC
@@ -1077,7 +1092,7 @@ class Database:
         ]
 
     def _entity_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
-        return {
+        record = {
             "project_id": row["project_id"],
             "name": row["name"],
             "symbol": row["symbol"],
@@ -1102,6 +1117,9 @@ class Database:
             "risk_level": row["risk_level"],
             "watchlist": bool(row["watchlist"]),
         }
+        if "latest_raw_data" in row.keys() and row["latest_raw_data"]:
+            record["latest_raw_data"] = row["latest_raw_data"]
+        return record
 
     def _event_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
         return {

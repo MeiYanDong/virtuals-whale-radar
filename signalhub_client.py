@@ -4,6 +4,15 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 
+TERMINAL_SIGNALHUB_STATUSES = {
+    "REJECTED",
+    "CANCELED",
+    "CANCELLED",
+    "ARCHIVED",
+    "INACTIVE",
+}
+
+
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -30,6 +39,19 @@ def _coerce_int(value: Any) -> Optional[int]:
         return None
 
 
+def _coerce_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if value is None or value == "":
+        return None
+    text = _clean_text(value).lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
 def _pick_import_name(project: Dict[str, Any]) -> str:
     symbol = _clean_text(project.get("symbol"))
     if symbol:
@@ -41,6 +63,10 @@ def _pick_import_name(project: Dict[str, Any]) -> str:
     if display_title:
         return display_title
     return _clean_text(project.get("project_id"))
+
+
+def _is_terminal_status(value: Any) -> bool:
+    return _clean_text(value).upper() in TERMINAL_SIGNALHUB_STATUSES
 
 
 class SignalHubClient:
@@ -83,6 +109,8 @@ class SignalHubClient:
             _normalize_optional_address(project.get("pool_address"))
             or _normalize_optional_address(project.get("internal_market_address"))
         )
+        launch_info = project.get("launch_info")
+        launch_info = launch_info if isinstance(launch_info, dict) else {}
         item = {
             "projectId": _clean_text(project.get("project_id")),
             "importName": _pick_import_name(project),
@@ -105,6 +133,20 @@ class SignalHubClient:
             "watchlist": bool(project.get("watchlist")),
             "links": project.get("links") or [],
             "liquidityPool": liquidity_pool,
+            "virtualsFactory": _clean_text(project.get("virtuals_factory")) or None,
+            "virtualsCategory": _clean_text(project.get("virtuals_category")) or None,
+            "virtualsStatus": _clean_text(project.get("virtuals_status")) or None,
+            "virtualsTotalSupply": _coerce_int(project.get("virtuals_total_supply")),
+            "launchInfo": launch_info,
+            "antiSniperTaxType": _coerce_int(
+                project.get("anti_sniper_tax_type", launch_info.get("antiSniperTaxType"))
+            ),
+            "launchModeRaw": project.get("launch_mode_raw", launch_info.get("launchMode")),
+            "isRobotics": _coerce_bool(project.get("is_robotics", launch_info.get("isRobotics"))),
+            "isProject60days": _coerce_bool(
+                project.get("is_project_60days", launch_info.get("isProject60days"))
+            ),
+            "airdropPercent": _coerce_int(project.get("airdrop_percent", launch_info.get("airdropPercent"))),
             "treasuryAddress": None,
             "analysisError": None,
             "syncReady": bool(liquidity_pool),
@@ -141,7 +183,11 @@ class SignalHubClient:
             },
         )
         projects = payload.get("projects") or []
-        items = [self._normalize_project(project) for project in projects]
+        items = [
+            item
+            for item in (self._normalize_project(project) for project in projects)
+            if not _is_terminal_status(item.get("status"))
+        ]
         semaphore = asyncio.Semaphore(self.analysis_concurrency)
 
         async def enrich(item: Dict[str, Any]) -> Dict[str, Any]:
