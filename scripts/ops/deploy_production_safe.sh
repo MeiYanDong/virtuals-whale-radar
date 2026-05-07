@@ -36,6 +36,7 @@ FILES=(
   docs/todo.md
   docs/rpc-provider-benchmark-2026-04-29.md
   docs/ISC-native-replay-test-2026-04-30.md
+  docs/ISC-chainstack-native-replay-test-2026-05-07.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/deploy_production_safe.sh

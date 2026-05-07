@@ -2027,3 +2027,19 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - 线上页面 `https://virtuals.club/admin/projects/12?project=ISC` 返回 `HTTP/2 200`，加载前端资源 `index-DC4selLQ.js`。
   - ISC market 接口确认返回 `Robotic Launch`、`antiSniperTaxType=2`、`taxConfigKnown=true`、`taxConfigStatus=bonding_v5_98m`、`estimatedFdvWanUsdWithTax`。
   - ISC overview 接口确认返回 `whaleBoard=20`、`trackedWallets=5`、`minutes=75`，榜单项包含成本位计算所需字段。
+
+## 36. Chainstack-first 模拟真实回放验收（2026-05-07）
+
+- 生产运行态已按用户要求切为 `Chainstack -> Ankr -> Alchemy -> Base public -> PublicNode`。
+- Chainstack Base mainnet HTTPS/WSS endpoint 由服务器 `/etc/virtuals-whale-radar/rpc.env` 提供；endpoint token 不写入 Git 或文档。
+- 2026-05-07 在服务器隔离库中跑完 ISC 前 `10` 分钟 `5x` 原生 replay：
+  - Chainstack replay：`89` 笔 tx、`74` 条 parsed events、`74` 条 inserted events、`112` 个采样点，`logErrors=[]`，historical `eth_call(getReserves)` 支持正常。
+  - ANKR 对照 replay：同一当前代码下同样 `89` 笔 tx、`74` 条 parsed/inserted events、`116` 个采样点，`logErrors=[]`。
+  - 两次 replay 的 V-native 结果基本一致：最终 `tokenPriceV`、最终含税 FDV(V)、最终榜单成本 FDV(V) 均无实质差异。
+  - 两次 replay 的 USD 数值不同，是因为 replay 使用启动时当前 `VIRTUAL/USD` 折算，Chainstack run 与 ANKR run 启动时的 `VIRTUAL/USD` 不同；这不是 RPC 历史数据或成本位逻辑不一致。
+- replay 只模拟时间与数据库，不写生产 DB；验证的是生产核心链路的近似真实回放能力，不等同于下一次真实 live 发射窗口的最终验收。
+- 仍需在下一次真实发射中观察：
+  - Chainstack WSS 是否持续稳定；
+  - 完整 live window 是否触发 Chainstack plan 限制；
+  - 前端登录态页面是否按 `250ms` 刷新显示 `含税估算 FDV` 与 `打新成本位`；
+  - 如出现限制或异常，按当前 fallback 顺序自动回退 Ankr。

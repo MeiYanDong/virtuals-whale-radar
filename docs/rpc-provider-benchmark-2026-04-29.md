@@ -6,8 +6,10 @@
 
 1. 当前生产顺序：`Chainstack -> Ankr -> Alchemy -> Base official -> PublicNode`
 2. Chainstack HTTPS 与 WSS 已在服务器侧通过 `eth_blockNumber` smoke test。
-3. 该变更是运行态优先级更新，不改变下方 2026-04-29 Ankr 复测数据本身。
-4. 下一次真实发射窗口仍需观察 Chainstack 在完整 `eth_getLogs / receipt / historical block` 路径下是否稳定；若触发 plan 限制，回退 Ankr。
+3. 2026-05-07 已在服务器隔离库中跑完 ISC 前 `10` 分钟 `5x` 原生 replay：Chainstack 完成 `eth_getLogs / receipt / historical block timestamp / historical getReserves` 路径，`89` 笔 tx、`74` 条事件、`112` 个采样点，`logErrors=[]`。
+4. 同一当前代码用 ANKR 复跑对照后，V-native 口径下 Chainstack 与 ANKR 的最终 `tokenPriceV / 含税 FDV / 榜单成本` 基本一致；USD 差异来自 replay 启动时读取的当前 `VIRTUAL/USD` 不同。
+5. 该变更是运行态优先级更新，不改变下方 2026-04-29 Ankr 复测数据本身。
+6. 下一次真实发射窗口仍需观察 Chainstack 在实时 WSS、完整窗口 logs、receipt 和 frontend 展示下是否稳定；若触发 plan 限制，回退 Ankr。
 
 2026-04-29 Ankr 充值复测后，当前生产推荐已经从“公共 logs + Chainstack receipt”升级为：
 

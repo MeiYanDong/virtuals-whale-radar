@@ -908,4 +908,7 @@
 - [x] 生产 SignalHub drop-in `/etc/virtuals-whale-radar/signalhub-rpc.env` 切换为 Chainstack-first HTTPS/WSS。
 - [x] 重启 `vwr-signalhub / writer / realtime / backfill` 后健康检查通过：`/healthz=200`、`/health ok=true`、`runtimePaused=false`、`ws_connected=true`。
 - [x] 更新 `config.example.json`，后续部署默认按 Chainstack-first 占位配置。
+- [x] 2026-05-07 在服务器隔离库中用 Chainstack 跑完 ISC 前 `10` 分钟 `5x` 原生 replay：`89` 笔 tx、`74` 条事件、`112` 个采样点，`logErrors=[]`，historical `eth_call` 支持正常。
+- [x] 同一当前代码用 ANKR 复跑对照：`89` 笔 tx、`74` 条事件、`116` 个采样点；V-native 口径下 Chainstack 与 ANKR 的最终 `tokenPriceV / 含税 FDV / 榜单成本` 基本一致，USD 差异来自 replay 启动时的当前 `VIRTUAL/USD` 折算价。
+- [x] 结果记录见 `docs/ISC-chainstack-native-replay-test-2026-05-07.md`。
 - [ ] 下一次真实发射窗口观察 Chainstack-first 在完整 logs / receipt / historical block 路径下的稳定性；若触发 plan 限制，自动回退 Ankr。
