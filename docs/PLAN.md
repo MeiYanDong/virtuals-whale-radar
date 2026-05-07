@@ -2181,3 +2181,4 @@ Phase 052 执行结果：
   - 不写数据库。
   - 不接热钱包。
   - 不发送真实交易。
+- 同步验证时发现并修复 `redact_rpc_url()` 对 Chainstack 单段路径 endpoint 的打码缺口，避免 `/health` 暴露完整 RPC token。

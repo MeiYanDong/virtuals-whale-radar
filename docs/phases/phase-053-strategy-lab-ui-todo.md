@@ -33,6 +33,7 @@
 
 - [x] `python3 -m py_compile virtuals_bot.py`。
 - [x] `npm run build`。
+- [x] 修复 Chainstack 单段路径 endpoint 在 `/health` 中未打码的问题。
 - [ ] 生产同步后验证 `/api/admin/strategy-lab/report`。
 - [ ] 生产同步后验证 `/admin/strategy-lab` 页面加载。
 

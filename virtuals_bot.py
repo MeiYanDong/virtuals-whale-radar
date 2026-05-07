@@ -168,7 +168,9 @@ def redact_rpc_url(url: str) -> str:
     if not parsed.scheme or not parsed.netloc:
         return raw
     path_parts = [part for part in parsed.path.split("/") if part]
-    if len(path_parts) <= 1:
+    if len(path_parts) == 1 and len(path_parts[0]) >= 16:
+        redacted_path = "/***"
+    elif len(path_parts) <= 1:
         redacted_path = parsed.path
     else:
         redacted_path = "/" + "/".join([*path_parts[:-1], "***"])

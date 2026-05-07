@@ -972,4 +972,5 @@
 - [x] 新增 `StrategyLabPage`，展示候选策略、拒绝项、稳定区、变量贡献和失败样本。
 - [x] 本地 `python3 -m py_compile virtuals_bot.py` 通过。
 - [x] 本地 `npm run build` 通过。
+- [x] 修复 Chainstack 单段路径 endpoint 在 `/health` 中未打码的问题。
 - [ ] 生产同步后验证 API 与页面。
