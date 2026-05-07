@@ -293,6 +293,10 @@ async def run_replay(args: argparse.Namespace, http_url: str) -> dict[str, Any]:
         with contextlib.redirect_stdout(stdout):
             summary = await native_launch_replay.run(replay_args)
     final = summary.get("finalSample") or {}
+    samples_path = summary.get("samplesPath")
+    summary_path = summary.get("summaryPath")
+    if not summary_path and isinstance(samples_path, str) and samples_path.endswith("-samples.jsonl"):
+        summary_path = samples_path[: -len("-samples.jsonl")] + "-summary.json"
     checks = [
         {"name": "tx_count_positive", "ok": int(summary.get("txCount") or 0) > 0},
         {
@@ -321,8 +325,8 @@ async def run_replay(args: argparse.Namespace, http_url: str) -> dict[str, Any]:
             "historicalEthCallFallbackReason": summary.get("historicalEthCallFallbackReason"),
             "logSplits": summary.get("logSplits"),
             "logErrors": summary.get("logErrors"),
-            "summaryPath": summary.get("summaryPath"),
-            "samplesPath": summary.get("samplesPath"),
+            "summaryPath": summary_path,
+            "samplesPath": samples_path,
             "sqlitePath": summary.get("sqlitePath"),
             "finalSample": final,
         },

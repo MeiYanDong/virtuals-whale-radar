@@ -919,4 +919,5 @@
 - [x] 新增 `docs/chainstack-test-runbook.md`，把当前测试能力整合成 Chainstack-only 的可复用执行顺序。
 - [x] 2026-05-07 按 runbook Step 1/2 复测：Chainstack HTTP `eth_blockNumber`、historical block、50 blocks logs、recent receipt、WSS `eth_blockNumber` 均通过；生产四个核心服务 active，`/health ok=true`。
 - [x] 新增 `scripts/ops/run_chainstack_test_suite.py`，把 Chainstack env check、RPC smoke、生产健康检查、隔离 replay、项目窗口审计整合为一个只读 JSON 报告入口。
-- [ ] 在服务器执行 orchestrator 的完整 `smoke + health + 10m replay + ISC audit`，并把输出报告路径记录到本文档。
+- [x] 2026-05-07 在服务器执行完整 orchestrator：`smoke + health + ISC 10m replay + ISC audit`，结果 `green`，报告路径 `data/audits/chainstack-suite-20260507-full.json`。
+- [x] orchestrator 结果摘要：RPC smoke 全通过；生产四服务 active；replay `89 tx / 74 parsed / 74 inserted / 113 samples`；ISC audit `candidateTxCount=602`、`repairCandidateTxCount=0`、`unresolvedDeadLetterCandidateTxCount=0`。
