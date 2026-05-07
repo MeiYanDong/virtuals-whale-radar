@@ -40,6 +40,7 @@ FILES=(
   docs/chainstack-test-runbook.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
+  scripts/ops/run_chainstack_test_suite.py
   scripts/ops/deploy_production_safe.sh
 )
 

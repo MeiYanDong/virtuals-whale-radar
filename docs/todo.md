@@ -918,4 +918,5 @@
 - [x] 整理当前已有测试入口：前端构建/lint、生产健康检查、Chainstack RPC smoke、原生 replay、前端可视化 replay、窗口完整性审计、缺口 tx 修复、安全同步 dry-run。
 - [x] 新增 `docs/chainstack-test-runbook.md`，把当前测试能力整合成 Chainstack-only 的可复用执行顺序。
 - [x] 2026-05-07 按 runbook Step 1/2 复测：Chainstack HTTP `eth_blockNumber`、historical block、50 blocks logs、recent receipt、WSS `eth_blockNumber` 均通过；生产四个核心服务 active，`/health ok=true`。
-- [ ] 将 runbook 中的 Step 1/2/3/6 后续封装为一个只读 orchestrator，统一输出 JSON 测试报告。
+- [x] 新增 `scripts/ops/run_chainstack_test_suite.py`，把 Chainstack env check、RPC smoke、生产健康检查、隔离 replay、项目窗口审计整合为一个只读 JSON 报告入口。
+- [ ] 在服务器执行 orchestrator 的完整 `smoke + health + 10m replay + ISC audit`，并把输出报告路径记录到本文档。

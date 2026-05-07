@@ -415,4 +415,51 @@ scripts/ops/deploy_production_safe.sh --apply
 5. `deploy_production_safe.sh --dry-run` 覆盖生产同步边界。
 6. 生产 `/healthz` / `/health` / `systemctl` 覆盖运行态。
 
-下一步最值得补的不是重写测试框架，而是一个小的 orchestrator 脚本，把 Step 1、Step 2、Step 3、Step 6 的命令串起来并输出统一 JSON 报告。当前先用本文档手动依次执行，避免在测试流程尚未稳定前引入新的维护面。
+## 6. 一键只读测试入口
+
+已新增只读 orchestrator：
+
+```bash
+cd /opt/virtuals-whale-radar
+./.venv/bin/python scripts/ops/run_chainstack_test_suite.py \
+  --config config.json \
+  --audit-project ISC
+```
+
+默认执行：
+
+- Step 0：Chainstack 环境变量存在性检查
+- Step 1：Chainstack RPC smoke
+- Step 2：生产服务健康检查
+- Step 3：ISC `10` 分钟隔离库原生 replay
+- Step 6：指定项目的只读完整性审计；只有传入 `--audit-project` 才执行
+
+默认输出到：
+
+```text
+data/audits/chainstack-suite-<UTC_TIME>.json
+```
+
+只跑轻量检查，不跑 replay：
+
+```bash
+./.venv/bin/python scripts/ops/run_chainstack_test_suite.py --skip-replay
+```
+
+只跑 smoke + health：
+
+```bash
+./.venv/bin/python scripts/ops/run_chainstack_test_suite.py --skip-replay --skip-audit
+```
+
+通过标准：
+
+- `status=green`：所有实际执行的步骤通过。
+- `status=observed`：执行项通过，但有显式跳过项。
+- `status=red`：至少一个实际执行步骤失败。
+
+注意：
+
+- orchestrator 直接调用现有 Python 模块，不通过命令行参数传递完整 RPC endpoint，避免 endpoint token 出现在进程参数中。
+- replay 写入隔离 SQLite，不写生产 DB。
+- audit 默认只读生产 DB；只有 `replay_project_txs.py` 修复步骤会写生产 DB，该步骤不在 orchestrator 默认执行范围内。
