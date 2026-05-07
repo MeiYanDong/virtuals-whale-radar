@@ -39,6 +39,7 @@ FILES=(
   docs/ISC-chainstack-native-replay-test-2026-05-07.md
   docs/chainstack-test-runbook.md
   docs/chainstack-full-window-test-2026-05-07.md
+  docs/launch-strategy-backtest-2026-05-07.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/backtest_launch_strategy.py
