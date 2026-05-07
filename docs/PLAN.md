@@ -78,7 +78,7 @@
 - 用户通知支持 `未读 / 已读 / 全部已读`，并在顶栏显示未读提醒。
 - 当前不单独设置充值申请流程；用户微信付款后，管理员直接在 `Users` 页面手动补积分。
 - `billing_requests` / 付款凭证附件能力保留为备用后端能力，但不是当前产品主流程。
-- 链上 RPC 使用策略升级为：`实时采集 / 历史回扫 / SignalHub 识别` 分池使用；当前生产主路径为 `Ankr logs + Ankr receipt + Ankr block`，Base official / Alchemy / Chainstack current plan 只作为分工明确的备用路径。
+- 链上 RPC 使用策略升级为：`实时采集 / 历史回扫 / SignalHub 识别` 分池使用；2026-05-07 按用户要求切为 Chainstack 优先，当前生产顺序为 `Chainstack -> Ankr -> Alchemy -> Base public -> PublicNode`。
 - `Billing` 顶部固定展示邀请文案与注册链接：
   - 文案：`Virtuals 新用户使用邀请码注册，后续付费一律五折`
   - 链接：`https://app.virtuals.io/referral?code=LFfW5x`
@@ -1838,12 +1838,13 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   - 输出 `green / red / observed` 状态
 - 审计工具发现缺口时，会输出 `scripts/ops/replay_project_txs.py --mark-scanned` 修复命令。
 - 后台手动 scan range 的 tx 处理改为按 `RECEIPT_WORKERS*` 配置并发执行，避免后台补扫继续走逐笔慢路径。
-- RPC 当前推荐已收口为：
-  - 主路径：`Ankr logs + Ankr receipt + Ankr block`
+- RPC 当前生产顺序已在 2026-05-07 更新：
+  - 主路径：`Chainstack logs + Chainstack receipt + Chainstack block`
   - 默认并发：`16`
-  - Base official：logs 备用
+  - Ankr：第一后备
   - Alchemy 免费 key：小窗口 / 低并发备用
-  - Chainstack 当前 plan：不作为 Base 历史 logs / block 主路径
+  - Base official / PublicNode：公共兜底
+  - 注意：该切换是运行态优先级更新；仍需下一次真实窗口观察 Chainstack 在完整历史 logs / historical block 场景下是否稳定。
 - 已完成一次生产级破坏性验证：
   - 先用 `sqlite3 .backup` 备份生产主库和 bus 库
   - 停止 `writer / realtime / backfill`
@@ -2017,8 +2018,8 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - `SignalHub-main/signalhub.db`
 - 如果误同步运行态文件，恢复顺序固定为：停止服务、备份现场、从服务器本地 DB 备份恢复主库、删除 WAL/SHM、重建 Linux venv、恢复生产 config 备份、修复属主、重启服务和健康检查。
 - 2026-05-01 生产代码与运维修复先收口到 commit `2995c95`，最终 live commit 以后续文档同步完成后的 `/opt/virtuals-whale-radar/DEPLOYED_COMMIT` 为准：
-  - 主程序 `config.json` 只保留环境变量占位，实际 RPC 由 `/etc/virtuals-whale-radar/rpc.env` 提供；当前 backfill 顺序为 `Ankr -> Alchemy -> Base public -> PublicNode`。
-  - `vwr-signalhub.service` 通过 `/etc/virtuals-whale-radar/signalhub-rpc.env` drop-in 使用 Ankr 优先的 HTTPS RPC；该文件是服务器运行态 secret，不进入 Git。
+  - 主程序 `config.json` 只保留环境变量占位，实际 RPC 由 `/etc/virtuals-whale-radar/rpc.env` 提供；2026-05-07 当前 backfill 顺序为 `Chainstack -> Ankr -> Alchemy -> Base public -> PublicNode`。
+  - `vwr-signalhub.service` 通过 `/etc/virtuals-whale-radar/signalhub-rpc.env` drop-in 使用 Chainstack 优先的 HTTPS/WSS RPC；该文件是服务器运行态 secret，不进入 Git。
   - runtime backup 不再备份应用目录下的 SSL 私钥目录；证书私钥属于服务器级 secret，不通过放宽权限解决备份问题。
 - 2026-05-01 生产最终验收：
   - `SignalHub /healthz = 200`，主程序 `/health ok=true`，`runtimePaused=false`。

@@ -898,3 +898,14 @@
 - [x] ISC 生产 market 接口已返回关键字段：`Robotic Launch`、`antiSniperTaxType=2`、`taxConfigKnown=true`、`taxConfigStatus=bonding_v5_98m`、`estimatedFdvWanUsdWithTax`、`taxEvidenceStatus=chain_stale`。
 - [x] ISC 生产 overview 接口已返回打新成本位所需结构：`whaleBoard=20`、`trackedWallets=5`、`minutes=75`，且榜单项包含 `breakevenFdvUsd / breakevenFdvV / isTeamCandidate / costExcluded`。
 - [ ] 下次发版前补一个可复用的 authenticated frontend smoke test，自动检查登录后页面 console error、关键指标文案和 replay 控制开关。
+
+## Phase 49：生产 RPC 切回 Chainstack 优先（2026-05-07）
+
+- [x] 使用 Chainstack Platform API 找到当前 Base mainnet running 节点，并用 auth key 构造 HTTPS/WSS endpoint；不把 endpoint token 写入 Git 或文档。
+- [x] 服务器侧验证 Chainstack HTTPS `eth_blockNumber` 与 WSS `eth_blockNumber` 均可用。
+- [x] 生产 `/etc/virtuals-whale-radar/rpc.env` 新增 `CHAINSTACK_BASE_HTTP_RPC_URL / CHAINSTACK_BASE_WS_RPC_URL`，并保留 Ankr / Alchemy 作为后备。
+- [x] 生产主程序 `config.json` 切换为 Chainstack-first：`Chainstack -> Ankr -> Alchemy -> Base public -> PublicNode`。
+- [x] 生产 SignalHub drop-in `/etc/virtuals-whale-radar/signalhub-rpc.env` 切换为 Chainstack-first HTTPS/WSS。
+- [x] 重启 `vwr-signalhub / writer / realtime / backfill` 后健康检查通过：`/healthz=200`、`/health ok=true`、`runtimePaused=false`、`ws_connected=true`。
+- [x] 更新 `config.example.json`，后续部署默认按 Chainstack-first 占位配置。
+- [ ] 下一次真实发射窗口观察 Chainstack-first 在完整 logs / receipt / historical block 路径下的稳定性；若触发 plan 限制，自动回退 Ankr。

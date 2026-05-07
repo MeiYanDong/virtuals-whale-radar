@@ -19,6 +19,7 @@ if [[ "$MODE" == "--dry-run" ]]; then
 fi
 
 FILES=(
+  config.example.json
   virtuals_bot.py
   signalhub_client.py
   SignalHub-main/signalhub/app/api/routes.py
@@ -33,6 +34,7 @@ FILES=(
   frontend/admin/dist/
   docs/PLAN.md
   docs/todo.md
+  docs/rpc-provider-benchmark-2026-04-29.md
   docs/ISC-native-replay-test-2026-04-30.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
