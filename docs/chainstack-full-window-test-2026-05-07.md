@@ -61,11 +61,11 @@
 
 The fault-injection checks were run with temporary environment overrides only. They did not modify `/etc/virtuals-whale-radar/*.env`, production services, or the production DB.
 
-- Missing env report: `data/audits/chainstack-suite-20260507-fault-missing-env.json`
-- Bad RPC report: `data/audits/chainstack-suite-20260507-fault-bad-rpc.json`
-- Missing env result: expected `status=red`
+- Missing env report: `data/audits/chainstack-suite-20260507-fault-missing-env-fixed.json`
+- Bad RPC report: `data/audits/chainstack-suite-20260507-fault-bad-rpc-after-sync.json`
+- Missing env result: expected `status=red`; report includes both `CHAINSTACK_BASE_HTTP_RPC_URL` and `CHAINSTACK_BASE_WS_RPC_URL`
 - Bad endpoint result: expected `status=red`; HTTP `eth_blockNumber` and WSS `eth_blockNumber` both failed as intended
-- Follow-up fix: `run_chainstack_test_suite.py` now reports both missing HTTP and WSS env names when both are absent
+- Follow-up fix verified on server: `run_chainstack_test_suite.py` reports both missing HTTP and WSS env names when both are absent
 
 ## Production Health After Tests
 

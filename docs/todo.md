@@ -926,3 +926,4 @@
 - [x] 2026-05-07 执行 Chainstack 故障注入：missing env 与 bad HTTP/WSS endpoint 均按预期 `status=red`；测试只使用临时环境变量，不改线上配置。
 - [x] 修复 `run_chainstack_test_suite.py` 的 missing env 报告：HTTP 与 WSS 同时缺失时不再只显示最后一个缺失项。
 - [x] 新增 `docs/chainstack-full-window-test-2026-05-07.md` 记录 TDS/SR 完整窗口、故障注入与测试后生产健康结果。
+- [x] 同步到服务器后复验故障注入修复：`chainstack-suite-20260507-fault-missing-env-fixed.json` 同时列出 HTTP/WSS 缺失，`chainstack-suite-20260507-fault-bad-rpc-after-sync.json` 按预期 `red`。
