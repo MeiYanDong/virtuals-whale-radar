@@ -8315,6 +8315,100 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    def latest_strategy_test_report_path(self) -> Optional[Path]:
+        report_dir = self.base_dir / "data" / "backtests"
+        if not report_dir.is_dir():
+            return None
+        preferred = report_dir / "strategy-test-matrix-20260507.json"
+        if preferred.is_file():
+            return preferred
+        candidates = sorted(
+            report_dir.glob("strategy-test-matrix-*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        return candidates[0] if candidates else None
+
+    def build_strategy_lab_report_payload(self) -> Dict[str, Any]:
+        report_path = self.latest_strategy_test_report_path()
+        if report_path is None:
+            return {
+                "ok": False,
+                "available": False,
+                "message": "strategy test matrix report not found",
+                "sourcePath": None,
+                "markdownPath": None,
+                "generatedAt": None,
+                "datasetStats": {},
+                "assumptions": {},
+                "ruleCount": 0,
+                "scenarioCount": 0,
+                "resultCount": 0,
+                "suiteSummary": {},
+                "topByFinalReturn": [],
+                "topByRiskAdjustedScore": [],
+                "stableZone": [],
+                "failureCases": [],
+                "variableContribution": {},
+                "overfitWarnings": [],
+                "dryRunCandidates": [],
+                "rejectList": [],
+            }
+        with report_path.open("r", encoding="utf-8") as fh:
+            raw_report = json.load(fh)
+
+        def limit_items(key: str, limit: int = 40) -> List[Dict[str, Any]]:
+            items = raw_report.get(key)
+            if not isinstance(items, list):
+                return []
+            return [item for item in items[:limit] if isinstance(item, dict)]
+
+        markdown_path = self.base_dir / "docs" / "phases" / "phase-052-strategy-test-matrix-report.md"
+        return {
+            "ok": True,
+            "available": True,
+            "message": "strategy test matrix report loaded",
+            "sourcePath": str(report_path.relative_to(self.base_dir)),
+            "markdownPath": str(markdown_path.relative_to(self.base_dir)) if markdown_path.is_file() else None,
+            "generatedAt": int(report_path.stat().st_mtime),
+            "datasetStats": raw_report.get("datasetStats") if isinstance(raw_report.get("datasetStats"), dict) else {},
+            "assumptions": raw_report.get("assumptions") if isinstance(raw_report.get("assumptions"), dict) else {},
+            "ruleCount": int(raw_report.get("ruleCount") or 0),
+            "scenarioCount": int(raw_report.get("scenarioCount") or 0),
+            "resultCount": int(raw_report.get("resultCount") or 0),
+            "suiteSummary": raw_report.get("suiteSummary") if isinstance(raw_report.get("suiteSummary"), dict) else {},
+            "topByFinalReturn": limit_items("topByFinalReturn"),
+            "topByRiskAdjustedScore": limit_items("topByRiskAdjustedScore"),
+            "stableZone": limit_items("stableZone"),
+            "failureCases": limit_items("failureCases"),
+            "variableContribution": (
+                raw_report.get("variableContribution")
+                if isinstance(raw_report.get("variableContribution"), dict)
+                else {}
+            ),
+            "overfitWarnings": (
+                raw_report.get("overfitWarnings")
+                if isinstance(raw_report.get("overfitWarnings"), list)
+                else []
+            ),
+            "dryRunCandidates": limit_items("dryRunCandidates"),
+            "rejectList": limit_items("rejectList"),
+        }
+
+    async def strategy_lab_report_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        try:
+            return web.json_response(self.build_strategy_lab_report_payload())
+        except Exception as e:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "available": False,
+                    "message": f"failed to load strategy report: {e}",
+                },
+                status=500,
+            )
+
     async def auth_me_handler(self, request: web.Request) -> web.Response:
         user = self.get_request_user(request)
         if not user:
@@ -10109,6 +10203,7 @@ class VirtualsBot:
         app.router.add_get("/api/admin/projects/{project_id}/market", admin_only(self.admin_project_market_handler))
         app.router.add_post("/api/admin/projects", admin_only(self.managed_project_upsert_handler))
         app.router.add_delete("/api/admin/projects/{project_id}", admin_only(self.managed_project_delete_handler))
+        app.router.add_get("/api/admin/strategy-lab/report", admin_only(self.strategy_lab_report_handler))
         app.router.add_get("/api/admin/signalhub", admin_only(self.signalhub_upcoming_handler))
         app.router.add_get("/api/admin/health", admin_only(self.health_handler))
         app.router.add_get("/api/admin/launch-configs", admin_only(self.launch_configs_handler))

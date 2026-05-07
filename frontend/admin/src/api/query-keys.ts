@@ -27,6 +27,7 @@ export const queryKeys = {
   runtimePause: ["runtime-pause"] as const,
   dbBatch: ["runtime-db-batch"] as const,
   replayStatus: ["replay-status"] as const,
+  strategyLabReport: ["strategy-lab-report"] as const,
   projectScheduler: ["project-scheduler-status"] as const,
   overviewActive: (project: string) => ["overview-active", project] as const,
   adminProjectOverview: (projectId: number) => ["admin-project-overview", projectId] as const,

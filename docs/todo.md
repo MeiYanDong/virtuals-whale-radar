@@ -959,3 +959,17 @@
 - [x] 报告规模：`737` 条规则、`34` 类场景、`4,136` 个结果。
 - [x] 报告明确把 `tax-only / no-FDV-cost / no-board-spent / low-sample first-buy` 归入对照或拒绝项，不作为直接交易候选。
 - [ ] 下一步实现 realtime dry-run signal emitter，只记录 would-buy，不接热钱包。
+
+## Phase 53：Strategy Lab 前端只读页
+
+- [x] 新增 Phase 053 子 plan：`docs/phases/phase-053-strategy-lab-ui-plan.md`。
+- [x] 新增 Phase 053 子 todo：`docs/phases/phase-053-strategy-lab-ui-todo.md`。
+- [x] 新增管理员 API：`/api/admin/strategy-lab/report`。
+- [x] API 读取策略矩阵 JSON 报告，并只返回摘要字段。
+- [x] 新增前端类型、query key 与 `dashboardApi.admin.getStrategyLabReport()`。
+- [x] 新增 `/admin/strategy-lab` 路由。
+- [x] 侧边栏新增 `Strategy Lab`。
+- [x] 新增 `StrategyLabPage`，展示候选策略、拒绝项、稳定区、变量贡献和失败样本。
+- [x] 本地 `python3 -m py_compile virtuals_bot.py` 通过。
+- [x] 本地 `npm run build` 通过。
+- [ ] 生产同步后验证 API 与页面。

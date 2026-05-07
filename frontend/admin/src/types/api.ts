@@ -376,6 +376,80 @@ export interface ProjectSchedulerStatusResponse {
   items: ProjectSchedulerItem[];
 }
 
+export interface StrategyLabFirstBuy {
+  tax_rate?: string | null;
+  board_spent_v?: string | null;
+  signal_tax_fdv_wan_usd?: string | null;
+  entry_tax_fdv_wan_usd?: string | null;
+  board_cost_wan_usd?: string | null;
+  cost_rows?: number;
+  whale_rows?: number;
+  cost_position?: string;
+  v_cost_position?: string;
+}
+
+export interface StrategyLabResultItem {
+  dataset: string;
+  suite: string;
+  ruleName: string;
+  scenarioName: string;
+  buyCount: number;
+  totalSpentV: string;
+  finalPnlPct: string;
+  score: string;
+  riskFlags: string[];
+  firstBuy?: StrategyLabFirstBuy | null;
+}
+
+export interface StrategyLabSuiteSummary {
+  count: number;
+  triggered: number;
+  positive: number;
+  positiveRate: number;
+  medianFinalPnlPct: number;
+  minFinalPnlPct: number;
+  maxFinalPnlPct: number;
+}
+
+export interface StrategyLabStableZoneItem {
+  suite: string;
+  triggered: number;
+  positiveRate: number;
+  medianFinalPnlPct: number;
+  minFinalPnlPct: number;
+  maxFinalPnlPct: number;
+}
+
+export interface StrategyLabVariableContributionItem {
+  finalPnlPct: string;
+  deltaVsBaselinePct: number;
+  buyCount: number;
+  riskFlags: string[];
+}
+
+export interface StrategyLabReportResponse {
+  ok: boolean;
+  available: boolean;
+  message: string;
+  sourcePath: string | null;
+  markdownPath?: string | null;
+  generatedAt?: number | null;
+  datasetStats: Record<string, Record<string, string | number | null>>;
+  assumptions: Record<string, unknown>;
+  ruleCount: number;
+  scenarioCount: number;
+  resultCount: number;
+  suiteSummary: Record<string, StrategyLabSuiteSummary>;
+  topByFinalReturn: StrategyLabResultItem[];
+  topByRiskAdjustedScore: StrategyLabResultItem[];
+  stableZone: StrategyLabStableZoneItem[];
+  failureCases: StrategyLabResultItem[];
+  variableContribution: Record<string, StrategyLabVariableContributionItem>;
+  overfitWarnings: string[];
+  dryRunCandidates: StrategyLabResultItem[];
+  rejectList: StrategyLabResultItem[];
+}
+
 export interface OverviewBoardItem {
   wallet: string;
   name: string;

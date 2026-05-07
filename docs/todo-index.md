@@ -9,6 +9,7 @@
 | --- | --- | --- | --- |
 | 051 | Done | `docs/todo.md#phase-5198-分钟税率项目自动买入策略离线回测` | 保留历史记录，不再继续追加细节。 |
 | 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 下一步基于候选策略做 realtime dry-run signal emitter，只记录 would-buy。 |
+| 053 | In Progress | `docs/phases/phase-053-strategy-lab-ui-todo.md` | 完成生产同步后验证 API 与前端页面。 |
 
 ## 2. 执行规则
 

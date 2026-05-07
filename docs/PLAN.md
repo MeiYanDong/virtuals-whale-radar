@@ -2163,3 +2163,21 @@ Phase 052 执行结果：
   - 可进入 dry-run 观察的候选：`100k tax<=92 fdv`、`70k/80k/90k tax<=95 fdv`、`50k tax<=95/94/93 fdv`。
   - 只能作为对照、不能直接交易的策略：`tax-only`、`no-FDV-cost`、`no-board-spent`、`low-sample first-buy`、高延迟/高滑点/税率异常场景。
 - 下一步仍不是接热钱包，而是实现 realtime dry-run signal emitter，持续记录 would-buy 与后续表现。
+
+## 40. Strategy Lab 前端只读页（2026-05-07）
+
+- 新增 Phase 053 子 plan：`docs/phases/phase-053-strategy-lab-ui-plan.md`。
+- 新增 Phase 053 子 todo：`docs/phases/phase-053-strategy-lab-ui-todo.md`。
+- 后端新增管理员只读 API：`/api/admin/strategy-lab/report`。
+  - 优先读取 `data/backtests/strategy-test-matrix-20260507.json`。
+  - 文件不存在时读取最新 `strategy-test-matrix-*.json`。
+  - 返回报告摘要，不返回完整 `results` 明细，避免浏览器加载大 JSON。
+- 前端新增管理员页面：`/admin/strategy-lab`。
+  - 侧边栏新增 `Strategy Lab`。
+  - 展示总览 KPI、数据集、Dry-run Candidates、Risk Adjusted Top、Stable Zone、Variable Contribution、Suite Summary、Reject List、Failure Cases 和 Overfit Warnings。
+- 当前边界：
+  - 页面只读。
+  - 不触发重跑。
+  - 不写数据库。
+  - 不接热钱包。
+  - 不发送真实交易。
