@@ -927,3 +927,14 @@
 - [x] 修复 `run_chainstack_test_suite.py` 的 missing env 报告：HTTP 与 WSS 同时缺失时不再只显示最后一个缺失项。
 - [x] 新增 `docs/chainstack-full-window-test-2026-05-07.md` 记录 TDS/SR 完整窗口、故障注入与测试后生产健康结果。
 - [x] 同步到服务器后复验故障注入修复：`chainstack-suite-20260507-fault-missing-env-fixed.json` 同时列出 HTTP/WSS 缺失，`chainstack-suite-20260507-fault-bad-rpc-after-sync.json` 按预期 `red`。
+
+## Phase 51：98 分钟税率项目自动买入策略离线回测
+
+- [x] 新增 `scripts/ops/backtest_launch_strategy.py`，从 replay `samples.jsonl` 只读回测发射窗口买入策略；不接真实交易，不写生产 DB。
+- [x] 在服务器用 SR 144-sample 完整窗口跑基础参数网格：`17,496` 个策略组合，`2,592` 个组合触发。
+- [x] 在服务器用 SR aggressive 参数网格测试允许 FDV 高于榜单成本的变体：绝对收益可提升，但资金效率明显下降。
+- [x] 用 TDS 完整窗口做非目标模式对照：在 `50,000 V+` 门槛下 `0` 触发。
+- [x] 用 ISC 早段 replay 做低门槛压力测试：`10,000 V / 20,000 V / 30,000 V / 40,000 V` 可触发，但早段 mark-to-market 强负；支持默认不把门槛降太低。
+- [x] 重新跑 SR 高采样完整窗口 replay：`753 tx / 602 parsed / 602 inserted / 1,034 samples`，`logErrors=[]`。
+- [x] 用 SR 高采样样本复测：用户基线策略 `boardSpentV>=100,000 / tax<=92 / FDV<=榜单成本 / 50V / 60s cooldown / 2 buys in 120s -> 600s` 触发 `2` 次，投入 `100V`，最终约 `+38.05V`。
+- [x] 记录离线回测结果到 `docs/launch-strategy-backtest-2026-05-07.md`。

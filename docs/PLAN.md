@@ -2066,3 +2066,24 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - SignalHub `/healthz status=ok`
   - 主程序 `/health ok=true`、`runtimePaused=false`、`queueSize=0`、`pendingTx=0`、`ws_connected=true`
 - 结论：当前已覆盖 `ISC 10m replay + ISC audit + TDS full-window + SR full-window + Chainstack fail-closed`。这显著降低真实发射风险，但仍不等同于下一次 live 窗口的绝对保证；下一次项目仍需观察 SignalHub 识别、WSS 持续连接与前端实时显示。
+
+## 38. 98 分钟税率项目自动买入策略回测（2026-05-07）
+
+- 已新增只读回测工具：`scripts/ops/backtest_launch_strategy.py`。
+- 已新增测试记录：`docs/launch-strategy-backtest-2026-05-07.md`。
+- 回测只读取 replay `samples.jsonl`，不接交易、不写生产 DB。
+- 已完成测试：
+  - SR 144-sample 基础网格：`17,496` 个策略，`2,592` 个触发。
+  - SR aggressive 网格：`25,272` 个策略，`14,904` 个触发。
+  - TDS 对照：`50,000 V+` 门槛下 `0` 触发。
+  - ISC 早段压力测试：低门槛会触发，但早段 mark-to-market 强负。
+  - SR 高采样 replay：`1,034` 个样本，`logErrors=[]`。
+- 用户基线策略在 SR 高采样窗口上的结果：
+  - `boardSpentV >= 100,000`
+  - `buyTaxRate <= 92`
+  - `estimatedFdvWanUsdWithTax <= boardCostWanUsd`
+  - 每次买入 `50 VIRTUAL`
+  - 普通冷却 `60s`
+  - `120s` 内连续 `2` 次买入后冷却 `600s`
+  - 结果：触发 `2` 次，投入 `100 VIRTUAL`，窗口结束约 `+38.05 VIRTUAL`
+- 当前建议：暂不启用真实自动买入；下一步先做 realtime dry-run signal emitter，只记录 would-buy，不发交易。默认策略继续使用 `100,000 V` 门槛，不采用 `50,000 V` 早入场，直到至少再收集一个 98 分钟/Robotic 项目样本。
