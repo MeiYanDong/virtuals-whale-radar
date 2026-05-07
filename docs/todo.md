@@ -940,3 +940,5 @@
 - [x] 记录离线回测结果到 `docs/launch-strategy-backtest-2026-05-07.md`。
 - [x] 补做 SR 专项梯度与场景压力测试：新增 `scripts/ops/sr_strategy_scenario_suite.py`，覆盖单参数梯度、二维组合梯度、延迟/采样/滑点/榜单偏差/税率偏差、500 次蒙特卡洛扰动和 9 类合成数据形态。
 - [x] 记录补测结果到 `docs/sr-strategy-scenario-suite-2026-05-07.md`；结论更新为：SR 单样本上 `50,000 V` 激进入场收益更高，但仍不能直接上线真实交易，必须先做 realtime dry-run signal emitter。
+- [x] 按控制变量/取消变量口径补跑 SR 消融测试：新增 `scripts/ops/sr_strategy_ablation_suite.py`，覆盖 `70k/80k/90k`、不限制榜单 V 只看税率 `95-90`、保留/取消 FDV 成本条件、取消单个变量、多变量组合。
+- [x] 记录消融结果到 `docs/sr-strategy-ablation-suite-2026-05-07.md`；关键发现：`70k/80k/90k + tax<=95 + fdv` 在 SR 上首买都落在 `98,430 V / tax 93`，收益约 `+42.11%`；`tax_only` 与 `tax+fdv` 是完全不同风险口径。

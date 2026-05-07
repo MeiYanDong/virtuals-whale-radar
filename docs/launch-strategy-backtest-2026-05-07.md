@@ -169,6 +169,35 @@ Key correction:
 - The stress suite is the stronger evidence base, but it still does not prove automatic buying is safe enough for live hot-wallet execution.
 - `50,000 V / tax<=98 / fdvDiscount=0.98` is worth dry-run observation because it performed best on SR, but it should not bypass the realtime would-buy logging stage.
 
+## SR Controlled Ablation Suite
+
+Follow-up report:
+
+```bash
+docs/sr-strategy-ablation-suite-2026-05-07.md
+```
+
+Added read-only script:
+
+```bash
+scripts/ops/sr_strategy_ablation_suite.py
+```
+
+This suite is the control-variable layer. It explicitly tests:
+
+- `70k / 80k / 90k` board-spent thresholds, not only `50k / 100k`;
+- tax-only triggers with no board-spent limit: `95 / 94 / 93 / 92 / 91 / 90`;
+- tax + FDV-cost triggers with no board-spent limit;
+- one-variable and cancel-one-variable cases;
+- spent x tax grids with and without the FDV-cost condition.
+
+Key SR findings:
+
+- `70k / 80k / 90k + tax<=95 + fdv` all first trigger at `boardSpentV=98,430.254`, `tax=93`, and end around `+42.1103%`.
+- `100k + tax<=95 + fdv` first triggers later at `boardSpentV=132,032.472`, `tax=92`, and ends around `+38.0501%`.
+- Tax-only without board-spent and without FDV cost buys up to the max project cap and is not comparable to FDV-gated rules.
+- Removing the FDV-cost condition materially changes exposure: `spent100k + tax92` buys `300V` and ends around `+12.441%`, while the full baseline buys `100V` and ends around `+38.0501%`.
+
 ## Current Recommendation
 
 Do not ship automatic buying yet.

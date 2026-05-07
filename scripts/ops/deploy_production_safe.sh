@@ -41,10 +41,12 @@ FILES=(
   docs/chainstack-full-window-test-2026-05-07.md
   docs/launch-strategy-backtest-2026-05-07.md
   docs/sr-strategy-scenario-suite-2026-05-07.md
+  docs/sr-strategy-ablation-suite-2026-05-07.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/backtest_launch_strategy.py
   scripts/ops/sr_strategy_scenario_suite.py
+  scripts/ops/sr_strategy_ablation_suite.py
   scripts/ops/run_chainstack_test_suite.py
   scripts/ops/deploy_production_safe.sh
 )
