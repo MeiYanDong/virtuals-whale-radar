@@ -141,6 +141,34 @@ High-resolution SR result:
 - ISC early 10-minute sample did trigger under low thresholds like `10,000 V`, but the early-window mark-to-market was strongly negative. This supports keeping the default threshold away from very low values.
 - The strategy should be scoped to recognized 98-minute / Robotic style launches first. TDS-style launches should not share the same auto-buy policy.
 
+## SR Gradient And Scenario Stress Suite
+
+Follow-up report:
+
+```bash
+docs/sr-strategy-scenario-suite-2026-05-07.md
+```
+
+Added read-only script:
+
+```bash
+scripts/ops/sr_strategy_scenario_suite.py
+```
+
+This suite covers:
+
+- single-parameter gradients: spent threshold, tax threshold, FDV discount, cooldown, burst limit, max project spend, min rows;
+- two-dimensional gradients: spent x tax, spent x discount, tax x discount;
+- data stress cases: sample interval, decision delay, entry slippage, board cost bias, board spent bias, tax offset, combined bad cases;
+- Monte Carlo perturbation: `500` runs per core candidate;
+- synthetic data shapes: price up, price down, late dump, early pump then flat, team low-cost included, board cost overstated, whale slow accumulation, whale fast accumulation.
+
+Key correction:
+
+- The first backtest proved only that several parameter points worked on historical SR.
+- The stress suite is the stronger evidence base, but it still does not prove automatic buying is safe enough for live hot-wallet execution.
+- `50,000 V / tax<=98 / fdvDiscount=0.98` is worth dry-run observation because it performed best on SR, but it should not bypass the realtime would-buy logging stage.
+
 ## Current Recommendation
 
 Do not ship automatic buying yet.

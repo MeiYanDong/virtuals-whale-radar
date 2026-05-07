@@ -2087,3 +2087,20 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - `120s` 内连续 `2` 次买入后冷却 `600s`
   - 结果：触发 `2` 次，投入 `100 VIRTUAL`，窗口结束约 `+38.05 VIRTUAL`
 - 当前建议：暂不启用真实自动买入；下一步先做 realtime dry-run signal emitter，只记录 would-buy，不发交易。默认策略继续使用 `100,000 V` 门槛，不采用 `50,000 V` 早入场，直到至少再收集一个 98 分钟/Robotic 项目样本。
+
+补充测试：
+
+- 已新增 SR 专项梯度与场景压力测试工具：`scripts/ops/sr_strategy_scenario_suite.py`。
+- 已新增测试记录：`docs/sr-strategy-scenario-suite-2026-05-07.md`。
+- 该 suite 继续只读 replay 样本，不接交易、不写生产 DB；相比基础网格，新增了：
+  - 单参数梯度：`spent_threshold / tax_threshold / fdv_discount / cooldown / burst_limit / max_project_spend / min_rows`。
+  - 二维组合梯度：`spent_x_tax / spent_x_discount / tax_x_discount`。
+  - 数据压力场景：采样间隔、决策延迟、入口滑点、榜单成本偏差、榜单投入偏差、税率识别偏差和组合坏情况。
+  - 蒙特卡洛扰动：核心候选策略各 `500` 次。
+  - 合成数据形态：上涨、下跌、后段砸盘、早拉后平、团队低成本混入、榜单成本高估、鲸鱼慢热、鲸鱼快热。
+- 补测关键结果：
+  - 用户基线 `100,000 V / tax<=92` 在真实 SR 高采样样本上仍为 `2` 次买入、投入 `100 V`、约 `+38.05 V`。
+  - `50,000 V / tax<=98 / discount=0.98` 在 SR 上收益率最高，真实 SR 为 `1` 次买入、投入 `50 V`、约 `+83.83%`，但这是单样本强 Alpha，也有明显过拟合风险。
+  - 蒙特卡洛扰动下，`baseline_100k_tax92` 的 P5 收益率约 `+1.495%`、最差约 `-3.1446%`；`aggressive_50k_tax98_discount98` 的 P5 约 `+6.087%`、最差约 `+1.9054%`。
+  - 合成下跌/后段砸盘形态会让所有候选策略转弱甚至亏损，说明策略收益依赖项目窗口结束时价格表现，不能把 SR 单样本直接当成可上线自动交易证明。
+- 更新后的工程结论：可以把 `50,000 V` 激进策略作为 dry-run 观察对象，但真实交易路径仍应先做 would-buy 日志，不应直接连接热钱包。

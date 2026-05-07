@@ -938,3 +938,5 @@
 - [x] 重新跑 SR 高采样完整窗口 replay：`753 tx / 602 parsed / 602 inserted / 1,034 samples`，`logErrors=[]`。
 - [x] 用 SR 高采样样本复测：用户基线策略 `boardSpentV>=100,000 / tax<=92 / FDV<=榜单成本 / 50V / 60s cooldown / 2 buys in 120s -> 600s` 触发 `2` 次，投入 `100V`，最终约 `+38.05V`。
 - [x] 记录离线回测结果到 `docs/launch-strategy-backtest-2026-05-07.md`。
+- [x] 补做 SR 专项梯度与场景压力测试：新增 `scripts/ops/sr_strategy_scenario_suite.py`，覆盖单参数梯度、二维组合梯度、延迟/采样/滑点/榜单偏差/税率偏差、500 次蒙特卡洛扰动和 9 类合成数据形态。
+- [x] 记录补测结果到 `docs/sr-strategy-scenario-suite-2026-05-07.md`；结论更新为：SR 单样本上 `50,000 V` 激进入场收益更高，但仍不能直接上线真实交易，必须先做 realtime dry-run signal emitter。
