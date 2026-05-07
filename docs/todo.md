@@ -912,3 +912,10 @@
 - [x] 同一当前代码用 ANKR 复跑对照：`89` 笔 tx、`74` 条事件、`116` 个采样点；V-native 口径下 Chainstack 与 ANKR 的最终 `tokenPriceV / 含税 FDV / 榜单成本` 基本一致，USD 差异来自 replay 启动时的当前 `VIRTUAL/USD` 折算价。
 - [x] 结果记录见 `docs/ISC-chainstack-native-replay-test-2026-05-07.md`。
 - [ ] 下一次真实发射窗口观察 Chainstack-first 在完整 logs / receipt / historical block 路径下的稳定性；若触发 plan 限制，自动回退 Ankr。
+
+## Phase 50：Chainstack-only 测试流程整合
+
+- [x] 整理当前已有测试入口：前端构建/lint、生产健康检查、Chainstack RPC smoke、原生 replay、前端可视化 replay、窗口完整性审计、缺口 tx 修复、安全同步 dry-run。
+- [x] 新增 `docs/chainstack-test-runbook.md`，把当前测试能力整合成 Chainstack-only 的可复用执行顺序。
+- [x] 2026-05-07 按 runbook Step 1/2 复测：Chainstack HTTP `eth_blockNumber`、historical block、50 blocks logs、recent receipt、WSS `eth_blockNumber` 均通过；生产四个核心服务 active，`/health ok=true`。
+- [ ] 将 runbook 中的 Step 1/2/3/6 后续封装为一个只读 orchestrator，统一输出 JSON 测试报告。
