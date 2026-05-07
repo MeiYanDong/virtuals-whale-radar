@@ -34,6 +34,9 @@ FILES=(
   frontend/admin/dist/
   docs/PLAN.md
   docs/todo.md
+  docs/requirements-outline.md
+  docs/plan-index.md
+  docs/todo-index.md
   docs/rpc-provider-benchmark-2026-04-29.md
   docs/ISC-native-replay-test-2026-04-30.md
   docs/ISC-chainstack-native-replay-test-2026-05-07.md
@@ -42,11 +45,15 @@ FILES=(
   docs/launch-strategy-backtest-2026-05-07.md
   docs/sr-strategy-scenario-suite-2026-05-07.md
   docs/sr-strategy-ablation-suite-2026-05-07.md
+  docs/phases/phase-052-strategy-test-matrix-plan.md
+  docs/phases/phase-052-strategy-test-matrix-todo.md
+  docs/phases/phase-052-strategy-test-matrix-report.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/backtest_launch_strategy.py
   scripts/ops/sr_strategy_scenario_suite.py
   scripts/ops/sr_strategy_ablation_suite.py
+  scripts/ops/strategy_test_matrix_runner.py
   scripts/ops/run_chainstack_test_suite.py
   scripts/ops/deploy_production_safe.sh
 )

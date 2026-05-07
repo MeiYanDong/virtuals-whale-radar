@@ -2120,3 +2120,46 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - 不限制大户榜单 V、只看税率：`tax<=95/94/93/92/91/90` 均会买满 `300V`；收益率分别约 `28.6425% / 36.5159% / 28.268% / 12.441% / 13.0862% / 11.1551%`。
   - 不限制大户榜单 V，但保留 `fdv` 成本条件：`tax<=95/94/93` 只买 `100V`，收益率约 `77.7627% / 104.4073% / 79.6265%`；这说明 FDV 成本条件本身是更强筛选器，但早期榜单样本少，仍有团队地址/样本不足风险。
 - 工程结论更新：后续 dry-run 至少并行记录三套候选：`70k tax<=95 fdv`、`100k tax<=92 fdv`、`tax_only/tax+fdv` 对照；不能只记录单一 `100k` 基线。
+
+## 39. 文档分层与 Phase 052 测试矩阵设计（2026-05-07）
+
+- 新增总需求纲领：`docs/requirements-outline.md`。
+  - 该文件只记录产品需求和用户决策。
+  - Owner 为用户；Codex 不应在未被明确点名时更新。
+- 新增 Plan 纲领：`docs/plan-index.md`。
+  - 只保留阶段索引、状态和子 plan 链接。
+  - 每次完成代码、脚本、测试能力或部署流程变更后更新。
+- 新增 Todo 纲领：`docs/todo-index.md`。
+  - 只保留阶段执行索引和子 todo 链接。
+  - 每次完成代码、脚本、测试能力或部署流程变更后更新。
+- 新增 Phase 052 子 plan：`docs/phases/phase-052-strategy-test-matrix-plan.md`。
+- 新增 Phase 052 子 todo：`docs/phases/phase-052-strategy-test-matrix-todo.md`。
+- 文档治理规则：
+  - `docs/PLAN.md` 和 `docs/todo.md` 继续保留历史和阶段摘要。
+  - 新阶段必须先有子 plan / 子 todo，再进入实现。
+  - 详细设计、执行清单、验收口径放入阶段子文档。
+  - 纲领文件只做索引，不复制阶段细节。
+
+Phase 052 当前目标：
+
+- 建立可复用多维度策略测试矩阵。
+- 覆盖控制变量、取消变量、多变量组合、数据形态模拟、税率异常、RPC/数据延迟和执行层模拟。
+- 输出统一 JSON / Markdown 报告。
+- 只进入 realtime dry-run 评估，不启用真实交易。
+
+Phase 052 执行结果：
+
+- 已新增统一矩阵 runner：`scripts/ops/strategy_test_matrix_runner.py`。
+- 已在服务器使用 Chainstack replay 样本完成矩阵测试：
+  - SR 高采样完整窗口。
+  - SR 144-sample 完整窗口。
+  - ISC Chainstack suite 10 分钟样本。
+  - TDS 完整窗口样本。
+- 本轮覆盖 `737` 条规则、`34` 类场景、`4,136` 个结果。
+- 输出报告：
+  - Markdown：`docs/phases/phase-052-strategy-test-matrix-report.md`。
+  - JSON：`data/backtests/strategy-test-matrix-20260507.json`。
+- 报告明确区分：
+  - 可进入 dry-run 观察的候选：`100k tax<=92 fdv`、`70k/80k/90k tax<=95 fdv`、`50k tax<=95/94/93 fdv`。
+  - 只能作为对照、不能直接交易的策略：`tax-only`、`no-FDV-cost`、`no-board-spent`、`low-sample first-buy`、高延迟/高滑点/税率异常场景。
+- 下一步仍不是接热钱包，而是实现 realtime dry-run signal emitter，持续记录 would-buy 与后续表现。

@@ -942,3 +942,20 @@
 - [x] 记录补测结果到 `docs/sr-strategy-scenario-suite-2026-05-07.md`；结论更新为：SR 单样本上 `50,000 V` 激进入场收益更高，但仍不能直接上线真实交易，必须先做 realtime dry-run signal emitter。
 - [x] 按控制变量/取消变量口径补跑 SR 消融测试：新增 `scripts/ops/sr_strategy_ablation_suite.py`，覆盖 `70k/80k/90k`、不限制榜单 V 只看税率 `95-90`、保留/取消 FDV 成本条件、取消单个变量、多变量组合。
 - [x] 记录消融结果到 `docs/sr-strategy-ablation-suite-2026-05-07.md`；关键发现：`70k/80k/90k + tax<=95 + fdv` 在 SR 上首买都落在 `98,430 V / tax 93`，收益约 `+42.11%`；`tax_only` 与 `tax+fdv` 是完全不同风险口径。
+
+## Phase 52：策略测试矩阵与文档分层
+
+- [x] 新增用户维护的需求纲领：`docs/requirements-outline.md`。
+- [x] 新增 Plan 纲领：`docs/plan-index.md`。
+- [x] 新增 Todo 纲领：`docs/todo-index.md`。
+- [x] 新增 Phase 052 子 plan：`docs/phases/phase-052-strategy-test-matrix-plan.md`。
+- [x] 新增 Phase 052 子 todo：`docs/phases/phase-052-strategy-test-matrix-todo.md`。
+- [x] 用户确认 Phase 052 默认测试目标和风险边界后，开始实现统一测试 runner。
+- [x] 新增 `scripts/ops/strategy_test_matrix_runner.py`，统一覆盖控制变量、取消变量、多变量组合、数据形态模拟、税率异常、RPC/数据延迟和执行层模拟。
+- [x] 在服务器使用 Chainstack replay 样本跑完 SR 高采样、SR 144-sample、ISC 10 分钟和 TDS 完整窗口矩阵。
+- [x] 输出统一报告：
+  - Markdown：`docs/phases/phase-052-strategy-test-matrix-report.md`
+  - JSON：`data/backtests/strategy-test-matrix-20260507.json`
+- [x] 报告规模：`737` 条规则、`34` 类场景、`4,136` 个结果。
+- [x] 报告明确把 `tax-only / no-FDV-cost / no-board-spent / low-sample first-buy` 归入对照或拒绝项，不作为直接交易候选。
+- [ ] 下一步实现 realtime dry-run signal emitter，只记录 would-buy，不接热钱包。
