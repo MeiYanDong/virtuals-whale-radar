@@ -2182,3 +2182,8 @@ Phase 052 执行结果：
   - 不接热钱包。
   - 不发送真实交易。
 - 同步验证时发现并修复 `redact_rpc_url()` 对 Chainstack 单段路径 endpoint 的打码缺口，避免 `/health` 暴露完整 RPC token。
+- 生产验证：
+  - `/admin/strategy-lab` 返回 `HTTP 200` 并加载新前端资产。
+  - `/api/admin/strategy-lab/report` 未登录返回 `401`，权限边界正常。
+  - 服务器策略矩阵 JSON 可读：`737` 条规则、`34` 类场景、`4,136` 个结果。
+  - writer 重启后健康检查通过，`runtimePaused=false`、`queueSize=0`、`pendingTx=0`、`ws_connected=true`。

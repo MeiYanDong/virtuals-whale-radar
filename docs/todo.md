@@ -973,4 +973,4 @@
 - [x] 本地 `python3 -m py_compile virtuals_bot.py` 通过。
 - [x] 本地 `npm run build` 通过。
 - [x] 修复 Chainstack 单段路径 endpoint 在 `/health` 中未打码的问题。
-- [ ] 生产同步后验证 API 与页面。
+- [x] 生产同步后验证 API 权限边界与页面静态加载。
