@@ -921,3 +921,8 @@
 - [x] 新增 `scripts/ops/run_chainstack_test_suite.py`，把 Chainstack env check、RPC smoke、生产健康检查、隔离 replay、项目窗口审计整合为一个只读 JSON 报告入口。
 - [x] 2026-05-07 在服务器执行完整 orchestrator：`smoke + health + ISC 10m replay + ISC audit`，结果 `green`，报告路径 `data/audits/chainstack-suite-20260507-full.json`。
 - [x] orchestrator 结果摘要：RPC smoke 全通过；生产四服务 active；replay `89 tx / 74 parsed / 74 inserted / 113 samples`；ISC audit `candidateTxCount=602`、`repairCandidateTxCount=0`、`unresolvedDeadLetterCandidateTxCount=0`。
+- [x] 2026-05-07 按 Chainstack-only 顺序执行 TDS 完整窗口 replay：`504 tx / 128 parsed / 128 inserted / 144 samples`，historical `eth_call` 支持正常，`logErrors=[]`，最终 `costPosition=5/20`。
+- [x] 2026-05-07 按 Chainstack-only 顺序执行 SR 完整窗口 replay：`753 tx / 602 parsed / 602 inserted / 144 samples`，historical `eth_call` 支持正常，`logErrors=[]`，最终 `costPosition=18/19`。
+- [x] 2026-05-07 执行 Chainstack 故障注入：missing env 与 bad HTTP/WSS endpoint 均按预期 `status=red`；测试只使用临时环境变量，不改线上配置。
+- [x] 修复 `run_chainstack_test_suite.py` 的 missing env 报告：HTTP 与 WSS 同时缺失时不再只显示最后一个缺失项。
+- [x] 新增 `docs/chainstack-full-window-test-2026-05-07.md` 记录 TDS/SR 完整窗口、故障注入与测试后生产健康结果。

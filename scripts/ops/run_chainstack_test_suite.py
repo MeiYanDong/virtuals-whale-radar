@@ -385,10 +385,17 @@ async def run_suite(args: argparse.Namespace) -> dict[str, Any]:
         "steps": {},
     }
 
+    missing_env = []
     if not http_url:
-        result["steps"]["env"] = {"ok": False, "error": "CHAINSTACK_BASE_HTTP_RPC_URL is not configured"}
+        missing_env.append("CHAINSTACK_BASE_HTTP_RPC_URL")
     if not wss_url:
-        result["steps"]["env"] = {"ok": False, "error": "CHAINSTACK_BASE_WS_RPC_URL is not configured"}
+        missing_env.append("CHAINSTACK_BASE_WS_RPC_URL")
+    if missing_env:
+        result["steps"]["env"] = {
+            "ok": False,
+            "missing": missing_env,
+            "error": "missing Chainstack env: " + ", ".join(missing_env),
+        }
     if not http_url or not wss_url:
         result["status"] = "red"
         result["finishedAt"] = int(time.time())

@@ -124,6 +124,43 @@ PY
 - HTTP 失败：不要进入 replay，先检查 Chainstack endpoint 或套餐状态。
 - WSS 失败但 HTTP 成功：可以做历史 replay，但真实 live 仍有风险，需要观察 realtime 服务是否能自动重连。
 
+### Step 1.5：Chainstack 故障注入
+
+用途：确认测试入口在 Chainstack 配置缺失或 endpoint 不可连接时能 fail closed。只使用临时环境变量，不修改 `/etc/virtuals-whale-radar/*.env`。
+
+服务器执行：
+
+```bash
+cd /opt/virtuals-whale-radar
+
+env -u CHAINSTACK_BASE_HTTP_RPC_URL -u CHAINSTACK_BASE_WS_RPC_URL \
+  ./.venv/bin/python scripts/ops/run_chainstack_test_suite.py \
+  --config config.json \
+  --env-file /tmp/vwr-chainstack-empty-env-does-not-exist \
+  --skip-replay \
+  --skip-audit \
+  --skip-health \
+  --output data/audits/chainstack-suite-fault-missing-env.json
+
+CHAINSTACK_BASE_HTTP_RPC_URL=http://127.0.0.1:9 \
+CHAINSTACK_BASE_WS_RPC_URL=ws://127.0.0.1:9 \
+  ./.venv/bin/python scripts/ops/run_chainstack_test_suite.py \
+  --config config.json \
+  --skip-replay \
+  --skip-audit \
+  --skip-health \
+  --timeout-sec 2 \
+  --max-retries 0 \
+  --output data/audits/chainstack-suite-fault-bad-rpc.json
+```
+
+通过标准：
+
+- 两个命令都应返回 `status=red`。
+- missing env 报告应列出缺失的 HTTP 与 WSS 环境变量。
+- bad endpoint 报告应显示 HTTP/WSS smoke 失败。
+- 执行后生产 `/health` 仍应为 `ok=true`。
+
 ### Step 2：当前生产健康检查
 
 服务器执行：
@@ -206,7 +243,7 @@ set +a
 | --- | ---: | --- |
 | ISC | `72752` | Robotic Launch / `antiSniperTaxType=2` |
 | TDS | `72562` | Unicorn Launch / `60s` 快速税率衰减 |
-| SR | 按项目记录填写 | 早期读取失败回归样本 |
+| SR | `70972` | Robotic Launch / 早期读取失败回归样本 |
 
 通过标准：
 
@@ -433,6 +470,8 @@ cd /opt/virtuals-whale-radar
 - Step 2：生产服务健康检查
 - Step 3：ISC `10` 分钟隔离库原生 replay
 - Step 6：指定项目的只读完整性审计；只有传入 `--audit-project` 才执行
+
+故障注入不放在默认执行项里，避免日常测试出现预期 `red` 干扰判断；需要时按 Step 1.5 单独执行。
 
 默认输出到：
 

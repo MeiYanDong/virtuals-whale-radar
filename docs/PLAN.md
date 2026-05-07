@@ -2043,3 +2043,26 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - 完整 live window 是否触发 Chainstack plan 限制；
   - 前端登录态页面是否按 `250ms` 刷新显示 `含税估算 FDV` 与 `打新成本位`；
   - 如出现限制或异常，按当前 fallback 顺序自动回退 Ankr。
+
+## 37. Chainstack-only 完整窗口测试验收（2026-05-07）
+
+- 已新增可复用测试记录：`docs/chainstack-full-window-test-2026-05-07.md`。
+- TDS 完整窗口 replay 已通过：
+  - Virtuals ID `72562`
+  - `504` 笔 tx、`128` 条 parsed events、`128` 条 inserted events、`144` 个采样点
+  - historical `eth_call` 支持正常，`logErrors=[]`
+  - 最终 `costPosition=5/20`，`vCostPosition=7391/29822`
+- SR 完整窗口 replay 已通过：
+  - Virtuals ID `70972`
+  - `753` 笔 tx、`602` 条 parsed events、`602` 条 inserted events、`144` 个采样点
+  - historical `eth_call` 支持正常，`logErrors=[]`
+  - 最终 `costPosition=18/19`，`vCostPosition=275170/314740`
+- 故障注入已覆盖：
+  - Chainstack env 缺失时 orchestrator 返回预期 `red`
+  - Chainstack HTTP/WSS endpoint 不可连接时 RPC smoke 返回预期 `red`
+  - 故障注入只使用临时环境变量，不修改服务器 `/etc/virtuals-whale-radar/*.env`
+- 测试后生产健康状态：
+  - `vwr-signalhub.service`、`vwr@writer.service`、`vwr@realtime.service`、`vwr@backfill.service` 均为 `active`
+  - SignalHub `/healthz status=ok`
+  - 主程序 `/health ok=true`、`runtimePaused=false`、`queueSize=0`、`pendingTx=0`、`ws_connected=true`
+- 结论：当前已覆盖 `ISC 10m replay + ISC audit + TDS full-window + SR full-window + Chainstack fail-closed`。这显著降低真实发射风险，但仍不等同于下一次 live 窗口的绝对保证；下一次项目仍需观察 SignalHub 识别、WSS 持续连接与前端实时显示。

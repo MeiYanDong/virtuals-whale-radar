@@ -38,6 +38,7 @@ FILES=(
   docs/ISC-native-replay-test-2026-04-30.md
   docs/ISC-chainstack-native-replay-test-2026-05-07.md
   docs/chainstack-test-runbook.md
+  docs/chainstack-full-window-test-2026-05-07.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/run_chainstack_test_suite.py
