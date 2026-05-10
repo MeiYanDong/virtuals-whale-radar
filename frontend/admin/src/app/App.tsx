@@ -19,7 +19,6 @@ import { OverviewPage } from "@/pages/OverviewPage";
 import { ProjectsPage } from "@/pages/ProjectsPage";
 import { RegisterPage } from "@/pages/RegisterPage";
 import { SettingsPage } from "@/pages/SettingsPage";
-import { StrategyLabPage } from "@/pages/StrategyLabPage";
 import { UsersPage } from "@/pages/UsersPage";
 import { VerifyEmailPage } from "@/pages/VerifyEmailPage";
 import { WalletsPage } from "@/pages/WalletsPage";
@@ -171,7 +170,6 @@ export function App() {
                     <Route path="projects" element={<ProjectsPage />} />
                     <Route path="projects/:projectId" element={<OverviewPage />} />
                     <Route path="signalhub" element={<InboxPage />} />
-                    <Route path="strategy-lab" element={<StrategyLabPage />} />
                     <Route path="wallets" element={<WalletsPage />} />
                     <Route path="users" element={<UsersPage />} />
                     <Route path="operations" element={<Navigate to="../users" replace />} />

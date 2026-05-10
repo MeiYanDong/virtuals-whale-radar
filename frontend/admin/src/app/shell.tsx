@@ -3,7 +3,6 @@ import {
   Activity,
   BellDot,
   Coins,
-  FlaskConical,
   Gauge,
   LogOut,
   Menu,
@@ -106,7 +105,6 @@ function nextSidebarMode(mode: SidebarMode): SidebarMode {
 function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
   const queryClient = useQueryClient();
   const { user, logout } = useAuth();
-  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [refreshMode, setRefreshModeState] = useState<RefreshMode>(() => loadRefreshMode(viewer));
@@ -156,9 +154,7 @@ function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
     searchParams.get("project") || loadSavedProject(viewer),
   );
   const projectOptions = resolveProjectCandidates(metaQuery.data);
-  const shouldSyncProjectParam = !(
-    viewer === "admin" && location.pathname.startsWith("/admin/strategy-lab")
-  );
+  const shouldSyncProjectParam = true;
 
   useEffect(() => {
     if (!shouldSyncProjectParam) return;
@@ -427,7 +423,6 @@ function TopBar({
   onCycleSidebar: () => void;
   onOpenMobileNav: () => void;
 }) {
-  const location = useLocation();
   const {
     viewer,
     authUser,
@@ -500,8 +495,6 @@ function TopBar({
     viewer === "user"
       ? appMeta?.unread_notification_count ?? notificationsQuery.data?.unreadCount ?? 0
       : 0;
-  const isStrategyLab = viewer === "admin" && location.pathname.startsWith("/admin/strategy-lab");
-
   return (
     <Card className="surface-glass sticky top-4 z-20 rounded-[28px] p-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px_auto] xl:items-center">
@@ -532,7 +525,7 @@ function TopBar({
         <div className="grid gap-3">
           <div>
             <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              {isStrategyLab ? "全局采集项目" : "当前项目"}
+              当前项目
             </div>
             <Select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
               {projectOptions.length ? (
@@ -545,9 +538,6 @@ function TopBar({
                 <option value="">暂无项目</option>
               )}
             </Select>
-            {isStrategyLab ? (
-              <div className="mt-1 text-xs text-muted-foreground">Strategy Lab 回放项目在页面内切换。</div>
-            ) : null}
           </div>
         </div>
 
@@ -761,7 +751,6 @@ export function AdminShell() {
         { to: "/admin/overview", label: "Overview", icon: Gauge },
         { to: "/admin/projects", label: "Projects", icon: Activity },
         { to: "/admin/signalhub", label: "SignalHub", icon: BellDot },
-        { to: "/admin/strategy-lab", label: "Strategy Lab", icon: FlaskConical },
         { to: "/admin/wallets", label: "Wallets", icon: Wallet },
         { to: "/admin/users", label: "Users", icon: Users },
         { to: "/admin/settings", label: "Settings", icon: Settings2 },

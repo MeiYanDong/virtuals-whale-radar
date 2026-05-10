@@ -32,7 +32,6 @@ import type {
   RuntimePauseResponse,
   ScanJobResponse,
   SignalHubResponse,
-  StrategyLabReportResponse,
   UserProjectAccessItem,
   UserWalletItem,
   UserWalletsResponse,
@@ -212,11 +211,6 @@ export const dashboardApi = {
     },
     getProjectMarket(projectId: number) {
       return requestJson<ProjectMarketResponse>(`/api/admin/projects/${projectId}/market`);
-    },
-    getStrategyLabReport(project = "") {
-      return requestJson<StrategyLabReportResponse>("/api/admin/strategy-lab/report", {
-        params: project ? { project } : {},
-      });
     },
     createScanJob(project: string | null, startTs: number, endTs: number) {
       return requestJson<{ ok: boolean; jobId: string }>("/api/admin/scan-range", {

@@ -18,7 +18,6 @@
 | --- | --- | --- | --- | --- |
 | 051 | Done | `docs/launch-strategy-backtest-2026-05-07.md` | `docs/todo.md#phase-5198-分钟税率项目自动买入策略离线回测` | 98 分钟税率项目策略离线回测、压力测试、消融测试已完成第一轮。 |
 | 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-plan.md` | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 统一 runner 已完成并用 SR/ISC/TDS Chainstack replay 生成矩阵报告。 |
-| 053 | Done | `docs/phases/phase-053-strategy-lab-ui-plan.md` | `docs/phases/phase-053-strategy-lab-ui-todo.md` | 管理后台 Strategy Lab 只读页面已同步生产并完成基础验证。 |
 | 054 | Local Validated | `docs/phases/phase-054-team-address-filter-plan.md` | `docs/phases/phase-054-team-address-filter-todo.md` | 大户榜单团队地址自动过滤与管理员手动纠偏已在本地验证，尚未同步生产。 |
 
 ## 3. 更新规则

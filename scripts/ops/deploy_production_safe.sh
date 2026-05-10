@@ -32,7 +32,6 @@ FILES=(
   frontend/admin/src/pages/InboxPage.tsx
   frontend/admin/src/pages/OverviewPage.tsx
   frontend/admin/src/pages/SettingsPage.tsx
-  frontend/admin/src/pages/StrategyLabPage.tsx
   frontend/admin/src/types/api.ts
   frontend/admin/dist/
   docs/PLAN.md
@@ -51,8 +50,6 @@ FILES=(
   docs/phases/phase-052-strategy-test-matrix-plan.md
   docs/phases/phase-052-strategy-test-matrix-todo.md
   docs/phases/phase-052-strategy-test-matrix-report.md
-  docs/phases/phase-053-strategy-lab-ui-plan.md
-  docs/phases/phase-053-strategy-lab-ui-todo.md
   scripts/ops/backup_runtime.sh
   scripts/ops/native_launch_replay.py
   scripts/ops/backtest_launch_strategy.py

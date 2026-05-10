@@ -2164,31 +2164,7 @@ Phase 052 执行结果：
   - 只能作为对照、不能直接交易的策略：`tax-only`、`no-FDV-cost`、`no-board-spent`、`low-sample first-buy`、高延迟/高滑点/税率异常场景。
 - 下一步仍不是接热钱包，而是实现 realtime dry-run signal emitter，持续记录 would-buy 与后续表现。
 
-## 40. Strategy Lab 前端只读页（2026-05-07）
-
-- 新增 Phase 053 子 plan：`docs/phases/phase-053-strategy-lab-ui-plan.md`。
-- 新增 Phase 053 子 todo：`docs/phases/phase-053-strategy-lab-ui-todo.md`。
-- 后端新增管理员只读 API：`/api/admin/strategy-lab/report`。
-  - 优先读取 `data/backtests/strategy-test-matrix-20260507.json`。
-  - 文件不存在时读取最新 `strategy-test-matrix-*.json`。
-  - 返回报告摘要，不返回完整 `results` 明细，避免浏览器加载大 JSON。
-- 前端新增管理员页面：`/admin/strategy-lab`。
-  - 侧边栏新增 `Strategy Lab`。
-  - 展示总览 KPI、数据集、Dry-run Candidates、Risk Adjusted Top、Stable Zone、Variable Contribution、Suite Summary、Reject List、Failure Cases 和 Overfit Warnings。
-- 当前边界：
-  - 页面只读。
-  - 不触发重跑。
-  - 不写数据库。
-  - 不接热钱包。
-  - 不发送真实交易。
-- 同步验证时发现并修复 `redact_rpc_url()` 对 Chainstack 单段路径 endpoint 的打码缺口，避免 `/health` 暴露完整 RPC token。
-- 生产验证：
-  - `/admin/strategy-lab` 返回 `HTTP 200` 并加载新前端资产。
-  - `/api/admin/strategy-lab/report` 未登录返回 `401`，权限边界正常。
-  - 服务器策略矩阵 JSON 可读：`737` 条规则、`34` 类场景、`4,136` 个结果。
-  - writer 重启后健康检查通过，`runtimePaused=false`、`queueSize=0`、`pendingTx=0`、`ws_connected=true`。
-
-## 41. 大户榜单团队地址过滤与管理员纠偏（2026-05-07）
+## 40. 大户榜单团队地址过滤与管理员纠偏（2026-05-07）
 
 - 新增 Phase 054 子 plan：`docs/phases/phase-054-team-address-filter-plan.md`。
 - 新增 Phase 054 子 todo：`docs/phases/phase-054-team-address-filter-todo.md`。
