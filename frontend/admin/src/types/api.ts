@@ -376,16 +376,56 @@ export interface ProjectSchedulerStatusResponse {
   items: ProjectSchedulerItem[];
 }
 
+export type StrategyLabReturnSnapshots = Record<string, string | null | undefined>;
+
 export interface StrategyLabFirstBuy {
+  signal_timestamp?: number | null;
+  trigger_timestamp?: number | null;
+  entry_timestamp?: number | null;
   tax_rate?: string | null;
   board_spent_v?: string | null;
   signal_tax_fdv_wan_usd?: string | null;
   entry_tax_fdv_wan_usd?: string | null;
+  entry_spot_fdv_wan_usd?: string | null;
   board_cost_wan_usd?: string | null;
   cost_rows?: number;
   whale_rows?: number;
   cost_position?: string;
   v_cost_position?: string;
+  return_snapshots_pct?: StrategyLabReturnSnapshots;
+}
+
+export interface StrategyLabRule {
+  name?: string;
+  suite?: string;
+  spentThresholdV?: string | null;
+  maxTaxRate?: string | null;
+  fdvDiscount?: string | null;
+  minRows?: number;
+  minCostRows?: number;
+  minWhaleRows?: number;
+  cooldownSec?: number;
+  burstLimit?: number;
+  burstWindowSec?: number;
+  burstCooldownSec?: number;
+  buySizeV?: string | null;
+  maxProjectSpendV?: string | null;
+}
+
+export interface StrategyLabScenario {
+  name?: string;
+  category?: string;
+  sample_every_sec?: number;
+  decision_delay_sec?: number;
+  entry_delay_sec?: number;
+  entry_slippage_pct?: string | null;
+  signal_fdv_scale?: string | null;
+  board_cost_scale?: string | null;
+  board_spent_scale?: string | null;
+  tax_offset?: string | null;
+  tax_missing?: boolean;
+  price_path?: string | null;
+  buy_failure_every?: number;
 }
 
 export interface StrategyLabResultItem {
@@ -393,11 +433,23 @@ export interface StrategyLabResultItem {
   suite: string;
   ruleName: string;
   scenarioName: string;
+  scenarioCategory?: string;
+  rule?: StrategyLabRule;
+  scenario?: StrategyLabScenario;
+  sampleCount?: number;
   buyCount: number;
   totalSpentV: string;
+  finalValueV?: string;
+  finalPnlV?: string;
   finalPnlPct: string;
+  maxRunupPct?: string;
+  worstDrawdownPct?: string;
+  avgReturnSnapshotsPct?: StrategyLabReturnSnapshots;
   score: string;
   riskFlags: string[];
+  skipReasons?: string[];
+  filledMaxSpend?: boolean;
+  lowSampleFirstBuy?: boolean;
   firstBuy?: StrategyLabFirstBuy | null;
 }
 
@@ -431,6 +483,7 @@ export interface StrategyLabReportResponse {
   ok: boolean;
   available: boolean;
   message: string;
+  project?: string | null;
   sourcePath: string | null;
   markdownPath?: string | null;
   generatedAt?: number | null;
@@ -460,6 +513,9 @@ export interface OverviewBoardItem {
   isTeamCandidate?: boolean;
   costExcluded?: boolean;
   costExclusionReason?: string | null;
+  teamOverrideAction?: "include" | "exclude" | null;
+  teamOverrideReason?: string | null;
+  teamOverrideUpdatedAt?: number | null;
   updatedAt: number;
 }
 

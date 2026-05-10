@@ -230,6 +230,43 @@ export function OverviewPage() {
   const targetProjectId = detailProjectId ?? lockedProject?.id ?? 0;
   const currentProjectName = overviewQuery.data?.item?.name ?? lockedProject?.name ?? "";
 
+  const teamOverrideMutation = useMutation({
+    mutationFn: async (payload: {
+      projectId: number;
+      wallet: string;
+      action: "include" | "exclude";
+      reason?: string;
+    }) => dashboardApi.admin.setTeamAddressOverride(payload.projectId, payload),
+    onSuccess: async (_result, variables) => {
+      const invalidations = [
+        queryClient.invalidateQueries({ queryKey: queryKeys.adminProjectOverview(variables.projectId) }),
+      ];
+      if (currentProjectName) {
+        invalidations.push(queryClient.invalidateQueries({ queryKey: queryKeys.overviewActive(currentProjectName) }));
+      }
+      await Promise.all(invalidations);
+      toast.success(variables.action === "exclude" ? "已加入自动过滤。" : "已纳入成本位。");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const teamOverridePendingWallet = teamOverrideMutation.isPending
+    ? teamOverrideMutation.variables?.wallet ?? null
+    : null;
+
+  const setTeamOverride = (wallet: string, action: "include" | "exclude", reason?: string) => {
+    const projectIdForOverride = overviewQuery.data?.item?.id ?? detailProjectId;
+    if (viewer !== "admin" || !projectIdForOverride) {
+      toast.error("当前没有可操作的管理员项目。");
+      return;
+    }
+    teamOverrideMutation.mutate({
+      projectId: projectIdForOverride,
+      wallet,
+      action,
+      reason,
+    });
+  };
+
   const unlockMutation = useMutation({
     mutationFn: async () => {
       if (!targetProjectId) {
@@ -610,6 +647,9 @@ export function OverviewPage() {
           whaleBoard={overviewQuery.data?.whaleBoard ?? []}
           trackedWallets={overviewQuery.data?.trackedWallets ?? []}
           delays={overviewQuery.data?.delays ?? []}
+          canManageTeamOverrides={viewer === "admin"}
+          teamOverridePendingWallet={teamOverridePendingWallet}
+          onSetTeamOverride={setTeamOverride}
           actions={
             <>
               {isRealtimeStatus(detailItem.projectedStatus || detailItem.status) ? (
@@ -699,6 +739,9 @@ export function OverviewPage() {
         whaleBoard={overviewQuery.data?.whaleBoard ?? []}
         trackedWallets={overviewQuery.data?.trackedWallets ?? []}
         delays={overviewQuery.data?.delays ?? []}
+        canManageTeamOverrides={viewer === "admin"}
+        teamOverridePendingWallet={teamOverridePendingWallet}
+        onSetTeamOverride={setTeamOverride}
         actions={
           <Button asChild variant="secondary">
             <Link to={projectsHref}>回项目列表</Link>

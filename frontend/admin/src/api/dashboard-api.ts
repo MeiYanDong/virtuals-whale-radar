@@ -213,8 +213,10 @@ export const dashboardApi = {
     getProjectMarket(projectId: number) {
       return requestJson<ProjectMarketResponse>(`/api/admin/projects/${projectId}/market`);
     },
-    getStrategyLabReport() {
-      return requestJson<StrategyLabReportResponse>("/api/admin/strategy-lab/report");
+    getStrategyLabReport(project = "") {
+      return requestJson<StrategyLabReportResponse>("/api/admin/strategy-lab/report", {
+        params: project ? { project } : {},
+      });
     },
     createScanJob(project: string | null, startTs: number, endTs: number) {
       return requestJson<{ ok: boolean; jobId: string }>("/api/admin/scan-range", {
@@ -249,6 +251,26 @@ export const dashboardApi = {
         "/api/admin/leaderboard",
         {
           params: { project, top },
+        },
+      );
+    },
+    setTeamAddressOverride(
+      projectId: number,
+      payload: { wallet: string; action: "include" | "exclude"; reason?: string },
+    ) {
+      return requestJson<{ ok: boolean; item: Record<string, unknown>; items: Record<string, unknown>[] }>(
+        `/api/admin/projects/${projectId}/team-address-overrides`,
+        {
+          method: "POST",
+          body: payload,
+        },
+      );
+    },
+    deleteTeamAddressOverride(projectId: number, wallet: string) {
+      return requestJson<{ ok: boolean; deleted: boolean; items: Record<string, unknown>[] }>(
+        `/api/admin/projects/${projectId}/team-address-overrides/${encodeURIComponent(wallet)}`,
+        {
+          method: "DELETE",
         },
       );
     },

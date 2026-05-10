@@ -18,6 +18,25 @@
 - `Reject List` means rejected as a direct dry-run / trading candidate. Some rejected controls can still be useful as ablation evidence.
 - `Dry-run Candidates` only includes actual-scenario candidates with positive final PnL and no low-sample first buy.
 
+## 2026-05-07 Hard Gate Re-test
+
+本轮用户确认交易候选必须先满足三条硬门槛：
+
+- 大户榜单人数必须满 `20`。
+- 大户榜单累计投入必须 `>= 50,000 V`。
+- 税率必须已经降到 `<= 95%`。
+
+基于现有 `strategy-test-matrix-20260507.json` 的结果级重筛：
+
+| Project | Results | Triggered | Hard Eligible | Dry-run Candidates |
+| --- | ---: | ---: | ---: | ---: |
+| SR | 2068 | 1840 | 1495 | 14 |
+| ISC | 1034 | 176 | 6 | 0 |
+| TDS | 1034 | 135 | 0 | 0 |
+| ALL | 4136 | 2151 | 1501 | 14 |
+
+SR 当前保留的 dry-run 候选仍集中在 `aggressive_50k_tax95/94/93_fdv`、`mid_70k/80k/90k_tax95_fdv` 和 `conservative_100k_tax92_fdv`。注意：本地 replay 原始 sample 文件目前不在仓库内，本节是基于已生成完整矩阵结果的重筛；`scripts/ops/strategy_test_matrix_runner.py` 已同步改为后续真重跑时使用 `minWhaleRows=20` 硬门槛。
+
 ## Suite Summary
 | Suite | Count | Triggered | Positive | Positive Rate | Median PnL % | Min PnL % | Max PnL % |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |

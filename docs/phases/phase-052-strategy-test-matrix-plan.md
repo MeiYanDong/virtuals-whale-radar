@@ -155,7 +155,11 @@
 
 - 优化目标固定为“稳定盈利 + 低误触发”，不以单次最高收益作为上线依据。
 - dry-run 模拟最大项目预算固定为 `300V`。
-- 榜单人数少于 `5` 时只记录风险，不进入 dry-run 候选。
+- 交易候选硬门槛：
+  - 大户榜单人数必须满 `20`。
+  - 大户榜单累计投入必须 `>= 50,000 V`。
+  - 税率必须已经降到 `<= 95%`。
+- 成本样本少于 `5` 时只记录风险，不进入 dry-run 候选。
 - 默认结算口径固定为 `1m / 3m / 5m / 10m / end`。
 
 ## 10. 2026-05-07 验收结果
@@ -177,6 +181,11 @@
   - `conservative_100k_tax92_fdv`。
   - `mid_70k_tax95_fdv / mid_80k_tax95_fdv / mid_90k_tax95_fdv`。
   - `aggressive_50k_tax95_fdv / aggressive_50k_tax94_fdv / aggressive_50k_tax93_fdv`。
+- 2026-05-07 追加硬门槛重筛：
+  - `whaleRows >= 20`。
+  - `boardSpentV >= 50,000`。
+  - `buyTaxRate <= 95`。
+  - SR 仍保留 `14` 个 dry-run 候选；ISC / TDS 当前无 dry-run 候选。
 - 明确不能直接进入交易候选的对照：
   - tax-only。
   - no-FDV-cost。

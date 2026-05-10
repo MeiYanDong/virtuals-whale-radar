@@ -974,3 +974,25 @@
 - [x] 本地 `npm run build` 通过。
 - [x] 修复 Chainstack 单段路径 endpoint 在 `/health` 中未打码的问题。
 - [x] 生产同步后验证 API 权限边界与页面静态加载。
+
+## Phase 54：大户榜单团队地址过滤与管理员纠偏
+
+- [x] 新增 Phase 054 子 plan：`docs/phases/phase-054-team-address-filter-plan.md`。
+- [x] 新增 Phase 054 子 todo：`docs/phases/phase-054-team-address-filter-todo.md`。
+- [x] 新增 `team_address_overrides` 表。
+- [x] 新增管理员覆盖规则 API。
+- [x] overview 榜单返回团队过滤状态和覆盖来源。
+- [x] 主大户榜单过滤掉 `costExcluded=true` 地址。
+- [x] 管理员新增唯一默认折叠的“自动过滤”控件。
+- [x] 大户榜单表格不展示团队/疑似团队地址。
+- [x] 大户榜单表格不展示“团队过滤”字段或行内过滤按钮。
+- [x] 管理员支持输入钱包地址和备注加入排除。
+- [x] 管理员支持把审核区地址纳入成本位。
+- [x] 覆盖优先级固定为：手动排除 > 手动纳入 > 自动识别。
+- [x] 新增首分钟零税且当时预期应有税的硬过滤规则，不再要求买入份额阈值。
+- [x] 本地 Python 语法、前端 build、lint、API 和 UI 流程验证通过。
+- [x] 验证 `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 会被自动过滤。
+- [x] 修复手动排除后“纳入成本位”按钮因 pending wallet 残留而无法点击的问题。
+- [x] 同步前做完整 `git diff` 审核。
+- [ ] 如需上线，走生产安全同步脚本并重启服务。
+- [ ] 生产同步后复测管理员项目详情页和 overview API。

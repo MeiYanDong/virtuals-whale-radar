@@ -2187,3 +2187,31 @@ Phase 052 执行结果：
   - `/api/admin/strategy-lab/report` 未登录返回 `401`，权限边界正常。
   - 服务器策略矩阵 JSON 可读：`737` 条规则、`34` 类场景、`4,136` 个结果。
   - writer 重启后健康检查通过，`runtimePaused=false`、`queueSize=0`、`pendingTx=0`、`ws_connected=true`。
+
+## 41. 大户榜单团队地址过滤与管理员纠偏（2026-05-07）
+
+- 新增 Phase 054 子 plan：`docs/phases/phase-054-team-address-filter-plan.md`。
+- 新增 Phase 054 子 todo：`docs/phases/phase-054-team-address-filter-todo.md`。
+- 后端新增 `team_address_overrides` 表，按 `project + wallet` 保存管理员覆盖规则。
+- 后端新增管理员 API：
+  - `POST /api/admin/projects/{project_id}/team-address-overrides`
+  - `DELETE /api/admin/projects/{project_id}/team-address-overrides/{wallet}`
+- overview 榜单项新增 `teamOverrideAction / teamOverrideReason / teamOverrideUpdatedAt`。
+- 覆盖优先级固定为：手动排除 > 手动纳入 > 自动识别。
+- 手动覆盖不再依赖首笔买入特征，避免日志特征缺失时管理员规则失效。
+- 自动识别新增硬过滤：首分钟零税且当时预期应有税的钱包直接排除出成本位，不要求买入份额阈值。
+- 前端主大户榜单只展示参与观察和成本位计算的钱包，不展示团队/疑似团队地址，也不展示“团队过滤”操作列。
+- 管理员新增唯一默认折叠的小型“自动过滤”控件：
+  - 自动识别或手动排除的钱包默认隐藏，不占用榜单视觉权重。
+  - 管理员按需展开查看隐藏地址。
+  - 管理员可输入钱包地址和备注加入排除。
+  - 管理员可点击“纳入成本位”把地址移回主榜单计算。
+- 本地验证通过：
+  - `python3 -m py_compile virtuals_bot.py`
+  - `npm run build`
+  - `npm run lint`
+  - 本地 writer `/health ok=true`
+  - API 排除、纳入、删除覆盖规则正常
+  - 前端 UI 加入排除、审核区展示、清理后空状态正常
+  - `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 已命中自动过滤
+- 当前状态：本地验证完成，尚未同步 GitHub，尚未部署生产。

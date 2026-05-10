@@ -106,6 +106,7 @@ function nextSidebarMode(mode: SidebarMode): SidebarMode {
 function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
   const queryClient = useQueryClient();
   const { user, logout } = useAuth();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [refreshMode, setRefreshModeState] = useState<RefreshMode>(() => loadRefreshMode(viewer));
@@ -155,15 +156,19 @@ function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
     searchParams.get("project") || loadSavedProject(viewer),
   );
   const projectOptions = resolveProjectCandidates(metaQuery.data);
+  const shouldSyncProjectParam = !(
+    viewer === "admin" && location.pathname.startsWith("/admin/strategy-lab")
+  );
 
   useEffect(() => {
+    if (!shouldSyncProjectParam) return;
     if (!selectedProject) return;
     const current = searchParams.get("project");
     if (current === selectedProject) return;
     const next = new URLSearchParams(searchParams);
     next.set("project", selectedProject);
     setSearchParams(next, { replace: true });
-  }, [searchParams, selectedProject, setSearchParams]);
+  }, [searchParams, selectedProject, setSearchParams, shouldSyncProjectParam]);
 
   useEffect(() => {
     try {
@@ -422,6 +427,7 @@ function TopBar({
   onCycleSidebar: () => void;
   onOpenMobileNav: () => void;
 }) {
+  const location = useLocation();
   const {
     viewer,
     authUser,
@@ -494,6 +500,7 @@ function TopBar({
     viewer === "user"
       ? appMeta?.unread_notification_count ?? notificationsQuery.data?.unreadCount ?? 0
       : 0;
+  const isStrategyLab = viewer === "admin" && location.pathname.startsWith("/admin/strategy-lab");
 
   return (
     <Card className="surface-glass sticky top-4 z-20 rounded-[28px] p-4">
@@ -525,7 +532,7 @@ function TopBar({
         <div className="grid gap-3">
           <div>
             <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              当前项目
+              {isStrategyLab ? "全局采集项目" : "当前项目"}
             </div>
             <Select value={selectedProject} onChange={(event) => setSelectedProject(event.target.value)}>
               {projectOptions.length ? (
@@ -538,6 +545,9 @@ function TopBar({
                 <option value="">暂无项目</option>
               )}
             </Select>
+            {isStrategyLab ? (
+              <div className="mt-1 text-xs text-muted-foreground">Strategy Lab 回放项目在页面内切换。</div>
+            ) : null}
           </div>
         </div>
 

@@ -40,7 +40,8 @@ class Rule:
     spent_threshold_v: Decimal | None = None
     max_tax_rate: Decimal | None = None
     fdv_discount: Decimal | None = None
-    min_rows: int = 5
+    min_cost_rows: int = 5
+    min_whale_rows: int = 20
     cooldown_sec: int = 60
     burst_limit: int = 2
     burst_window_sec: int = 120
@@ -213,8 +214,10 @@ def should_buy(row: dict[str, Any], rule: Rule, scenario: Scenario) -> tuple[boo
         return False, "spent_threshold", values
     if rule.max_tax_rate is not None and (tax_rate is None or tax_rate > rule.max_tax_rate):
         return False, "tax_threshold", values
-    if rule.min_rows > 0 and (cost_rows < rule.min_rows or whale_rows < rule.min_rows):
-        return False, "min_rows", values
+    if rule.min_cost_rows > 0 and cost_rows < rule.min_cost_rows:
+        return False, "min_cost_rows", values
+    if rule.min_whale_rows > 0 and whale_rows < rule.min_whale_rows:
+        return False, "min_whale_rows", values
     if rule.fdv_discount is not None:
         if board_cost is None or board_cost <= 0:
             return False, "missing_board_cost", values
@@ -351,7 +354,7 @@ def evaluate(samples_in: list[dict[str, Any]], rule: Rule, scenario: Scenario, *
         for name, value in return_points.items()
     }
     first_buy = asdict(buys[0]) if buys else None
-    low_sample = bool(first_buy and (int(first_buy["cost_rows"]) < 5 or int(first_buy["whale_rows"]) < 5))
+    low_sample = bool(first_buy and (int(first_buy["cost_rows"]) < 5 or int(first_buy["whale_rows"]) < 20))
 
     return {
         "dataset": dataset,
@@ -387,7 +390,9 @@ def serialize_rule(rule: Rule) -> dict[str, Any]:
         "spentThresholdV": fmt_decimal(rule.spent_threshold_v) if rule.spent_threshold_v is not None else None,
         "maxTaxRate": fmt_decimal(rule.max_tax_rate) if rule.max_tax_rate is not None else None,
         "fdvDiscount": fmt_decimal(rule.fdv_discount) if rule.fdv_discount is not None else None,
-        "minRows": rule.min_rows,
+        "minRows": rule.min_cost_rows,
+        "minCostRows": rule.min_cost_rows,
+        "minWhaleRows": rule.min_whale_rows,
         "cooldownSec": rule.cooldown_sec,
         "burstLimit": rule.burst_limit,
         "burstWindowSec": rule.burst_window_sec,
@@ -439,6 +444,8 @@ def make_rule(
     cooldown: int = 60,
     burst: int = 2,
     max_spend: int = 300,
+    min_cost_rows: int | None = None,
+    min_whale_rows: int = 20,
 ) -> Rule:
     return Rule(
         name=name,
@@ -446,7 +453,8 @@ def make_rule(
         spent_threshold_v=d(spent) if spent is not None else None,
         max_tax_rate=d(tax) if tax is not None else None,
         fdv_discount=d(fdv) if fdv is not None else None,
-        min_rows=min_rows,
+        min_cost_rows=min_rows if min_cost_rows is None else min_cost_rows,
+        min_whale_rows=min_whale_rows,
         cooldown_sec=cooldown,
         burst_limit=burst,
         max_project_spend_v=d(max_spend),
@@ -709,7 +717,12 @@ def build_report(results: list[dict[str, Any]], datasets: dict[str, list[dict[st
             "tradeSent": False,
             "objective": "stable profit plus low false-trigger risk",
             "defaultDryRunBudgetV": "300",
-            "lowSamplePolicy": "min rows below 5 is recorded as risk and excluded from dry-run candidates",
+            "hardGates": {
+                "minWhaleRows": 20,
+                "minBoardSpentV": "50000",
+                "maxTaxRate": "95",
+            },
+            "lowSamplePolicy": "cost rows below 5 or whale-board rows below 20 is recorded as risk and excluded from dry-run candidates",
             "returnSnapshots": [*SNAPSHOT_OFFSETS_SEC.keys(), "end"],
         },
         "ruleCount": len(rules),

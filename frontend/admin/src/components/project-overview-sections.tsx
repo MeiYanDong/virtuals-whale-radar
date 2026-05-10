@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { EmptyState, SectionCard } from "@/components/app-primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   formatAddress,
@@ -28,6 +29,9 @@ type BoardRow = {
   isTeamCandidate: boolean;
   costExcluded: boolean;
   costExclusionReason?: string | null;
+  teamOverrideAction?: "include" | "exclude" | null;
+  teamOverrideReason?: string | null;
+  teamOverrideUpdatedAt?: number | null;
   updatedAt: number;
 };
 
@@ -295,37 +299,42 @@ function BoardTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((row) => {
-          return (
-            <TableRow key={row.wallet}>
-              <TableCell>
-                <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {row.name ? <div className="text-sm font-medium">{row.name}</div> : null}
-                    {row.costExcluded ? (
-                      <Badge
-                        variant="warning"
-                        className="shrink-0 px-2 py-0.5 text-[11px] font-semibold tracking-normal"
-                      >
-                        疑似团队
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <div className="font-mono text-xs text-muted-foreground">{row.wallet}</div>
+        {rows.map((row) => (
+          <TableRow key={row.wallet}>
+            <TableCell>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  {row.name ? <div className="text-sm font-medium">{row.name}</div> : null}
                   {row.costExcluded ? (
-                    <div className="max-w-xl text-xs leading-5 text-muted-foreground">
-                      已排除成本位：{row.costExclusionReason || "开盘极早期的大额低成本买入。"}
-                    </div>
+                    <Badge
+                      variant="warning"
+                      className="shrink-0 px-2 py-0.5 text-[11px] font-semibold tracking-normal"
+                    >
+                      {row.teamOverrideAction === "exclude" ? "手动排除" : "疑似团队"}
+                    </Badge>
+                  ) : row.teamOverrideAction === "include" ? (
+                    <Badge
+                      variant="success"
+                      className="shrink-0 px-2 py-0.5 text-[11px] font-semibold tracking-normal"
+                    >
+                      手动纳入
+                    </Badge>
                   ) : null}
                 </div>
-              </TableCell>
-              <TableCell>{formatSpentVInteger(row.spentV)}</TableCell>
-              <TableCell>{formatDecimal(tokenWan(row.tokenBought), 2)}</TableCell>
-              <TableCell>{formatBreakevenFdvUsd(row.breakevenFdvUsd)}</TableCell>
-              <TableCell>{row.updatedAt ? formatDateTime(row.updatedAt) : "-"}</TableCell>
-            </TableRow>
-          );
-        })}
+                <div className="font-mono text-xs text-muted-foreground">{row.wallet}</div>
+                {row.costExcluded ? (
+                  <div className="max-w-xl text-xs leading-5 text-muted-foreground">
+                    已排除成本位：{row.costExclusionReason || "开盘极早期的大额低成本买入。"}
+                  </div>
+                ) : null}
+              </div>
+            </TableCell>
+            <TableCell>{formatSpentVInteger(row.spentV)}</TableCell>
+            <TableCell>{formatDecimal(tokenWan(row.tokenBought), 2)}</TableCell>
+            <TableCell>{formatBreakevenFdvUsd(row.breakevenFdvUsd)}</TableCell>
+            <TableCell>{row.updatedAt ? formatDateTime(row.updatedAt) : "-"}</TableCell>
+          </TableRow>
+        ))}
       </TableBody>
     </Table>
   );
@@ -346,6 +355,9 @@ function toBoardRows(items: OverviewBoardItem[]) {
     isTeamCandidate: Boolean(item.isTeamCandidate),
     costExcluded: Boolean(item.costExcluded),
     costExclusionReason: item.costExclusionReason ?? null,
+    teamOverrideAction: item.teamOverrideAction ?? null,
+    teamOverrideReason: item.teamOverrideReason ?? null,
+    teamOverrideUpdatedAt: item.teamOverrideUpdatedAt ?? null,
     updatedAt: item.updatedAt,
   }));
 }
@@ -357,6 +369,9 @@ export function ProjectOverviewSections({
   trackedWallets,
   delays,
   actions,
+  canManageTeamOverrides = false,
+  teamOverridePendingWallet = null,
+  onSetTeamOverride,
 }: {
   item: OverviewActiveProjectItem;
   minutes: MinuteRow[];
@@ -364,9 +379,16 @@ export function ProjectOverviewSections({
   trackedWallets: OverviewBoardItem[];
   delays: EventDelayRow[];
   actions?: ReactNode;
+  canManageTeamOverrides?: boolean;
+  teamOverridePendingWallet?: string | null;
+  onSetTeamOverride?: (wallet: string, action: "include" | "exclude", reason?: string) => void;
 }) {
   const whaleRows = toBoardRows(whaleBoard);
+  const visibleWhaleRows = whaleRows.filter((row) => !row.costExcluded);
+  const excludedWhaleRows = whaleRows.filter((row) => row.costExcluded);
   const trackedWalletRows = toBoardRows(trackedWallets);
+  const [manualTeamWallet, setManualTeamWallet] = useState("");
+  const [manualTeamReason, setManualTeamReason] = useState("");
   const tokenPriceUsd =
     item.tokenPriceUsd === null || item.tokenPriceUsd === undefined ? null : toNumber(item.tokenPriceUsd);
   const liveFdvUsd =
@@ -456,6 +478,13 @@ export function ProjectOverviewSections({
       ? `榜单里仅有 ${formatInteger(Math.round(belowCostSpentV))} V 的买入资金成本低于当前${comparisonLabel}，分母是参与成本位计算的榜单 V。`
       : "等待榜单成本与当前估值数据。";
   const vCostPosition = comparisonFdvV !== null ? formatVPair(belowCostSpentV, totalComparableSpentV) : "-";
+  const submitManualExclude = () => {
+    const wallet = manualTeamWallet.trim();
+    if (!wallet || !onSetTeamOverride) return;
+    onSetTeamOverride(wallet, "exclude", manualTeamReason.trim() || "管理员手动排除");
+    setManualTeamWallet("");
+    setManualTeamReason("");
+  };
   const taxFdvBucket = hasTaxAdjustedFdv ? Math.floor(estimatedFdvWanUsdWithTax / 10) : null;
   const [taxFdvGlow, setTaxFdvGlow] = useState<"up" | "down" | null>(null);
   const previousTaxFdvBucketRef = useRef<number | null>(null);
@@ -466,11 +495,13 @@ export function ProjectOverviewSections({
     if (triggerGlowTimeoutRef.current !== null) window.clearTimeout(triggerGlowTimeoutRef.current);
     if (clearGlowTimeoutRef.current !== null) window.clearTimeout(clearGlowTimeoutRef.current);
 
-    setTaxFdvGlow(null);
     triggerGlowTimeoutRef.current = window.setTimeout(() => {
-      setTaxFdvGlow(direction);
-      clearGlowTimeoutRef.current = window.setTimeout(() => setTaxFdvGlow(null), TAX_FDV_GLOW_MS);
-    }, 20);
+      setTaxFdvGlow(null);
+      triggerGlowTimeoutRef.current = window.setTimeout(() => {
+        setTaxFdvGlow(direction);
+        clearGlowTimeoutRef.current = window.setTimeout(() => setTaxFdvGlow(null), TAX_FDV_GLOW_MS);
+      }, 20);
+    }, 0);
   };
 
   useEffect(() => {
@@ -673,11 +704,90 @@ export function ProjectOverviewSections({
 
       <SectionCard title="大户榜单">
         <BoardTable
-          rows={whaleRows}
+          rows={visibleWhaleRows}
           emptyTitle="当前还没有大户数据"
-          emptyDescription="项目在这个时间窗口内还没有形成可展示的大户榜。"
+          emptyDescription="项目在这个时间窗口内还没有形成可展示的大户榜，或当前榜单地址都已被过滤。"
         />
       </SectionCard>
+
+      {canManageTeamOverrides ? (
+        <details className="group rounded-[22px] border border-border/70 bg-[color:var(--surface-soft)] px-4 py-3 shadow-sm">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="text-sm font-semibold text-foreground">自动过滤</span>
+              <Badge variant={excludedWhaleRows.length ? "warning" : "secondary"} className="px-2 py-0.5 text-[11px]">
+                已隐藏 {formatInteger(excludedWhaleRows.length)} 个地址
+              </Badge>
+              {excludedSpentV > 0 ? (
+                <span className="text-xs text-muted-foreground">{formatSpentVInteger(excludedSpentV)}</span>
+              ) : null}
+            </div>
+            <span className="text-xs font-semibold text-primary group-open:hidden">展开</span>
+            <span className="hidden text-xs font-semibold text-primary group-open:inline">收起</span>
+          </summary>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_auto]">
+            <Input
+              value={manualTeamWallet}
+              onChange={(event) => setManualTeamWallet(event.target.value)}
+              placeholder="手动过滤钱包地址"
+              className="font-mono"
+            />
+            <Input
+              value={manualTeamReason}
+              onChange={(event) => setManualTeamReason(event.target.value)}
+              placeholder="备注，例如：团队钱包、初始低成本地址"
+            />
+            <Button type="button" onClick={submitManualExclude} disabled={!manualTeamWallet.trim()}>
+              加入排除
+            </Button>
+          </div>
+
+          {excludedWhaleRows.length ? (
+            <div className="mt-4 space-y-2">
+              {excludedWhaleRows.map((row) => {
+                const pending = teamOverridePendingWallet?.toLowerCase() === row.wallet.toLowerCase();
+                return (
+                  <div
+                    key={row.wallet}
+                    className="grid gap-3 rounded-[18px] border border-border/70 bg-background/70 p-3 md:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-semibold text-foreground" title={row.wallet}>
+                          {formatAddress(row.wallet)}
+                        </span>
+                        <Badge variant="warning" className="px-2 py-0.5 text-[11px]">
+                          {row.teamOverrideAction === "exclude" ? "手动排除" : "自动过滤"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          投入 {formatSpentVInteger(row.spentV)}
+                        </span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                        {row.costExclusionReason || "疑似初始低成本/团队地址，默认不计入成本位。"}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => onSetTeamOverride?.(row.wallet, "include")}
+                    >
+                      纳入成本位
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-[18px] border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+              当前没有已过滤地址。
+            </div>
+          )}
+        </details>
+      ) : null}
 
       <SectionCard title="追踪钱包持仓">
         <BoardTable

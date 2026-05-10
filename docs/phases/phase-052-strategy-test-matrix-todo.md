@@ -67,6 +67,7 @@
 - [x] 输出 Overfit warning。
 - [x] 输出 Dry-run candidates。
 - [x] 输出 Reject list。
+- [x] 追加硬门槛重筛：榜单人数 `20`、榜单 V `>= 50,000`、税率 `<= 95%`。
 
 ## 8. 验证
 

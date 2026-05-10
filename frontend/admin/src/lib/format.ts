@@ -42,9 +42,15 @@ export function formatDecimal(
 ) {
   const num = Number(value ?? 0);
   if (!Number.isFinite(num)) return "-";
+  const safeMaximumFractionDigits = Math.max(
+    0,
+    Math.min(20, Math.trunc(Number(maximumFractionDigits) || 0)),
+  );
+  const minimumFractionDigits =
+    num !== 0 && Math.abs(num) < 1 ? Math.min(2, safeMaximumFractionDigits) : 0;
   return new Intl.NumberFormat("zh-CN", {
-    maximumFractionDigits,
-    minimumFractionDigits: num !== 0 && Math.abs(num) < 1 ? 2 : 0,
+    maximumFractionDigits: safeMaximumFractionDigits,
+    minimumFractionDigits,
   }).format(num);
 }
 

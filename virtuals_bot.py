@@ -12,6 +12,7 @@ import signal
 import sqlite3
 import smtplib
 import ssl
+import statistics
 import time
 import urllib.parse
 import uuid
@@ -1148,6 +1149,21 @@ class Storage:
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY(project, buyer)
             );
+
+            CREATE TABLE IF NOT EXISTS team_address_overrides (
+                project TEXT NOT NULL,
+                wallet TEXT NOT NULL,
+                action TEXT NOT NULL,
+                reason TEXT NOT NULL DEFAULT '',
+                operator_user_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY(project, wallet),
+                CHECK(action IN ('include', 'exclude'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_team_address_overrides_project
+                ON team_address_overrides(project, action, updated_at DESC);
 
             CREATE TABLE IF NOT EXISTS project_stats (
                 project TEXT PRIMARY KEY,
@@ -3853,6 +3869,92 @@ class Storage:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def list_team_address_overrides(self, project: str) -> List[Dict[str, Any]]:
+        project_value = require_nonempty_text(project, "project")
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM team_address_overrides
+            WHERE project = ?
+            ORDER BY updated_at DESC, wallet ASC
+            """,
+            (project_value,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_team_address_override_map(self, project: str) -> Dict[str, Dict[str, Any]]:
+        overrides: Dict[str, Dict[str, Any]] = {}
+        for row in self.list_team_address_overrides(project):
+            try:
+                wallet = normalize_address(str(row.get("wallet") or ""))
+            except ValueError:
+                continue
+            overrides[wallet] = row
+        return overrides
+
+    def upsert_team_address_override(
+        self,
+        *,
+        project: str,
+        wallet: str,
+        action: str,
+        reason: str = "",
+        operator_user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        project_value = require_nonempty_text(project, "project")
+        wallet_value = normalize_address(wallet)
+        action_value = str(action or "").strip().lower()
+        if action_value not in {"include", "exclude"}:
+            raise ValueError("action must be include or exclude")
+        reason_value = str(reason or "").strip()[:240]
+        now = int(time.time())
+        self.conn.execute(
+            """
+            INSERT INTO team_address_overrides(
+                project, wallet, action, reason, operator_user_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project, wallet) DO UPDATE SET
+                action = excluded.action,
+                reason = excluded.reason,
+                operator_user_id = excluded.operator_user_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                project_value,
+                wallet_value,
+                action_value,
+                reason_value,
+                int(operator_user_id) if operator_user_id is not None else None,
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM team_address_overrides
+            WHERE project = ? AND wallet = ?
+            """,
+            (project_value, wallet_value),
+        ).fetchone()
+        if not row:
+            raise ValueError("failed to persist team address override")
+        return dict(row)
+
+    def delete_team_address_override(self, *, project: str, wallet: str) -> bool:
+        project_value = require_nonempty_text(project, "project")
+        wallet_value = normalize_address(wallet)
+        cur = self.conn.execute(
+            """
+            DELETE FROM team_address_overrides
+            WHERE project = ? AND wallet = ?
+            """,
+            (project_value, wallet_value),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def query_project_first_buy_features(
         self,
         project: str,
@@ -5739,6 +5841,8 @@ class VirtualsBot:
             project_name,
             [str(item.get("wallet") or "") for item in items],
         )
+        tax_filter_context = await self.build_project_tax_filter_context(project_name)
+        team_overrides = self.storage.get_team_address_override_map(project_name)
         cost_fdv_by_wallet: Dict[str, Decimal] = {}
         token_by_wallet: Dict[str, Decimal] = {}
 
@@ -5753,11 +5857,19 @@ class VirtualsBot:
             row["isTeamCandidate"] = False
             row["costExcluded"] = False
             row["costExclusionReason"] = None
+            row["teamOverrideAction"] = None
+            row["teamOverrideReason"] = None
+            row["teamOverrideUpdatedAt"] = None
 
             try:
                 wallet = normalize_address(str(row.get("wallet") or ""))
                 cost_fdv_by_wallet[wallet] = fdv_v
                 token_by_wallet[wallet] = token
+                override = team_overrides.get(wallet)
+                if override:
+                    row["teamOverrideAction"] = str(override.get("action") or "")
+                    row["teamOverrideReason"] = str(override.get("reason") or "")
+                    row["teamOverrideUpdatedAt"] = int(override.get("updated_at") or 0)
             except ValueError:
                 wallet = ""
 
@@ -5778,8 +5890,20 @@ class VirtualsBot:
             except ValueError:
                 continue
 
+            override = team_overrides.get(wallet)
+            override_action = str((override or {}).get("action") or "").strip().lower()
+            override_reason = str((override or {}).get("reason") or "").strip()
+            if override_action == "exclude":
+                row["isTeamCandidate"] = True
+                row["costExcluded"] = True
+                row["costExclusionReason"] = override_reason or "管理员手动排除，不计入打新成本位。"
+                continue
+
             feature = first_buy_features.get(wallet)
             if not feature:
+                if override_action == "include":
+                    row["costExcluded"] = False
+                    row["costExclusionReason"] = None
                 continue
 
             token = token_by_wallet.get(wallet, Decimal(0))
@@ -5802,7 +5926,15 @@ class VirtualsBot:
             token_share_board = (token / total_board_token) if total_board_token > 0 else Decimal(0)
             large_token_share = token_share_total >= Decimal("0.05") or token_share_board >= Decimal("0.50")
             opening_buy = first_buy_delay_sec is not None and first_buy_delay_sec <= 300
+            first_minute_buy = first_buy_delay_sec is not None and first_buy_delay_sec <= 60
             zero_or_near_zero_tax = first_tax_v <= Decimal("0.000001")
+            expected_first_tax_rate = self.compute_expected_buy_tax_rate_from_context(
+                tax_filter_context,
+                event_ts=first_block_ts,
+            )
+            expected_tax_positive = (
+                expected_first_tax_rate is not None and int(expected_first_tax_rate) > 0
+            )
             extreme_low_cost = (
                 lowest_other_cost is not None
                 and lowest_other_cost > 0
@@ -5810,18 +5942,30 @@ class VirtualsBot:
                 and fdv_v <= lowest_other_cost * Decimal("0.25")
             )
             strong_size_signal = token_share_total >= Decimal("0.20") or token_share_board >= Decimal("0.70")
-            is_team_candidate = (
+            first_minute_zero_tax_when_tax_expected = (
+                first_minute_buy
+                and zero_or_near_zero_tax
+                and expected_tax_positive
+            )
+            legacy_team_candidate = (
                 large_token_share
                 and opening_buy
                 and (zero_or_near_zero_tax or extreme_low_cost)
                 and (extreme_low_cost or strong_size_signal)
             )
-            if not is_team_candidate:
+            is_team_candidate = first_minute_zero_tax_when_tax_expected or legacy_team_candidate
+            if override_action == "include":
+                row["isTeamCandidate"] = bool(is_team_candidate)
+                row["costExcluded"] = False
+                row["costExclusionReason"] = "管理员已纳入成本位。" if is_team_candidate else None
                 continue
-
-            row["isTeamCandidate"] = True
-            row["costExcluded"] = True
-            row["costExclusionReason"] = "开盘极早期、低税/无税且买到占比异常高，默认不计入打新成本位。"
+            if is_team_candidate:
+                row["isTeamCandidate"] = True
+                row["costExcluded"] = True
+                if first_minute_zero_tax_when_tax_expected:
+                    row["costExclusionReason"] = "首分钟零税但当时预期应有税，默认不计入打新成本位。"
+                else:
+                    row["costExclusionReason"] = "开盘极早期、低税/无税且买到占比异常高，默认不计入打新成本位。"
 
         return enriched
 
@@ -6021,6 +6165,60 @@ class VirtualsBot:
 
         tax_rate = min(anti_tax + base_tax, Decimal(99))
         return int(tax_rate.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    async def build_project_tax_filter_context(self, project_name: str) -> Dict[str, Any]:
+        managed_row = self._find_managed_project_by_name(project_name)
+        if not managed_row:
+            return {"known": False}
+
+        virtuals_data: Dict[str, Any] = {}
+        signalhub_project_id = str(managed_row.get("signalhub_project_id") or "").strip()
+        if signalhub_project_id:
+            virtuals_data = await self.fetch_virtuals_launch_info(signalhub_project_id)
+
+        launch_info = virtuals_data.get("launchInfo") if isinstance(virtuals_data, dict) else None
+        launch_info = launch_info if isinstance(launch_info, dict) else {}
+        factory = virtuals_data.get("factory") or None
+        category = virtuals_data.get("category") or None
+        anti_sniper_tax_type = launch_info.get("antiSniperTaxType")
+        launch_mode = self.classify_virtuals_launch_mode(virtuals_data, launch_info)
+        tax_start_at = parse_virtuals_timestamp(virtuals_data.get("launchedAt"))
+        if not tax_start_at:
+            with contextlib.suppress(Exception):
+                tax_start_at = int(managed_row.get("start_at") or 0) or None
+
+        schedule = self.resolve_buy_tax_schedule(
+            factory=factory,
+            category=category,
+            anti_sniper_tax_type=anti_sniper_tax_type,
+            is_project_60days=launch_mode.get("is_project_60days"),
+        )
+        return {
+            "known": bool(schedule.get("known")) and bool(tax_start_at),
+            "tax_start_at": tax_start_at,
+            "factory": factory,
+            "category": category,
+            "anti_sniper_tax_type": anti_sniper_tax_type,
+            "is_project_60days": launch_mode.get("is_project_60days"),
+            "status": schedule.get("status"),
+        }
+
+    def compute_expected_buy_tax_rate_from_context(
+        self,
+        tax_context: Dict[str, Any],
+        *,
+        event_ts: int,
+    ) -> Optional[int]:
+        if not tax_context.get("known") or not event_ts:
+            return None
+        return self.compute_buy_tax_rate(
+            tax_start_at=parse_optional_int(tax_context.get("tax_start_at"), "tax_start_at"),
+            factory=tax_context.get("factory"),
+            category=tax_context.get("category"),
+            anti_sniper_tax_type=tax_context.get("anti_sniper_tax_type"),
+            is_project_60days=tax_context.get("is_project_60days"),
+            now_ts=int(event_ts),
+        )
 
     def classify_virtuals_launch_mode(
         self,
@@ -8331,7 +8529,7 @@ class VirtualsBot:
         )
         return candidates[0] if candidates else None
 
-    def build_strategy_lab_report_payload(self) -> Dict[str, Any]:
+    def build_strategy_lab_report_payload(self, project: Optional[str] = None) -> Dict[str, Any]:
         report_path = self.latest_strategy_test_report_path()
         if report_path is None:
             return {
@@ -8359,13 +8557,197 @@ class VirtualsBot:
         with report_path.open("r", encoding="utf-8") as fh:
             raw_report = json.load(fh)
 
+        project_key = str(project or "").strip().lower()
+
+        def dataset_project(dataset: Any) -> str:
+            text = str(dataset or "").strip().lower()
+            if text.startswith("sr_"):
+                return "sr"
+            if text.startswith("isc_"):
+                return "isc"
+            if text.startswith("tds_"):
+                return "tds"
+            return ""
+
+        def item_matches(item: Dict[str, Any]) -> bool:
+            return not project_key or dataset_project(item.get("dataset")) == project_key
+
+        def number(value: Any) -> float:
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
+        hard_gates = {
+            "minWhaleRows": 20,
+            "minBoardSpentV": 50000.0,
+            "maxTaxRate": 95.0,
+        }
+
+        def passes_strategy_hard_gates(item: Dict[str, Any]) -> bool:
+            rule = item.get("rule") if isinstance(item.get("rule"), dict) else {}
+            spent_threshold = number(rule.get("spentThresholdV"))
+            max_tax_rate = number(rule.get("maxTaxRate"))
+            min_whale_rows = rule.get("minWhaleRows")
+            if spent_threshold < hard_gates["minBoardSpentV"]:
+                return False
+            if max_tax_rate <= 0 or max_tax_rate > hard_gates["maxTaxRate"]:
+                return False
+            if min_whale_rows is not None and number(min_whale_rows) < hard_gates["minWhaleRows"]:
+                return False
+
+            buys = item.get("buys")
+            observed = buys if isinstance(buys, list) and buys else [item.get("firstBuy")]
+            observed = [row for row in observed if isinstance(row, dict)]
+            if not observed:
+                return False
+            for row in observed:
+                if number(row.get("board_spent_v")) < hard_gates["minBoardSpentV"]:
+                    return False
+                if number(row.get("tax_rate")) <= 0 or number(row.get("tax_rate")) > hard_gates["maxTaxRate"]:
+                    return False
+                if number(row.get("whale_rows")) < hard_gates["minWhaleRows"]:
+                    return False
+            return True
+
+        def summarize_results(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+            triggered = [item for item in items if int(item.get("buyCount") or 0) > 0]
+            positive = [item for item in triggered if number(item.get("finalPnlPct")) > 0]
+            pct_values = [number(item.get("finalPnlPct")) for item in triggered]
+            return {
+                "count": len(items),
+                "triggered": len(triggered),
+                "positive": len(positive),
+                "positiveRate": round(len(positive) / len(triggered), 4) if triggered else 0,
+                "medianFinalPnlPct": round(statistics.median(pct_values), 4) if pct_values else 0,
+                "minFinalPnlPct": round(min(pct_values), 4) if pct_values else 0,
+                "maxFinalPnlPct": round(max(pct_values), 4) if pct_values else 0,
+            }
+
+        def project_payload_from_results(raw_results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+            results = [item for item in raw_results if isinstance(item, dict) and item_matches(item)]
+            by_suite: Dict[str, List[Dict[str, Any]]] = {}
+            for item in results:
+                by_suite.setdefault(str(item.get("suite") or ""), []).append(item)
+            triggered = [item for item in results if int(item.get("buyCount") or 0) > 0]
+            eligible_triggered = [
+                item
+                for item in triggered
+                if passes_strategy_hard_gates(item)
+            ]
+            safe_triggered = [
+                item
+                for item in eligible_triggered
+                if not (
+                    set(item.get("riskFlags") or [])
+                    & {
+                        "no_fdv_cost_guard",
+                        "no_board_spent_guard",
+                        "low_sample_first_buy",
+                        "high_slippage",
+                        "high_latency",
+                        "tax_signal_risk",
+                    }
+                )
+            ]
+            top_score_source = safe_triggered or eligible_triggered
+            stable_zone = []
+            eligible_by_suite: Dict[str, List[Dict[str, Any]]] = {}
+            for item in eligible_triggered:
+                eligible_by_suite.setdefault(str(item.get("suite") or ""), []).append(item)
+            suite_summary = {
+                name: summarize_results(items)
+                for name, items in sorted(eligible_by_suite.items())
+                if name
+            }
+            for name, items in sorted(eligible_by_suite.items()):
+                summary = summarize_results(items)
+                if (
+                    summary["triggered"] >= 3
+                    and summary["positiveRate"] >= 0.8
+                    and summary["minFinalPnlPct"] > 0
+                ):
+                    stable_zone.append({"suite": name, **summary})
+            reject_flags = {
+                "no_fdv_cost_guard",
+                "no_board_spent_guard",
+                "low_sample_first_buy",
+                "high_slippage",
+                "high_latency",
+                "tax_signal_risk",
+            }
+            return {
+                "ruleCount": (
+                    int(raw_report.get("ruleCount") or 0)
+                    if not project_key
+                    else len({str(item.get("ruleName") or "") for item in results if item.get("ruleName")})
+                ),
+                "scenarioCount": (
+                    int(raw_report.get("scenarioCount") or 0)
+                    if not project_key
+                    else len({str(item.get("scenarioName") or "") for item in results if item.get("scenarioName")})
+                ),
+                "resultCount": int(raw_report.get("resultCount") or 0) if not project_key else len(results),
+                "suiteSummary": suite_summary,
+                "topByFinalReturn": sorted(eligible_triggered, key=lambda item: number(item.get("finalPnlPct")), reverse=True)[:40],
+                "topByRiskAdjustedScore": sorted(top_score_source, key=lambda item: number(item.get("score")), reverse=True)[:40],
+                "stableZone": sorted(
+                    stable_zone,
+                    key=lambda item: (number(item.get("medianFinalPnlPct")), number(item.get("positiveRate"))),
+                    reverse=True,
+                )[:40],
+                "failureCases": sorted(eligible_triggered, key=lambda item: number(item.get("finalPnlPct")))[:40],
+                "variableContribution": {},
+                "dryRunCandidates": [
+                    item
+                    for item in sorted(eligible_triggered, key=lambda item: number(item.get("score")), reverse=True)
+                    if item.get("suite") == "dry_run_candidates"
+                    and item.get("scenarioName") == "actual"
+                    and "low_sample_first_buy" not in (item.get("riskFlags") or [])
+                    and number(item.get("finalPnlPct")) > 0
+                ][:40],
+                "rejectList": [
+                    item
+                    for item in eligible_triggered
+                    if set(item.get("riskFlags") or []) & reject_flags
+                    or item.get("suite") == "control"
+                    or (item.get("filledMaxSpend") and number(item.get("finalPnlPct")) <= 0)
+                    or (number(item.get("worstDrawdownPct")) < -25 and number(item.get("finalPnlPct")) <= 0)
+                ][:40],
+            }
+
         def limit_items(key: str, limit: int = 40) -> List[Dict[str, Any]]:
             items = raw_report.get(key)
             if not isinstance(items, list):
                 return []
-            return [item for item in items[:limit] if isinstance(item, dict)]
+            filtered = [item for item in items if isinstance(item, dict) and item_matches(item)]
+            return filtered[:limit]
+
+        filtered_from_results = None
+        raw_results = raw_report.get("results")
+        if isinstance(raw_results, list):
+            filtered_from_results = project_payload_from_results(raw_results)
+
+        dataset_stats = raw_report.get("datasetStats") if isinstance(raw_report.get("datasetStats"), dict) else {}
+        if project_key:
+            dataset_stats = {
+                name: stats
+                for name, stats in dataset_stats.items()
+                if dataset_project(name) == project_key
+            }
 
         markdown_path = self.base_dir / "docs" / "phases" / "phase-052-strategy-test-matrix-report.md"
+        has_recomputed_metrics = filtered_from_results is not None
+        metrics = filtered_from_results if has_recomputed_metrics else {}
+        assumptions = raw_report.get("assumptions") if isinstance(raw_report.get("assumptions"), dict) else {}
+        assumptions = {
+            **assumptions,
+            "hardGates": {
+                "minWhaleRows": int(hard_gates["minWhaleRows"]),
+                "minBoardSpentV": "50000",
+                "maxTaxRate": "95",
+            },
+        }
         return {
             "ok": True,
             "available": True,
@@ -8373,18 +8755,25 @@ class VirtualsBot:
             "sourcePath": str(report_path.relative_to(self.base_dir)),
             "markdownPath": str(markdown_path.relative_to(self.base_dir)) if markdown_path.is_file() else None,
             "generatedAt": int(report_path.stat().st_mtime),
-            "datasetStats": raw_report.get("datasetStats") if isinstance(raw_report.get("datasetStats"), dict) else {},
-            "assumptions": raw_report.get("assumptions") if isinstance(raw_report.get("assumptions"), dict) else {},
-            "ruleCount": int(raw_report.get("ruleCount") or 0),
-            "scenarioCount": int(raw_report.get("scenarioCount") or 0),
-            "resultCount": int(raw_report.get("resultCount") or 0),
-            "suiteSummary": raw_report.get("suiteSummary") if isinstance(raw_report.get("suiteSummary"), dict) else {},
-            "topByFinalReturn": limit_items("topByFinalReturn"),
-            "topByRiskAdjustedScore": limit_items("topByRiskAdjustedScore"),
-            "stableZone": limit_items("stableZone"),
-            "failureCases": limit_items("failureCases"),
+            "project": project_key or None,
+            "datasetStats": dataset_stats,
+            "assumptions": assumptions,
+            "ruleCount": int(metrics.get("ruleCount") if has_recomputed_metrics else raw_report.get("ruleCount") or 0),
+            "scenarioCount": int(metrics.get("scenarioCount") if has_recomputed_metrics else raw_report.get("scenarioCount") or 0),
+            "resultCount": int(metrics.get("resultCount") if has_recomputed_metrics else raw_report.get("resultCount") or 0),
+            "suiteSummary": (
+                metrics.get("suiteSummary")
+                if has_recomputed_metrics
+                else raw_report.get("suiteSummary") if isinstance(raw_report.get("suiteSummary"), dict) else {}
+            ),
+            "topByFinalReturn": metrics.get("topByFinalReturn") if has_recomputed_metrics else limit_items("topByFinalReturn"),
+            "topByRiskAdjustedScore": metrics.get("topByRiskAdjustedScore") if has_recomputed_metrics else limit_items("topByRiskAdjustedScore"),
+            "stableZone": metrics.get("stableZone") if has_recomputed_metrics else limit_items("stableZone"),
+            "failureCases": metrics.get("failureCases") if has_recomputed_metrics else limit_items("failureCases"),
             "variableContribution": (
-                raw_report.get("variableContribution")
+                metrics.get("variableContribution")
+                if has_recomputed_metrics
+                else raw_report.get("variableContribution")
                 if isinstance(raw_report.get("variableContribution"), dict)
                 else {}
             ),
@@ -8393,14 +8782,16 @@ class VirtualsBot:
                 if isinstance(raw_report.get("overfitWarnings"), list)
                 else []
             ),
-            "dryRunCandidates": limit_items("dryRunCandidates"),
-            "rejectList": limit_items("rejectList"),
+            "dryRunCandidates": metrics.get("dryRunCandidates") if has_recomputed_metrics else limit_items("dryRunCandidates"),
+            "rejectList": metrics.get("rejectList") if has_recomputed_metrics else limit_items("rejectList"),
         }
 
     async def strategy_lab_report_handler(self, request: web.Request) -> web.Response:
         self.require_admin(request)
         try:
-            return web.json_response(self.build_strategy_lab_report_payload())
+            return web.json_response(
+                self.build_strategy_lab_report_payload(project=request.query.get("project"))
+            )
         except Exception as e:
             return web.json_response(
                 {
@@ -9563,6 +9954,68 @@ class VirtualsBot:
                 return web.json_response({"error": str(e)}, status=404)
             return web.json_response({"error": str(e)}, status=400)
 
+    async def team_address_override_upsert_handler(self, request: web.Request) -> web.Response:
+        operator = self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_id = int(raw_project_id)
+        except ValueError:
+            return web.json_response({"error": "project_id must be integer"}, status=400)
+        project_row = self.storage.get_managed_project(project_id)
+        if not project_row:
+            return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            row = self.storage.upsert_team_address_override(
+                project=str(project_row.get("name") or ""),
+                wallet=str(payload.get("wallet") or ""),
+                action=str(payload.get("action") or ""),
+                reason=str(payload.get("reason") or ""),
+                operator_user_id=int(operator.get("id") or 0) or None,
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "item": row,
+                    "items": self.storage.list_team_address_overrides(str(project_row.get("name") or "")),
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def team_address_override_delete_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        raw_wallet = str(request.match_info.get("wallet", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_id = int(raw_project_id)
+        except ValueError:
+            return web.json_response({"error": "project_id must be integer"}, status=400)
+        project_row = self.storage.get_managed_project(project_id)
+        if not project_row:
+            return web.json_response({"error": f"managed project not found: {project_id}"}, status=404)
+        try:
+            deleted = self.storage.delete_team_address_override(
+                project=str(project_row.get("name") or ""),
+                wallet=raw_wallet,
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "deleted": deleted,
+                    "items": self.storage.list_team_address_overrides(str(project_row.get("name") or "")),
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
     async def signalhub_watch_add_handler(self, request: web.Request) -> web.Response:
         try:
             payload = await request.json()
@@ -9895,7 +10348,9 @@ class VirtualsBot:
                 ),
                 content_type="text/plain",
             )
-        return web.FileResponse(index_file)
+        response = web.FileResponse(index_file)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     async def favicon_handler(self, request: web.Request) -> web.Response:
         favicon_png = self.base_dir / "favicon" / "favicon-32x32.png"
@@ -10205,6 +10660,8 @@ class VirtualsBot:
         app.router.add_get("/api/admin/projects/{project_id}/market", admin_only(self.admin_project_market_handler))
         app.router.add_post("/api/admin/projects", admin_only(self.managed_project_upsert_handler))
         app.router.add_delete("/api/admin/projects/{project_id}", admin_only(self.managed_project_delete_handler))
+        app.router.add_post("/api/admin/projects/{project_id}/team-address-overrides", admin_only(self.team_address_override_upsert_handler))
+        app.router.add_delete("/api/admin/projects/{project_id}/team-address-overrides/{wallet}", admin_only(self.team_address_override_delete_handler))
         app.router.add_get("/api/admin/strategy-lab/report", admin_only(self.strategy_lab_report_handler))
         app.router.add_get("/api/admin/signalhub", admin_only(self.signalhub_upcoming_handler))
         app.router.add_get("/api/admin/health", admin_only(self.health_handler))
