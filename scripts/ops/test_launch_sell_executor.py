@@ -106,7 +106,7 @@ def test_roi_uses_auto_buy_units_and_spot_fdv() -> None:
     assert_eq(roi, Decimal("50.0"), "roi pct")
 
 
-def test_latest_unseen_buy_event_marks_seen() -> None:
+def test_latest_unseen_buy_event_only_skips_processed_txs() -> None:
     class Cursor:
         def fetchall(self):
             return [
@@ -124,17 +124,21 @@ def test_latest_unseen_buy_event_marks_seen() -> None:
     class Bot:
         storage = Storage()
 
-    seen: set[str] = set()
-    event = latest_unseen_buy_event(Bot(), project_name="T", since_ts=0, seen_txs=seen)
+    processed: set[str] = set()
+    event = latest_unseen_buy_event(Bot(), project_name="T", since_ts=0, processed_txs=processed)
     assert_eq(event["tx_hash"], "0x2", "largest unseen")
-    assert_eq(seen, {"0x1", "0x2"}, "seen set")
-    assert_eq(latest_unseen_buy_event(Bot(), project_name="T", since_ts=0, seen_txs=seen), None, "no repeats")
+    assert_eq(processed, set(), "query does not mutate processed set")
+    repeat = latest_unseen_buy_event(Bot(), project_name="T", since_ts=0, processed_txs=processed)
+    assert_eq(repeat["tx_hash"], "0x2", "unprocessed event remains eligible")
+    processed.add("0x2")
+    fallback = latest_unseen_buy_event(Bot(), project_name="T", since_ts=0, processed_txs=processed)
+    assert_eq(fallback["tx_hash"], "0x1", "processed largest event is skipped")
 
 
 def main() -> None:
     test_position_rebuild_from_buy_and_sell_receipts()
     test_roi_uses_auto_buy_units_and_spot_fdv()
-    test_latest_unseen_buy_event_marks_seen()
+    test_latest_unseen_buy_event_only_skips_processed_txs()
     print("launch_sell_executor tests ok")
 
 

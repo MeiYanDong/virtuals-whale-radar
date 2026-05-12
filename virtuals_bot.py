@@ -274,6 +274,7 @@ EVENT_BOOL_FIELDS = {"is_my_wallet", "anomaly", "is_price_stale"}
 MANAGED_PROJECT_STATUSES = {"draft", "scheduled", "prelaunch", "live", "ended", "removed"}
 PROJECT_PRELAUNCH_LEAD_SEC = 30 * 60
 PROJECT_SCHEDULER_INTERVAL_SEC = 30
+BACKFILL_CURSOR_STATE_KEY = "backfill_last_scanned_block"
 USER_STATUSES = {"active", "disabled", "archived"}
 USER_ROLES = {"admin", "user"}
 USER_SOURCES = {"self_signup", "admin_created"}
@@ -8005,15 +8006,15 @@ class VirtualsBot:
         hint_block: int,
         launch_configs: Optional[List[LaunchConfig]] = None,
         rpc: Optional[RPCClient] = None,
-    ) -> None:
+    ) -> bool:
         try:
             rpc_client = rpc or self.http_rpc
             receipt = await self.get_receipt_with_short_retry(rpc_client, tx_hash)
             if not receipt:
                 self.stats["receipt_misses"] = int(self.stats.get("receipt_misses", 0)) + 1
-                return
+                return False
             if receipt.get("status") and int(receipt["status"], 16) == 0:
-                return
+                return True
 
             block_number = int(receipt["blockNumber"], 16)
             timestamp = await self.get_block_timestamp(block_number, rpc=rpc_client)
@@ -8039,6 +8040,7 @@ class VirtualsBot:
                 await self.emit_parsed_events(all_events, block_number)
 
             self.stats["processed_txs"] += 1
+            return True
         except Exception as e:
             self.stats["rpc_errors"] += 1
             self.storage.save_dead_letter(
@@ -8047,6 +8049,7 @@ class VirtualsBot:
                 payload={"hint_block": hint_block},
             )
             self.stats["dead_letters"] += 1
+            return False
         finally:
             self.pending_txs.discard(tx_hash)
 
@@ -8450,7 +8453,7 @@ class VirtualsBot:
                             job["skippedTx"] = int(job.get("skippedTx", 0)) + len(known)
                             todo_list = [x for x in tx_list if x not in known]
 
-                    processed_now = await self.process_scan_tx_batch(
+                    processed_now, processed_hashes = await self.process_scan_tx_batch(
                         tx_hashes=todo_list,
                         hint_block=end_block,
                         launch_configs=launch_configs,
@@ -8462,8 +8465,8 @@ class VirtualsBot:
                         canceled = True
                     if canceled:
                         break
-                    if project and todo_list:
-                        self.storage.mark_backfill_scanned_txs(project, todo_list)
+                    if project and processed_hashes:
+                        self.storage.mark_backfill_scanned_txs(project, processed_hashes)
                     await self.flush_once(force=True)
 
                     job["processedChunks"] = int(job.get("processedChunks", 0)) + 1
@@ -8505,11 +8508,12 @@ class VirtualsBot:
         launch_configs: List[LaunchConfig],
         rpc: RPCClient,
         is_canceled: Callable[[], bool],
-    ) -> int:
+    ) -> Tuple[int, List[str]]:
         if not tx_hashes:
-            return 0
+            return 0, []
 
         processed = 0
+        processed_hashes: List[str] = []
         processed_lock = asyncio.Lock()
         semaphore = asyncio.Semaphore(self.scan_receipt_worker_count())
 
@@ -8518,17 +8522,19 @@ class VirtualsBot:
             async with semaphore:
                 if is_canceled() or not await self.wait_until_resumed():
                     return
-                await self.process_tx(
+                ok = await self.process_tx(
                     tx_hash,
                     hint_block,
                     launch_configs=launch_configs,
                     rpc=rpc,
                 )
-                async with processed_lock:
-                    processed += 1
+                if ok:
+                    async with processed_lock:
+                        processed += 1
+                        processed_hashes.append(tx_hash)
 
         await asyncio.gather(*(process_one(tx_hash) for tx_hash in tx_hashes))
-        return processed
+        return processed, processed_hashes
 
     async def run_scan_range_job_bus(self, job: Dict[str, Any]) -> None:
         job_id = str(job["id"])
@@ -8602,19 +8608,20 @@ class VirtualsBot:
                             skipped_tx += len(known)
                             todo_list = [x for x in tx_list if x not in known]
 
-                    processed_tx += await self.process_scan_tx_batch(
+                    processed_now, processed_hashes = await self.process_scan_tx_batch(
                         tx_hashes=todo_list,
                         hint_block=end_block,
                         launch_configs=launch_configs,
                         rpc=scan_rpc,
                         is_canceled=lambda: self.event_bus.is_scan_job_cancel_requested(job_id),
                     )
+                    processed_tx += processed_now
                     if self.event_bus.is_scan_job_cancel_requested(job_id):
                         canceled = True
                     if canceled:
                         break
-                    if project and todo_list:
-                        self.storage.mark_backfill_scanned_txs(project, todo_list)
+                    if project and processed_hashes:
+                        self.storage.mark_backfill_scanned_txs(project, processed_hashes)
 
                     processed_chunks += 1
                     current = end_block + 1
@@ -8656,7 +8663,7 @@ class VirtualsBot:
                 )
 
     async def backfill_loop(self) -> None:
-        checkpoint_raw = self.storage.get_state("last_processed_block")
+        checkpoint_raw = self.storage.get_state(BACKFILL_CURSOR_STATE_KEY)
         if checkpoint_raw:
             cursor = int(checkpoint_raw)
         else:
@@ -8671,7 +8678,7 @@ class VirtualsBot:
                 if cursor is None:
                     latest = await scan_rpc.get_latest_block_number()
                     cursor = max(0, latest - 20)
-                    self.storage.set_state("last_processed_block", str(cursor))
+                    self.storage.set_state(BACKFILL_CURSOR_STATE_KEY, str(cursor))
                 if self.scan_lock.locked():
                     await asyncio.sleep(1)
                     continue
@@ -8689,6 +8696,7 @@ class VirtualsBot:
                 txs = await self.fetch_backfill_txhashes(
                     cursor + 1, to_block, launch_configs, rpc=scan_rpc
                 )
+                receipt_misses_before = int(self.stats.get("receipt_misses", 0))
                 for tx_hash in txs:
                     await self.enqueue_tx(
                         tx_hash,
@@ -8697,8 +8705,11 @@ class VirtualsBot:
                     )
                 if txs:
                     await self.queue.join()
+                    if int(self.stats.get("receipt_misses", 0)) > receipt_misses_before:
+                        await asyncio.sleep(self.cfg.backfill_interval_sec)
+                        continue
                 cursor = to_block
-                self.storage.set_state("last_processed_block", str(cursor))
+                self.storage.set_state(BACKFILL_CURSOR_STATE_KEY, str(cursor))
                 self.stats["last_backfill_block"] = cursor
             except Exception:
                 await asyncio.sleep(2)
@@ -8742,6 +8753,7 @@ class VirtualsBot:
                 "pendingTx": pending_tx,
                 "stats": stats,
                 "lastProcessedBlock": self.storage.get_state("last_processed_block"),
+                "lastBackfillScannedBlock": self.storage.get_state(BACKFILL_CURSOR_STATE_KEY),
                 "price": decimal_to_str(p, 18) if p is not None else None,
                 "monitoringProjects": [x.name for x in self.get_launch_configs()],
                 "scanJobs": scan_jobs,

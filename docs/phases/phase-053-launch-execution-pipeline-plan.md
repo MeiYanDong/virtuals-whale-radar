@@ -458,7 +458,7 @@ ROO 部署状态：
 - 状态来源：
   - 从 `launch_execution_ledger` 重建本程序买入收到的 token、已卖 token、已卖比例和冷却状态。
   - 每轮读取 burner 当前 token 余额，真实余额低于目标时按余额上限卖出。
-  - 从实时 `events` 表读取最新大额买入事件。
+  - 从实时 `events` 表读取 `--catch-up-events-sec` 窗口内的大额买入事件；只有成功卖出账本里的 `processedLargeBuyTxs` 会参与去重，避免在税率尚未进入 `<=30%` 时把大单提前标记为已处理。
 - 广播门禁：service 内置 `VWR_ENABLE_AUTO_SELL_BROADCAST=1`，ExecStart 显式 `--mode broadcast --enable-broadcast`。
 - 精确授权门禁：service 内置 `VWR_ENABLE_AUTO_SELL_APPROVE=1`，ExecStart 显式 `--auto-approve`；只有目标 token allowance 不足时，才精确授权本次卖出数量。
 - RPC：使用独立 execution Chainstack endpoint，默认拒绝共享主采集 RPC 广播。
@@ -499,7 +499,8 @@ ROO 部署状态：
 - 单笔上限：`--max-buy-v`，ROO 当前为 `50V`。
 - 单项目上限：`--max-project-v`，ROO 当前为 `300V`。
 - 同一税率档最多一次：执行器会读取 `launch_execution_ledger.trade_sent=1` 记录阻断重复广播。
-- 任意 simulation/sign/prewarm/broadcast/receipt 异常熔断。
+- 重启恢复：执行器启动时从 `launch_execution_ledger.trade_sent=1` 重建已买税率、自有加权成本和上一税率买点，避免 systemd 重启后丢失 dip20 / 横盘暂停判断。
+- `sign-ready/broadcast` 下任意 simulation/sign/prewarm/broadcast/receipt 异常熔断；`simulate` 只读模式只记账不熔断，避免灰度观察误挡真实执行。
 - 自动卖出边界：生产常驻执行器已接入 ROO timer，但真实 live 窗口里的 SellIntent -> approval/simulation/broadcast/receipt 尚待第一次实盘验证。
 
 ## 6. 验收标准

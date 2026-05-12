@@ -427,7 +427,7 @@ def latest_unseen_buy_event(
     *,
     project_name: str,
     since_ts: int,
-    seen_txs: set[str],
+    processed_txs: set[str],
 ) -> dict[str, Any] | None:
     rows = bot.storage.conn.execute(
         """
@@ -443,9 +443,8 @@ def latest_unseen_buy_event(
     for row in rows:
         item = dict(row)
         tx_hash = str(item.get("tx_hash") or "").lower()
-        if not tx_hash or tx_hash in seen_txs:
+        if not tx_hash or tx_hash in processed_txs:
             continue
-        seen_txs.add(tx_hash)
         candidates.append(item)
     if not candidates:
         return None
@@ -993,9 +992,6 @@ async def async_main() -> None:
     last_logged_heartbeat = 0.0
     sample_count = 0
     counts = {"sell": 0, "hold": 0, "skip": 0, "simulation": 0}
-    seen_txs: set[str] = set()
-    event_since_ts = int(time.time()) - max(0, int(args.catch_up_events_sec))
-
     async with VirtualsBot(cfg, role="backfill") as bot:
         project_row = find_project(bot, str(args.project))
         project_name = str(project_row.get("name") or args.project).strip()
@@ -1046,19 +1042,22 @@ async def async_main() -> None:
                         sample.get("liveFdvUsd"),
                         sample.get("estimatedFdvWanUsdWithTax"),
                     )
-                    latest_buy = latest_unseen_buy_event(
-                        bot,
-                        project_name=project_name,
-                        since_ts=event_since_ts,
-                        seen_txs=seen_txs,
-                    )
-                    event_since_ts = max(event_since_ts, int(sample.get("simTimestamp") or now_ts) - 5)
                     current_balance_raw = 0
                     if token and token != "0x0000000000000000000000000000000000000000":
                         current_balance_raw = await read_erc20_balance(rpc, token=token, owner=owner)
                     rows = bot.storage.list_launch_execution_records(project_name, limit=500)
                     position = build_position_from_records(rows=rows, current_balance_raw=current_balance_raw)
                     state = dual_state_from_position(position)
+                    event_since_ts = max(
+                        0,
+                        int(sample.get("simTimestamp") or now_ts) - max(0, int(args.catch_up_events_sec)),
+                    )
+                    latest_buy = latest_unseen_buy_event(
+                        bot,
+                        project_name=project_name,
+                        since_ts=event_since_ts,
+                        processed_txs=state.processed_large_buy_txs,
+                    )
                     roi_pct = current_roi_pct(position, sample)
                     latest_buy_v = decimal_or_none(latest_buy.get("spent_v_est")) if latest_buy else None
                     latest_buy_tx = str(latest_buy.get("tx_hash") or "").lower() if latest_buy else None

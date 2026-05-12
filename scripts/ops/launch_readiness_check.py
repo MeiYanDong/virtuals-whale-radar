@@ -212,6 +212,7 @@ async def async_main() -> None:
         if not token_addr or not pool_addr:
             output["ready"] = False
             output["reason"] = "missing_token_or_pool"
+            output["reasons"] = ["missing_token_or_pool"]
         else:
             async with RPCClient(rpc_url, max_retries=3, timeout_sec=20) as rpc:
                 gas_balance_hex = await rpc.call("eth_getBalance", [from_addr, "latest"])

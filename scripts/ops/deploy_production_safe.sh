@@ -37,6 +37,7 @@ FILES=(
   frontend/admin/dist/
   docs/PLAN.md
   docs/todo.md
+  docs/源码导读图.md
   docs/requirements-outline.md
   docs/plan-index.md
   docs/todo-index.md
@@ -99,6 +100,7 @@ FILES=(
   scripts/ops/test_execution_rpc.py
   scripts/ops/test_launch_execution_pipeline.py
   scripts/ops/test_launch_rpc_pressure_probe.py
+  scripts/ops/test_launch_prewarm_executor.py
   scripts/ops/test_launch_sell_executor.py
   scripts/ops/test_launch_sell_strategy.py
   scripts/ops/tx_simulator_probe.py

@@ -50,6 +50,7 @@ from launch_execution_pipeline import (  # noqa: E402
     BURNER_PRIVATE_KEY_ENV,
     DynamicAfter1StrategyEvaluator,
     LocalSigner,
+    StrategyState,
     TxSimulator,
     VIRTUALS_BUY_SPENDER,
     VirtualsOrderBinder,
@@ -294,6 +295,63 @@ def tax_rate_already_sent(
     return False
 
 
+def rebuild_strategy_state_from_sent_rows(rows: list[dict[str, Any]]) -> StrategyState:
+    state = StrategyState()
+    last_buy: dict[str, Any] | None = None
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            int(row.get("created_at") or 0),
+            int(row.get("updated_at") or 0),
+            int(row.get("id") or 0),
+        ),
+    )
+    for row in ordered:
+        action = str(row.get("action") or "").strip()
+        if action not in {"would_buy", "buy"}:
+            continue
+        tax_key = normalized_tax_key(row.get("tax_rate"))
+        buy_size = decimal_value(row.get("buy_size_v"))
+        entry = decimal_value(row.get("entry_tax_fdv_wan_usd"))
+        if tax_key:
+            state.bought_tax_rates.add(tax_key)
+        if buy_size > 0 and entry > 0:
+            state.total_spent_v += buy_size
+            state.weighted_cost_numerator += buy_size * entry
+            if tax_key:
+                last_buy = {"taxRate": tax_key, "entryTaxFdvWanUsd": str(entry)}
+    state.pending_pause_buy = last_buy
+    return state
+
+
+def restore_strategy_state_from_ledger(
+    evaluator: DynamicAfter1StrategyEvaluator,
+    bot: VirtualsBot,
+    *,
+    project_name: str,
+    strategy_name: str,
+    rule_name: str,
+) -> StrategyState:
+    evaluator.state = rebuild_strategy_state_from_sent_rows(
+        sent_records(
+            bot,
+            project_name=project_name,
+            strategy_name=strategy_name,
+            rule_name=rule_name,
+        )
+    )
+    return evaluator.state
+
+
+def compact_strategy_state(state: StrategyState) -> dict[str, Any]:
+    return {
+        "boughtTaxRates": sorted(state.bought_tax_rates),
+        "pendingPauseBuy": state.pending_pause_buy,
+        "totalSpentV": str(state.total_spent_v),
+        "ownWeightedCostWanUsd": str(state.own_weighted_cost) if state.own_weighted_cost is not None else None,
+    }
+
+
 def receipt_summary(receipt: dict[str, Any] | None, receipt_deltas: dict[str, Any] | None) -> dict[str, Any] | None:
     if not receipt and not receipt_deltas:
         return None
@@ -471,17 +529,20 @@ async def prewarm_intent(
         reason = "missing_token_or_pool"
         payload["event"] = "prewarm_failed"
         payload["reason"] = reason
-        fuse = trigger_fuse(
-            bot,
-            project_name=project_name,
-            strategy_name=strategy_name,
-            rule_name=rule_name,
-            intent_id=intent_id,
-            failure_stage="order_binding",
-            failure_reason=reason,
-            details={"tokenAddr": token_addr, "poolAddr": pool_addr},
-        )
-        payload["activeFuse"] = compact_fuse(fuse)
+        should_fuse = args.mode != "simulate"
+        payload["fuseTriggered"] = should_fuse
+        if should_fuse:
+            fuse = trigger_fuse(
+                bot,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+                intent_id=intent_id,
+                failure_stage="order_binding",
+                failure_reason=reason,
+                details={"tokenAddr": token_addr, "poolAddr": pool_addr},
+            )
+            payload["activeFuse"] = compact_fuse(fuse)
         update_ledger_stage(
             bot,
             intent_id=intent_id,
@@ -491,8 +552,8 @@ async def prewarm_intent(
             mode=mode,
             status="order_binding_failed",
             reason=reason,
-            failure_stage="order_binding",
-            failure_reason=reason,
+            failure_stage="order_binding" if should_fuse else None,
+            failure_reason=reason if should_fuse else None,
         )
         return payload
 
@@ -751,17 +812,20 @@ async def prewarm_intent(
     except Exception as exc:
         reason = str(exc)
         payload.update({"event": "prewarm_failed", "reason": reason, "timingsMs": timings})
-        fuse = trigger_fuse(
-            bot,
-            project_name=project_name,
-            strategy_name=strategy_name,
-            rule_name=rule_name,
-            intent_id=intent_id,
-            failure_stage="prewarm",
-            failure_reason=reason,
-            details={"event": payload.get("event"), "timingsMs": timings},
-        )
-        payload["activeFuse"] = compact_fuse(fuse)
+        should_fuse = args.mode != "simulate"
+        payload["fuseTriggered"] = should_fuse
+        if should_fuse:
+            fuse = trigger_fuse(
+                bot,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+                intent_id=intent_id,
+                failure_stage="prewarm",
+                failure_reason=reason,
+                details={"event": payload.get("event"), "timingsMs": timings},
+            )
+            payload["activeFuse"] = compact_fuse(fuse)
         update_ledger_stage(
             bot,
             intent_id=intent_id,
@@ -771,8 +835,8 @@ async def prewarm_intent(
             mode=mode,
             status="prewarm_failed",
             reason=reason,
-            failure_stage="prewarm",
-            failure_reason=reason,
+            failure_stage="prewarm" if should_fuse else None,
+            failure_reason=reason if should_fuse else None,
         )
         return payload
 
@@ -831,6 +895,13 @@ async def async_main() -> None:
         project_row = find_project(bot, str(args.project))
         project_name = str(project_row.get("name") or args.project).strip()
         evaluator = DynamicAfter1StrategyEvaluator(project=project_name, rule=rule)
+        restored_state = restore_strategy_state_from_ledger(
+            evaluator,
+            bot,
+            project_name=project_name,
+            strategy_name=evaluator.config.name,
+            rule_name=rule.name,
+        )
 
         service_meta = {
             "event": "service_start",
@@ -851,6 +922,7 @@ async def async_main() -> None:
             "outputJsonl": str(output_jsonl),
             "maxBuyV": str(args.max_buy_v),
             "maxProjectV": str(args.max_project_v),
+            "restoredStrategyState": compact_strategy_state(restored_state),
         }
         append_jsonl(output_jsonl, service_meta)
         print(json.dumps(service_meta, ensure_ascii=False), flush=True)

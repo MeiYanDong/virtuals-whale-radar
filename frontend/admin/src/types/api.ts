@@ -93,6 +93,7 @@ export interface HealthResponse {
   pendingTx: number;
   stats: Record<string, number | string | boolean | null>;
   lastProcessedBlock: string | null;
+  lastBackfillScannedBlock: string | null;
   price: string | null;
   monitoringProjects: string[];
   scanJobs: number;

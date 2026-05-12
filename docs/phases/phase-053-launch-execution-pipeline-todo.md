@@ -124,8 +124,10 @@
 - [x] 新增只读 RPC 压力观察脚本：`scripts/ops/launch_rpc_pressure_probe.py`，同一报告记录主采集 RPC、backfill RPC、execution RPC、项目 market reserve latency，不签名、不广播、不输出 endpoint token。
 - [x] 新增 `scripts/ops/test_launch_rpc_pressure_probe.py`；本地 `.env.local` 已补齐 `VWR_EXEC_HTTP_RPC_URL`，`execution_rpc.py` 会在进程环境缺失时自动读取该 ignored 文件。
 - [x] 本地同构 `TDS` pressure probe 通过，输出 `data/backtests/launch-rpc-pressure-probe-local-autoenv-20260511T064241Z.json`，`executionRpcSharedWithMain=false`。
-- [x] 加固主程序多进程协作：主库和 event bus SQLite 连接增加 busy timeout；`launch_configs_rev / my_wallets_rev` 改为纳秒级版本，避免同秒变更被 realtime/backfill 漏感知；receipt 读取增加短重试并在 heartbeat 暴露 `receipt_misses`；rolling backfill 等待本轮 tx 队列处理完成后再推进 `last_processed_block`。
-- [x] `launch_readiness_check.py` 增加 core workflow 检查：runtime pause、event queue、realtime/backfill heartbeat、WSS、active scan jobs、prelaunch/live launch_config；项目不存在时输出 `managed_project_not_found` 而不是 traceback。
+- [x] 加固主程序多进程协作：主库和 event bus SQLite 连接增加 busy timeout；`launch_configs_rev / my_wallets_rev` 改为纳秒级版本，避免同秒变更被 realtime/backfill 漏感知；receipt 读取增加短重试并在 heartbeat 暴露 `receipt_misses`。
+- [x] 拆分 writer 事件最高块与 rolling backfill 扫描游标：writer 继续维护 `last_processed_block`，backfill 使用独立 `backfill_last_scanned_block`；rolling backfill 等待本轮 tx 队列处理完成后再推进游标，且 receipt 临时缺失时不推进。
+- [x] 修复手动/项目级 scan job：只有 receipt 成功读取并完成处理的 tx 才写入 `scanned_backfill_txs`，避免 RPC 临时返回空 receipt 时被永久标记 scanned。
+- [x] `launch_readiness_check.py` 增加 core workflow 检查：runtime pause、event queue、realtime/backfill heartbeat、WSS、active scan jobs、prelaunch/live launch_config；项目不存在时输出 `managed_project_not_found` 而不是 traceback；缺 token/pool 时补齐 `reasons`。
 - [x] 本地 `.env.local` 当前复用生产 execution endpoint；口径是“本地同构测试 -> 通过后同步生产”的单活流程，减少配置漂移，本地测试和远端生产不要并行跑同一套交易 RPC。
 - [x] 只有在需要本地长期并行压测或多人同时开发时，才改为单独 dev/local Chainstack endpoint。
 - [x] `execution_rpc.py` 已加本地广播保护：如果 execution RPC 来自本地 `.env.local`，真实广播默认阻断；只有显式设置 `VWR_ALLOW_PROJECT_ENV_BROADCAST=1` 才允许本地 canary 广播。
@@ -144,12 +146,15 @@
 - [x] `broadcast` 模式默认要求独立 `VWR_EXEC_HTTP_RPC_URL`，避免与主采集 RPC 共用。
 - [x] `broadcast/sign-ready` 密钥加载优先使用环境变量 `VWR_BURNER_PRIVATE_KEY`，兼容 systemd root-only `EnvironmentFile`。
 - [x] `broadcast` 模式接入单笔上限、单项目上限、同一税率档防重复发送。
+- [x] `launch_prewarm_executor.py` 启动时从 `launch_execution_ledger.trade_sent=1` 重建已买税率、自有加权成本和上一税率买点，避免 live 窗口内 systemd 重启后丢失 dip20 / 横盘暂停策略状态。
+- [x] 新增 `scripts/ops/test_launch_prewarm_executor.py`，覆盖从已发送买入记录恢复策略状态。
 - [x] `broadcast` 模式下钱包 `balance / allowance` 不足只记录 `readiness_not_ready`，不触发 active fuse。
 - [x] `broadcast` 模式下如果未真实发出交易，会回滚本次策略内存状态，避免资金稍后转入后被误判为“该税率档已买过”。
 - [x] 修复 `launch_execution_ledger` 后续异常更新把已发送交易 `trade_sent=1 / broadcast_enabled=1` 覆盖回 `0` 的风险，保护同税率档防重和项目上限统计。
 - [x] 进入预热前检查 active fuse。
-- [x] simulation/sign/prewarm/broadcast/receipt 异常写入执行账本并触发执行熔断。
+- [x] `sign-ready/broadcast` 下 simulation/sign/prewarm/broadcast/receipt 异常写入执行账本并触发执行熔断；`simulate` 只读模式只记账不熔断。
 - [x] `prewarm_simulate` 模式下余额/授权不足记录为 `readiness_not_ready`，不触发 active fuse；`sign-ready` 仍会在 simulation 不绿时触发熔断。
+- [x] `prewarm_simulate` 模式下订单绑定异常、缺 token/pool 也只记账不触发 active fuse，避免只读灰度服务误挡真实 autobuy；`sign-ready/broadcast` 保持异常熔断。
 - [x] 本地 TDS ended 烟测通过：无 intent、无签名、无广播。
 - [x] 本地广播门禁烟测通过：缺 `--enable-broadcast` 会退出；缺独立 `VWR_EXEC_HTTP_RPC_URL` 会退出；均不会进入交易发送。
 - [x] 接入生产 systemd `simulate` 灰度服务。
@@ -179,6 +184,8 @@
   - 启动策略：由 `vwr-launch-roo-start.timer` 与 dry-run / prewarm / autobuy 一起拉起。
 - [x] 本地 autosell smoke：TDS ended 项目只读启动成功，结果 `no_position`，无签名、无广播。
 - [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
+- [x] 修复 autosell 大额买入去重：不再把“已看见但尚未触发/尚未成功卖出”的买入 tx 写入内存去重；只根据成功卖出账本里的 `processedLargeBuyTxs` 去重，并用 `--catch-up-events-sec` 滚动窗口读取近期事件，避免税率尚未进入 `<=30%` 时提前跳过大单。
+- [x] 补齐 `deploy_production_safe.sh` 白名单：`docs/源码导读图.md` 与 `scripts/ops/test_launch_prewarm_executor.py` 会随生产同步带上。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如果要真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已到 300V 项目预算。
