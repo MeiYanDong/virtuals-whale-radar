@@ -170,7 +170,7 @@ StrategyEvaluator
   - 独立交易 RPC：默认要求 `VWR_EXEC_HTTP_RPC_URL` 不与主采集 RPC 共用。
   - active fuse 为空。
   - 单笔上限、单项目上限、同一税率档未发过交易。
-- ROO 当前上限：`--max-buy-v 50`、`--max-project-v 300`，匹配当前策略的 25V 基础买入、50V dip20 加倍买入和 300V 项目预算。
+- ROO 当前上限：`--max-buy-v 50`、`--max-project-v 150`，匹配当前策略的 25V 基础买入、50V dip20 加倍买入和 150V 项目预算。
 - 广播后写入 `broadcast_sent`；等待 receipt 时写入 `receipt_success / receipt_failed`，失败会触发执行熔断。
 - `broadcast` 模式下，钱包 `balance / allowance` 不足只记录 `readiness_not_ready`，不触发 active fuse；如果未真实发出交易，执行器会回滚本次策略内存状态，避免资金稍后转入后被误判为“该税率档已买过”。
 - 2026-05-11 核心链路审计修复：`launch_execution_ledger` 后续异常更新不再把已发送交易的 `trade_sent=1 / broadcast_enabled=1` 覆盖回 `0`，避免同税率档防重和项目上限统计失效。
@@ -404,7 +404,7 @@ ROO 部署状态：
   - active fuse 为空。
   - 执行账本中 `trade_sent=1` 和 `broadcast_enabled=1` 均为 `0`。
 - `sign-ready` 灰度仍未启用；该模式会读取 burner 私钥，只能在明确需要签名演练时开启。
-- `broadcast` 代码路径已实现，并已为 ROO 安装独立 autobuy systemd 服务；当前 300V 项目上限下已 armed，尚未发生真实买入。
+- `broadcast` 代码路径已实现，并已为 ROO 安装独立 autobuy systemd 服务；当前 150V 项目上限下已 armed，尚未发生真实买入。
 - 生产 systemd 密钥入口优先使用 `EnvironmentFile` 注入的 `VWR_BURNER_PRIVATE_KEY`；执行器只在环境变量不存在时读取 `--secret-file`，避免要求 `vwr` 进程用户直接读取 root-only 密钥文件。
 
 发射前 readiness 检查：
@@ -421,8 +421,8 @@ ROO 部署状态：
 - allowance 已确认到 `25 VIRTUAL`，spender 为 `0x02fe8ec3d9bbf7318eb54590bcc39198a8b47ded`。
 - 这是授权交易，不是 ROO 买入；`tradeSent=false`。
 - 授权后 25V readiness 中 balance/allowance 通过，但 ROO 仍为 `scheduled`，`buy()` 的 `eth_call / estimateGas` 仍 revert；因此当前只是“钱包准备好 25V 基础买入”，不是“现在可买”。
-- 2026-05-11 已追加 300V VIRTUAL 精确授权，tx `0xd7ea8c4ec30601edc67f8579a334abaecab0e38970608c79fbd8e6cc5096b36e`，receipt status `0x1`，allowance 已确认到 `300 VIRTUAL`。
-- 授权不要求当前 VIRTUAL 余额足够；后续实际可买额度仍受 `min(balance, allowance, service caps)` 限制。
+- 2026-05-11 已追加 300V VIRTUAL 精确授权，tx `0xd7ea8c4ec30601edc67f8579a334abaecab0e38970608c79fbd8e6cc5096b36e`，receipt status `0x1`，allowance 已确认到 `300 VIRTUAL`；这是授权上限，不等于本项目买入预算。
+- 授权不要求当前 VIRTUAL 余额足够；ROO 后续实际可买额度仍受 `min(balance, allowance, --max-project-v 150)` 限制。
 
 ### Stage 2.6：ROO autobuy armed
 
@@ -435,7 +435,7 @@ ROO 部署状态：
 - 模式：`prewarm_broadcast`。
 - 广播门禁：service 内置 `VWR_ENABLE_AUTO_BUY_BROADCAST=1`，ExecStart 显式 `--mode broadcast --enable-broadcast`。
 - RPC：使用独立 execution Chainstack endpoint，日志显示 `rpcSharedWithMain=false`。
-- 上限：`--max-buy-v 50`、`--max-project-v 300`。
+- 上限：`--max-buy-v 50`、`--max-project-v 150`。
 - 密钥：`/etc/virtuals-whale-radar/burner-wallet.env`，权限 `root:root 600`，由 systemd `EnvironmentFile` 注入。
 - 2026-05-11 启动检查：
   - ROO 仍为 `scheduled`，日志只记录 `state_change/not_live`。
@@ -492,12 +492,14 @@ ROO 部署状态：
 - 单笔极小额度。
 - 广播一次。
 - 验证 receipt、余额变化和失败恢复。
+- ROO 开盘验证额度为 `0.1 VIRTUAL`。买入 receipt 成功后，应只卖出本次 receipt 的 `receiptTargetReceivedRaw`，不要使用 `amount-raw=max`，避免与自动买入策略并发时误卖策略仓位。
+- Canary 与策略共享 burner，但不写入自动买入账本；验证结束后应立即卖出 canary token，避免后续 autosell 把 canary 余额当作可卖持仓处理。
 
 ### Stage 7：自动执行灰度
 
 - 单项目白名单：通过 `--project` 指定，当前 ROO 单项目服务。
 - 单笔上限：`--max-buy-v`，ROO 当前为 `50V`。
-- 单项目上限：`--max-project-v`，ROO 当前为 `300V`。
+- 单项目上限：`--max-project-v`，ROO 当前为 `150V`。
 - 同一税率档最多一次：执行器会读取 `launch_execution_ledger.trade_sent=1` 记录阻断重复广播。
 - 重启恢复：执行器启动时从 `launch_execution_ledger.trade_sent=1` 重建已买税率、自有加权成本和上一税率买点，避免 systemd 重启后丢失 dip20 / 横盘暂停判断。
 - `sign-ready/broadcast` 下任意 simulation/sign/prewarm/broadcast/receipt 异常熔断；`simulate` 只读模式只记账不熔断，避免灰度观察误挡真实执行。

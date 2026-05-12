@@ -89,7 +89,7 @@
   - tx：`0xd7ea8c4ec30601edc67f8579a334abaecab0e38970608c79fbd8e6cc5096b36e`。
   - receipt status：`0x1`。
   - allowance：`25 -> 300 VIRTUAL`，spender 为 `0x02fe8ec3d9bbf7318eb54590bcc39198a8b47ded`。
-  - 授权不要求当前 VIRTUAL 余额足够；实际可买额度仍受 `min(balance, allowance, service caps)` 限制。
+  - 授权不要求当前 VIRTUAL 余额足够；授权上限不等于项目预算，ROO 实际可买额度仍受 `min(balance, allowance, --max-project-v 150)` 限制。
   - 授权后 readiness：25V 只剩项目未 live 导致的 `ethCall/estimateGas`；50V 不再报 allowance，只剩 balance 与项目未 live。
 - [x] 完成冷路径真实 canary：`0.001 VIRTUAL -> RRR`，`sendRawMs=438.6ms`，`totalToSendAckMs=2644.1ms`，receipt `status=1`。
 - [x] 完成热路径真实 canary：`0.001 VIRTUAL -> RRR`，预热后 `triggerToSendAckMs=450.6ms`，receipt `status=1`。
@@ -188,7 +188,16 @@
 - [x] 补齐 `deploy_production_safe.sh` 白名单：`docs/源码导读图.md` 与 `scripts/ops/test_launch_prewarm_executor.py` 会随生产同步带上。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
-- [ ] 如果要真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已到 300V 项目预算。
+- [ ] 如果要真正买满 ROO 150V 项目预算，需要把足够 VIRTUAL 转入 burner；授权已到 300V，服务上限已收紧为 150V。
+
+## 6.1.1 ROO 开盘即时验证
+
+- [ ] 22:25 CST 确认 `vwr-launch-roo-start.timer` 已拉起 `dry-run / prewarm / autobuy / autosell`。
+- [ ] 23:00 CST 后立刻确认主链路健康：`/health`、`/healthz`、active fuse、realtime/backfill heartbeat、ROO `status=live`、market 数据时间戳和 block 持续更新。
+- [ ] 开盘后做 `0.1 VIRTUAL` 真实 buy canary；receipt 成功后只卖出本次买入 receipt 中的 `receiptTargetReceivedRaw`，禁止用 `amount-raw=max`，避免误卖自动策略仓位。
+- [ ] 检查自动买入执行器：`launch-autobuy-ROO.jsonl` 与 `launch_execution_ledger` 有明确 `decision_reason / trade_sent / receipt_success` 或清晰的未触发原因，项目累计买入不超过 `150V`。
+- [ ] 检查自动卖出执行器：`launch-autosell-ROO.jsonl` 不出现 approval/simulation/broadcast/receipt 异常；如果无持仓或未满足税率/收益/大单条件，应清晰记录未触发原因。
+- [ ] 检查团队/初始化购买过滤：ROO overview 的 whaleBoard 中，首分钟零税且当时预期应有税的地址应 `costExcluded=true`，不计入打新成本位；大户榜单 UI 不展示团队地址。
 
 ## 6.2 Canary 退出与清仓
 
@@ -220,7 +229,7 @@
 
 - [x] 单项目白名单：通过 `--project` 指定单项目执行器。
 - [x] 单笔上限：`--max-buy-v`，ROO 当前为 `50V`。
-- [x] 单项目上限：`--max-project-v`，ROO 当前为 `300V`。
+- [x] 单项目上限：`--max-project-v`，ROO 当前为 `150V`。
 - [x] 同一税率档最多一次：读取执行账本中 `trade_sent=1` 的同税率记录阻断重复广播。
 - [x] canary 路径任意 simulation/sign/broadcast/receipt 异常自动熔断。
 - [x] 生产预热执行器 simulation/sign/prewarm/broadcast/receipt 异常自动熔断。
