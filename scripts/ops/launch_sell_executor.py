@@ -135,6 +135,12 @@ def auto_approve_enabled(args: argparse.Namespace) -> bool:
     return broadcast_enabled(args) and bool(args.auto_approve) and env_flag_enabled(SELL_APPROVE_ENV)
 
 
+def ensure_secret_loaded(path: Path) -> None:
+    if str(os.environ.get(BURNER_PRIVATE_KEY_ENV) or "").strip():
+        return
+    load_secret_file(path)
+
+
 def decimal_or_none(value: Any) -> Decimal | None:
     if value in (None, ""):
         return None
@@ -955,7 +961,7 @@ async def async_main() -> None:
             action="auto sell broadcast",
             allow_shared=bool(args.allow_shared_rpc_broadcast),
         )
-        load_secret_file(Path(args.secret_file))
+        ensure_secret_loaded(Path(args.secret_file))
 
     account = None
     to_checksum_address = None
