@@ -227,6 +227,35 @@ async def test_order_binder_quote_and_min_out() -> None:
     assert_eq(bound.quote.token_index, 1, "binder token index")
 
 
+async def test_order_binder_tax_adjusts_min_out() -> None:
+    fake = FakeRPC(balance_wei=100 * 10**18, allowance_wei=100 * 10**18)
+    bound = await VirtualsOrderBinder(
+        fake,
+        virtual_token_addr=VIRTUAL_TOKEN,
+        slippage_bps=DEFAULT_LAUNCH_SLIPPAGE_BPS,
+        deadline_offset_sec=180,
+    ).bind_buy(
+        chain_id=8453,
+        from_addr="0x1111111111111111111111111111111111111111",
+        token_addr=TARGET_TOKEN,
+        pool_addr=POOL_ADDR,
+        amount_in_v="25",
+        buy_tax_rate_pct="95",
+        now_ts=1000,
+    )
+    quote = get_amount_out_uniswap_v2(
+        amount_in=25 * 10**18,
+        reserve_in=fake.reserve_virtual_wei,
+        reserve_out=fake.reserve_token_raw,
+    )
+    tax_adjusted = quote * 500 // 10_000
+    expected_min = tax_adjusted * (10_000 - DEFAULT_LAUNCH_SLIPPAGE_BPS) // 10_000
+    decoded = decode_virtuals_buy_calldata(bound.tx.data)
+    assert_eq(decoded["amountOutMinWei"], str(expected_min), "tax-adjusted binder amountOutMin")
+    assert_eq(bound.quote.buy_tax_rate_pct, "95", "binder tax rate")
+    assert_eq(bound.quote.effective_slippage_bps, 9750, "binder effective slippage")
+
+
 def test_local_signer_signs_and_recovers_without_broadcast() -> None:
     try:
         from eth_account import Account

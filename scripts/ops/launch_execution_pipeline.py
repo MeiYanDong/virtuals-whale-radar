@@ -117,6 +117,9 @@ class PoolQuote:
     quoted_amount_out_raw: str
     amount_out_min_wei: str
     slippage_bps: int
+    effective_slippage_bps: int
+    buy_tax_rate_pct: str | None
+    tax_adjusted_amount_out_raw: str
     lp_fee_bps: int
     deadline: int
 
@@ -304,6 +307,37 @@ def apply_slippage_bps(amount_out: int, slippage_bps: int) -> int:
     return amount_out * (BPS_DENOMINATOR - slippage_bps) // BPS_DENOMINATOR
 
 
+def buy_tax_rate_to_bps(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        pct = Decimal(str(value))
+    except Exception:
+        return 0
+    if pct <= 0:
+        return 0
+    bps = int(pct * Decimal(100))
+    return max(0, min(BPS_DENOMINATOR - 1, bps))
+
+
+def tax_adjusted_amount_out(amount_out: int, buy_tax_rate_pct: Any) -> tuple[int, int]:
+    tax_bps = buy_tax_rate_to_bps(buy_tax_rate_pct)
+    if tax_bps <= 0:
+        return amount_out, 0
+    keep_bps = BPS_DENOMINATOR - tax_bps
+    adjusted = amount_out * keep_bps // BPS_DENOMINATOR
+    return adjusted, tax_bps
+
+
+def combine_tax_and_slippage_bps(slippage_bps: int, tax_bps: int) -> int:
+    if tax_bps <= 0:
+        return slippage_bps
+    keep_after_slippage = BPS_DENOMINATOR - slippage_bps
+    keep_after_tax = BPS_DENOMINATOR - tax_bps
+    combined_keep = max(1, keep_after_tax * keep_after_slippage // BPS_DENOMINATOR)
+    return min(BPS_DENOMINATOR - 1, BPS_DENOMINATOR - combined_keep)
+
+
 class VirtualsOrderBuilder:
     """Convert a BuyIntent into an unsigned tx.
 
@@ -484,6 +518,7 @@ class VirtualsOrderBinder:
         token_addr: str,
         pool_addr: str,
         amount_in_v: Decimal | str,
+        buy_tax_rate_pct: Any = None,
         now_ts: int | None = None,
     ) -> BoundBuyOrder:
         token = normalize_hex_address(token_addr)
@@ -496,9 +531,11 @@ class VirtualsOrderBinder:
             reserve_out=int(layout["reserve_token"]),
             lp_fee_bps=self.lp_fee_bps,
         )
-        amount_out_min = apply_slippage_bps(quoted_amount_out, self.slippage_bps)
+        adjusted_amount_out, tax_bps = tax_adjusted_amount_out(quoted_amount_out, buy_tax_rate_pct)
+        amount_out_min = apply_slippage_bps(adjusted_amount_out, self.slippage_bps)
         if amount_out_min <= 0:
             raise ValueError("amountOutMin resolved to zero")
+        effective_slippage_bps = combine_tax_and_slippage_bps(self.slippage_bps, tax_bps)
         deadline = int(now_ts if now_ts is not None else time.time()) + self.deadline_offset_sec
         tx = self.order_builder.build_buy(
             chain_id=chain_id,
@@ -523,6 +560,9 @@ class VirtualsOrderBinder:
             quoted_amount_out_raw=str(quoted_amount_out),
             amount_out_min_wei=str(amount_out_min),
             slippage_bps=self.slippage_bps,
+            effective_slippage_bps=effective_slippage_bps,
+            buy_tax_rate_pct=str(buy_tax_rate_pct) if buy_tax_rate_pct not in (None, "") else None,
+            tax_adjusted_amount_out_raw=str(adjusted_amount_out),
             lp_fee_bps=self.lp_fee_bps,
             deadline=deadline,
         )

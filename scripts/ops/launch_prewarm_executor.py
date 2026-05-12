@@ -571,6 +571,7 @@ async def prewarm_intent(
             token_addr=token_addr,
             pool_addr=pool_addr,
             amount_in_v=Decimal(str(intent["buy_size_v"])),
+            buy_tax_rate_pct=sample.get("buyTaxRate"),
             now_ts=int(time.time()),
         )
         timings["bindBuyMs"] = elapsed_ms(start)
