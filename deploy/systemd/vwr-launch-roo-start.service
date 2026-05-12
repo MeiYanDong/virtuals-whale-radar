@@ -5,4 +5,4 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/systemctl start vwr-launch-dryrun@ROO.service vwr-launch-prewarm@ROO.service vwr-launch-autobuy@ROO.service
+ExecStart=/bin/systemctl start vwr-launch-dryrun@ROO.service vwr-launch-prewarm@ROO.service vwr-launch-autobuy@ROO.service vwr-launch-autosell@ROO.service

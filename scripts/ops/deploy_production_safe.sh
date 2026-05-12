@@ -80,6 +80,7 @@ FILES=(
   scripts/ops/launch_readiness_check.py
   scripts/ops/launch_rpc_pressure_probe.py
   scripts/ops/launch_sell_strategy.py
+  scripts/ops/launch_sell_executor.py
   scripts/ops/live_strategy_dry_run.py
   scripts/ops/local_signer_probe.py
   scripts/ops/native_launch_replay.py
@@ -98,6 +99,7 @@ FILES=(
   scripts/ops/test_execution_rpc.py
   scripts/ops/test_launch_execution_pipeline.py
   scripts/ops/test_launch_rpc_pressure_probe.py
+  scripts/ops/test_launch_sell_executor.py
   scripts/ops/test_launch_sell_strategy.py
   scripts/ops/tx_simulator_probe.py
   scripts/ops/virtuals_buy_calldata_research.py
@@ -106,6 +108,7 @@ FILES=(
   scripts/ops/run_chainstack_test_suite.py
   scripts/ops/deploy_production_safe.sh
   deploy/systemd/vwr-launch-autobuy@.service
+  deploy/systemd/vwr-launch-autosell@.service
   deploy/systemd/vwr-launch-roo-start.service
   deploy/systemd/vwr-launch-roo-start.timer
 )

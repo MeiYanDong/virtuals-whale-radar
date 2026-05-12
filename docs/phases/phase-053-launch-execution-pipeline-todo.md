@@ -160,13 +160,26 @@
   - 服务模板：`deploy/systemd/vwr-launch-autobuy@.service`。
   - 生产服务：`vwr-launch-autobuy@ROO.service`。
   - 启动策略：由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起；主采集仍在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
-  - 2026-05-11 远端状态：timer `active(waiting)`；执行三服务均为 `inactive + disabled`，避免发射前过早占用 RPC；timer 到点后自动启动。
+  - 2026-05-11 远端状态：timer `active(waiting)`；执行服务均为 `inactive + disabled`，避免发射前过早占用 RPC；timer 到点后自动启动。
   - 模式：`prewarm_broadcast`，日志显示 `broadcastEnabled=true`、`rpcSharedWithMain=false`。
   - 上限：`maxBuyV=50`、`maxProjectV=300`。
   - ROO 仍为 `scheduled`，当前只记录 `state_change/not_live`，`tradeSent=false`。
+- [x] 新增生产自动卖出常驻执行器：`scripts/ops/launch_sell_executor.py`。
+  - 读取同一份项目、事件、市场和执行账本数据。
+  - 按 `dual_roi_large_buy_sell` 规则判断卖出。
+  - `simulate` 模式不读取私钥、不签名、不广播。
+  - `broadcast` 模式要求 `--enable-broadcast` + `VWR_ENABLE_AUTO_SELL_BROADCAST=1` + 独立 `VWR_EXEC_HTTP_RPC_URL`。
+  - token allowance 不足时，仅在 `--auto-approve` + `VWR_ENABLE_AUTO_SELL_APPROVE=1` 同时存在时做“精确授权当前卖出数量”。
+  - simulation/sign/approve/broadcast/receipt 异常写入 `launch_execution_ledger` 并触发 active fuse。
+- [x] 新增 ROO 生产 autosell armed 服务模板：`deploy/systemd/vwr-launch-autosell@.service`。
+  - 服务：`vwr-launch-autosell@ROO.service`。
+  - 输出：`data/execution/launch-autosell-ROO.jsonl`。
+  - 启动策略：由 `vwr-launch-roo-start.timer` 与 dry-run / prewarm / autobuy 一起拉起。
+- [x] 本地 autosell smoke：TDS ended 项目只读启动成功，结果 `no_position`，无签名、无广播。
+- [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
+- [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如果要真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已到 300V 项目预算。
-- [ ] 自动卖出仍未接入生产常驻服务；进入生产自动卖出前，必须补执行账本状态、真实余额读取、sell simulation、sell broadcast gate 和 receipt/fuse 处理。
 
 ## 6.2 Canary 退出与清仓
 
@@ -211,4 +224,5 @@
   - 生产服务：`vwr-launch-prewarm@ROO.service`。
   - 输出：`data/execution/launch-prewarm-executor-ROO.jsonl`。
   - 当前按用户决策使用独立 Chainstack execution endpoint，日志显示 `rpcSharedWithMain=false`。
-- [x] ROO 已上线 autobuy armed 服务：`vwr-launch-autobuy@ROO.service`，当前 `enabled + active`，但因项目未 live 仍未发送交易。
+- [x] ROO 已上线 autobuy armed 服务：`vwr-launch-autobuy@ROO.service`，由 timer 拉起，因项目未 live 尚未发送交易。
+- [x] ROO 已接入 autosell armed 服务：`vwr-launch-autosell@ROO.service`，由 timer 拉起，只有持仓且满足卖出条件才会发送交易。

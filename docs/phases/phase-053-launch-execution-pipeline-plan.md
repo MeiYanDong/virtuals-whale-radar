@@ -428,9 +428,9 @@ ROO 部署状态：
 - 服务模板：`deploy/systemd/vwr-launch-autobuy@.service`。
 - 生产服务：`vwr-launch-autobuy@ROO.service`。
 - 输出：`data/execution/launch-autobuy-ROO.jsonl`。
-- 生产启动策略：ROO 执行三服务不常驻，由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起 `dry-run / prewarm simulate / autobuy broadcast`。
+- 生产启动策略：ROO 执行服务不常驻，由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起 `dry-run / prewarm simulate / autobuy broadcast / autosell broadcast`。
 - 主采集预热：主程序仍按 `start_at - 30min` 自动进入 `prelaunch`，ROO 为 `2026-05-12 22:30:00 CST`。
-- 2026-05-11 远端状态：`vwr-launch-roo-start.timer` 为 `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行三服务均为 `inactive + disabled`，避免发射前过早占用 RPC 与写日志。
+- 2026-05-11 远端状态：`vwr-launch-roo-start.timer` 为 `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行服务均为 `inactive + disabled`，避免发射前过早占用 RPC 与写日志。
 - 模式：`prewarm_broadcast`。
 - 广播门禁：service 内置 `VWR_ENABLE_AUTO_BUY_BROADCAST=1`，ExecStart 显式 `--mode broadcast --enable-broadcast`。
 - RPC：使用独立 execution Chainstack endpoint，日志显示 `rpcSharedWithMain=false`。
@@ -443,6 +443,26 @@ ROO 部署状态：
   - 主服务 active；dry-run、prewarm simulate、autobuy 改为由 timer 在 22:25 CST 自动启动。
   - `/health` 与 `/healthz` 正常。
   - active fuse 为空。
+
+### Stage 2.7：ROO autosell armed
+
+- 服务模板：`deploy/systemd/vwr-launch-autosell@.service`。
+- 生产服务：`vwr-launch-autosell@ROO.service`。
+- 输出：`data/execution/launch-autosell-ROO.jsonl`。
+- 策略：`dual_roi_large_buy_sell`。
+- 触发窗口：税率 `<=30%`。
+- 收益率轨道：收益率 `>=30%` 卖原始总仓位 `30%`，收益率 `>=50%` 卖原始总仓位 `50%`。
+- 大额买入轨道：单笔买入 `>=5,000 VIRTUAL` 卖原始总仓位 `30%`，单笔买入 `>=8,000 VIRTUAL` 卖原始总仓位 `50%`。
+- 两条卖出轨道独立记账；同一刻同时触发时合并为一笔卖出。
+- 状态来源：
+  - 从 `launch_execution_ledger` 重建本程序买入收到的 token、已卖 token、已卖比例和冷却状态。
+  - 每轮读取 burner 当前 token 余额，真实余额低于目标时按余额上限卖出。
+  - 从实时 `events` 表读取最新大额买入事件。
+- 广播门禁：service 内置 `VWR_ENABLE_AUTO_SELL_BROADCAST=1`，ExecStart 显式 `--mode broadcast --enable-broadcast`。
+- 精确授权门禁：service 内置 `VWR_ENABLE_AUTO_SELL_APPROVE=1`，ExecStart 显式 `--auto-approve`；只有目标 token allowance 不足时，才精确授权本次卖出数量。
+- RPC：使用独立 execution Chainstack endpoint，默认拒绝共享主采集 RPC 广播。
+- 失败处理：sell simulation、approve、sign、broadcast、receipt 任一异常写入 `launch_execution_ledger` 并触发 active fuse。
+- 本地 smoke：TDS ended 项目 `autosell_simulate --once` 正常启动并返回 `no_position`，无签名、无广播。
 
 ### Stage 3：历史交易 calldata parity
 
@@ -479,7 +499,7 @@ ROO 部署状态：
 - 单项目上限：`--max-project-v`，ROO 当前为 `300V`。
 - 同一税率档最多一次：执行器会读取 `launch_execution_ledger.trade_sent=1` 记录阻断重复广播。
 - 任意 simulation/sign/prewarm/broadcast/receipt 异常熔断。
-- 当前自动卖出边界：已具备双策略纯逻辑、SR/ISC 回测和手动 sell 工具；尚未接入生产常驻自动卖出服务。进入生产自动卖出前，必须补执行账本状态、真实余额读取、sell simulation、sell broadcast gate 和 receipt/fuse 处理。
+- 自动卖出边界：生产常驻执行器已接入 ROO timer，但真实 live 窗口里的 SellIntent -> approval/simulation/broadcast/receipt 尚待第一次实盘验证。
 
 ## 6. 验收标准
 

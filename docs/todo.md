@@ -1063,9 +1063,15 @@
 - [x] 远端 ROO prewarm smoke 与健康检查通过：主服务/ROO dry-run/ROO prewarm 均 active，active fuse 为空，执行账本 `trade_sent=1` 与 `broadcast_enabled=1` 均为 `0`。
 - [x] 新增并安装 ROO 生产 `broadcast` armed 服务：`vwr-launch-autobuy@ROO.service`，`broadcastEnabled=true`、`rpcSharedWithMain=false`。
 - [x] ROO autobuy 服务上限已调整为单笔 `50V`、单项目 `300V`，匹配 25V/50V 策略和 300V 项目预算。
-- [x] ROO 执行三服务改为由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起；主采集仍在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
-- [x] 2026-05-11 远端验证：ROO timer `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行三服务在 timer 触发前为 `inactive + disabled`，active fuse 为空，ROO `tradeSent=true` 计数为 `0`。
+- [x] ROO 执行服务改为由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起；主采集仍在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
+- [x] 2026-05-11 远端验证：ROO timer `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行服务在 timer 触发前为 `inactive + disabled`，active fuse 为空，ROO `tradeSent=true` 计数为 `0`。
+- [x] 接入生产自动卖出常驻执行器 `scripts/ops/launch_sell_executor.py`。
+- [x] 接入 ROO autosell armed systemd 服务：`vwr-launch-autosell@ROO.service`，由 `vwr-launch-roo-start.timer` 与买入执行服务一起拉起。
+- [x] autosell 支持执行账本状态重建、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse 处理。
+- [x] 本地 TDS ended autosell 只读 smoke 通过：`no_position`，无签名、无广播。
+- [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
+- [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如需真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已准备到 300V。
 - [ ] 生产预热热路径：提前维护 nonce、fee、gas、allowance、balance，tick 到达时只做本地判断和广播。
 - [ ] 生产机运行 RPC 压力观察：以 `/etc/virtuals-whale-radar/execution-rpc.env` 注入独立 execution RPC，确认 `executionRpcSharedWithMain=false`。
@@ -1106,4 +1112,4 @@
 - [x] 修复 `sell_virtuals_token.py` 输出：`broadcastRequested` 真实反映 `--broadcast`，receipt 输出包含 `receiptOk / reason`。
 - [x] 补齐 `deploy_production_safe.sh` 白名单：execution RPC、pressure probe、sell strategy、sell 回测、Phase 052/053 报告和相关测试脚本都会随生产同步脚本带上。
 - [x] 本地验证：`py_compile`、策略单元测试、SR/ISC 回测、`git diff --check`。
-- [ ] 若进入生产自动卖出，下一步在 Phase 053 接入执行账本状态、真实余额读取、sell simulation 和 broadcast gate。
+- [x] Phase 053 已接入生产自动卖出执行链路：执行账本状态、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse。

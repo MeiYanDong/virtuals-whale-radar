@@ -2314,9 +2314,19 @@ Phase 052 执行结果：
     - 服务模板：`deploy/systemd/vwr-launch-autobuy@.service`。
     - 生产服务：`vwr-launch-autobuy@ROO.service`。
     - 输出：`data/execution/launch-autobuy-ROO.jsonl`。
-    - 启动策略：由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起 `dry-run / prewarm simulate / autobuy broadcast`。
+    - 启动策略：由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起 `dry-run / prewarm simulate / autobuy broadcast / autosell broadcast`。
     - 主采集预热：ROO 主程序在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
-    - 2026-05-11 远端状态：timer `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行三服务保持 `inactive + disabled` 等待 timer，避免发射前过早占用 RPC。
+    - 2026-05-11 远端状态：timer `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行服务保持 `inactive + disabled` 等待 timer，避免发射前过早占用 RPC。
+  - 2026-05-12 已接入 ROO 生产自动卖出 armed 服务：
+    - 服务模板：`deploy/systemd/vwr-launch-autosell@.service`。
+    - 生产服务：`vwr-launch-autosell@ROO.service`。
+    - 输出：`data/execution/launch-autosell-ROO.jsonl`。
+    - 策略：`dual_roi_large_buy_sell`，税率 `<=30%` 后进入卖出窗口。
+    - 触发：收益率 `>=30%/50%` 分别卖原始总仓位 `30%/50%`；单笔买入 `>=5,000/8,000 VIRTUAL` 分别卖原始总仓位 `30%/50%`。
+    - 两条卖出轨道独立记账；同一刻同时触发时合并为一笔卖出。
+    - autosell 支持执行账本状态重建、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse。
+    - 本地 TDS ended autosell 只读 smoke 通过：`no_position`，无签名、无广播。
+    - 新增测试：`scripts/ops/test_launch_sell_executor.py`。
     - 模式：`prewarm_broadcast`，日志显示 `broadcastEnabled=true`、`rpcSharedWithMain=false`。
     - 上限：`maxBuyV=50`、`maxProjectV=300`。
     - ROO 仍为 `scheduled`，当前只记录 `state_change/not_live`，`tradeSent=false`，没有广播交易。
@@ -2327,7 +2337,7 @@ Phase 052 执行结果：
   - 若要进一步降低 execution RPC 延迟，需单独评估 Chainstack Trader node `lax1` 或同一 raw transaction 多 RPC 广播；当前未启用。
   - 灰度/真实窗口前仍需在生产机运行 `launch_rpc_pressure_probe.py`：要求 `executionRpcSharedWithMain=false`，并同时观察采集健康、market latency、execution RPC 延迟。
   - 广播仍由显式 gate 控制；除已启动的 ROO autobuy armed 服务外，没有其他项目自动广播。
-  - 自动卖出仍未接入生产常驻服务；当前只有纯策略、回测和手动 sell 工具。进入生产自动卖出前，必须补执行账本状态、真实余额读取、sell simulation、sell broadcast gate 和 receipt/fuse 处理。
+  - 自动卖出已接入 ROO 生产常驻服务，但真实 live 窗口 SellIntent -> approval/simulation/broadcast/receipt 尚待首次验证。
 
 ## 41. 大户榜单团队地址过滤与管理员纠偏（2026-05-07）
 
@@ -2375,5 +2385,10 @@ Phase 052 执行结果：
   - ISC：卖出 `2` 次，最终 `+144.937286 V / +41.4107%`，高于纯持有 `+38.9383%`；仅由收益率策略触发。
 - 当前边界：
   - 已完成策略决策、单元测试和历史回测。
-  - 尚未接入生产自动卖出服务、执行账本持久化、真实余额读取和 sell broadcast gate。
+  - 已接入生产自动卖出常驻执行器 `scripts/ops/launch_sell_executor.py`。
+  - 已接入 ROO systemd 服务 `vwr-launch-autosell@ROO.service`，由 `vwr-launch-roo-start.timer` 与 dry-run / prewarm / autobuy 一起拉起。
+  - autosell 已覆盖执行账本状态重建、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse 处理。
+  - 本地 TDS ended 项目只读 smoke 通过：结果 `no_position`，无签名、无广播。
+  - 新增测试 `scripts/ops/test_launch_sell_executor.py`。
+  - 尚待真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt。
   - 2026-05-11 核心链路审计后，生产同步白名单已补齐 Phase 052/053 的 execution RPC、pressure probe、sell strategy、sell 回测与相关测试脚本，避免本地通过但 `deploy_production_safe.sh` 漏同步核心执行文件。
