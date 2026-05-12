@@ -1,0 +1,11 @@
+[Unit]
+Description=Start ROO launch execution services 35 minutes before launch
+
+[Timer]
+OnCalendar=2026-05-12 22:25:00
+AccuracySec=1s
+Persistent=true
+Unit=vwr-launch-roo-start.service
+
+[Install]
+WantedBy=timers.target

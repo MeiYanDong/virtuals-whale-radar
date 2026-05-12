@@ -2086,7 +2086,7 @@ Estimated FDV（万 USD） = 1000000000 * tokenPriceUsd / (1 - taxRate / 100) / 
   - 普通冷却 `60s`
   - `120s` 内连续 `2` 次买入后冷却 `600s`
   - 结果：触发 `2` 次，投入 `100 VIRTUAL`，窗口结束约 `+38.05 VIRTUAL`
-- 当前建议：暂不启用真实自动买入；下一步先做 realtime dry-run signal emitter，只记录 would-buy，不发交易。默认策略继续使用 `100,000 V` 门槛，不采用 `50,000 V` 早入场，直到至少再收集一个 98 分钟/Robotic 项目样本。
+- 2026-05-07 当时建议：暂不启用真实自动买入；下一步先做 realtime dry-run signal emitter，只记录 would-buy，不发交易。后续已在 Phase 052/053 更新为 after1 动态策略和分层交易执行链路。
 
 补充测试：
 
@@ -2163,8 +2163,173 @@ Phase 052 执行结果：
   - 可进入 dry-run 观察的候选：`100k tax<=92 fdv`、`70k/80k/90k tax<=95 fdv`、`50k tax<=95/94/93 fdv`。
   - 只能作为对照、不能直接交易的策略：`tax-only`、`no-FDV-cost`、`no-board-spent`、`low-sample first-buy`、高延迟/高滑点/税率异常场景。
 - 下一步仍不是接热钱包，而是实现 realtime dry-run signal emitter，持续记录 would-buy 与后续表现。
+- 2026-05-10 口径修正：
+  - `strategy-lab` 不作为生产页面，策略实验只保留本地脚本和文档报告。
+  - SR 旧口径的 `14` 个候选不是 14 个独立策略，而是 `7` 条规则乘以 `2` 个 SR 采样数据集。
+  - 最新事件模型改为 `pool_state_change + tax_tick + heartbeat`：
+    - `pool_state_change` 必须覆盖 buy、sell 和 unknown pool event。
+    - `tax_tick` 是税率变化瞬间，即使没有交易也必须记录，因为含税 FDV 会变化。
+  - 最新收益口径只看 tax 降到 `1%` 的 end 表现，不再默认看 `1m / 3m / 5m / 10m`。
+  - 已新增本地 SR-only 结果级重筛脚本：`scripts/ops/sr_strategy_recalc_from_matrix.py`。
+  - 结果级重筛只读取既有矩阵 JSON，没有重新构造 buy/sell/tax_tick 事件时间线；真正事件级 SR replay 已在下一条记录补完。
+- 2026-05-10 RPC 修复与 SR event-level replay：
+  - 本地 `HTTP_RPC_URL` 指向的 Base Chainstack 节点已验证支持 SR 历史块和 SR 小窗口 `eth_getLogs`。
+  - 旧 `BACKFILL_HTTP_RPC_URL / BACKFILL_HTTP_RPC_URLS` 抢先导致历史块和 logs 返回 `403`；本地已改为有效 Chainstack endpoint 优先。
+  - 本地 `SignalHub-main/.env` 的 Chainstack HTTPS 顺序也已改为有效 endpoint 优先。
+  - 新增 `scripts/ops/sr_event_level_replay.py`，真正按 `pool_state_change + tax_tick + heartbeat` 构造 SR 事件级时间线。
+  - Chainstack 事件级 replay 已完成：`751 tx / 601 buy / 24 sell / 126 unknown_pool_event / 99 tax_tick / 1089 samples`。
+  - 事件级报告：`docs/phases/phase-052-sr-event-level-replay-2026-05-10.md`。
+  - 事件级结果下最佳候选仍为 `50k tax<=95/94/93 fdv`，投入 `100 V`，end 收益约 `+57.7737%`。
+  - 已补买入次数验证：`1089` 样本中只有 `25` 个满足硬条件，全部集中在 `1776049593 -> 1776049815` 一个短信号簇；当前 `60s` 冷却 + `120s` 内连续 `2` 次后冷却 `10min`，所以实际买入 `2` 次，另外 `23` 个信号样本被 cooldown 拦截。
+  - 对照结果：关闭 burst 但保留 `60s` 冷却会买 `4` 次；`30s` 冷却无 burst 会买 `5` 次；无冷却但保留 `300 V` 最大投入会买 `6` 次。
+  - 策略门槛已按新判断重算：税率 tick 以官网 `launchedAt` 为锚点，SR 的 `11:00:13` 开始导致所有 tick 都落在 `:13`；榜单累计投入门槛从 `50,000 V` 降为 `5,000 V`；执行限制改为“同一税率档位最多买一次”。
+  - 新结果：`gate_5k_tax95_fdv_one_per_tax` 买入 `6` 次，覆盖 tax `95 / 94 / 93 / 92 / 91 / 90`，投入 `300 V`，end 收益约 `+62.9736%`；tax `89` 仍是信号但被项目最大投入限制拦截。
+- 2026-05-10 生产 RPC 只读检查：
+  - 阿里云轻量应用服务器 SWAS `Ubuntu-jsal` running，项目目录 `/opt/virtuals-whale-radar`。
+  - `root + ~/.ssh/id_ed25519` 可登录；本轮未做部署、未重启服务、未修改线上文件。
+  - 主程序 systemd 通过 `/etc/virtuals-whale-radar/rpc.env` 注入环境变量；加载后实际 backfill 顺序为 `Chainstack -> Ankr -> Alchemy -> mainnet.base.org`。
+  - SignalHub systemd 通过 `/etc/virtuals-whale-radar/signalhub-rpc.env` 注入环境变量；加载后 HTTPS 顺序为 `Chainstack -> Ankr -> Alchemy`，WSS 为 Chainstack。
+  - 公开 RPC 仍保留为兜底，不是主路径。
+  - 生产 Chainstack smoke 通过：`eth_blockNumber / SR historical block / SR 50 blocks logs` 均成功，约 `75-107ms`。
+  - 健康检查通过：四个服务 active，`SignalHub /healthz = ok`，主程序 `/health ok=true`，`runtimePaused=false`，`ws_connected=true`。
+- 2026-05-10 ISC event-level replay：
+  - 用 Chainstack 跑完 ISC / Virtuals ID `72752` 完整 tax-end 窗口，不是 10 分钟样本。
+  - 数据规模：`600 tx / 322 buy / 41 sell / 237 unknown_pool_event / 99 tax_tick / 1576 samples`，`logErrors=0`。
+  - 策略口径：`榜单V >= 5,000`、`FDV <= 榜单成本`、`同一税率档位最多买一次`、每次 `50 V`。
+  - `300 V` 上限：最佳 `gate_5k_tax89_fdv_one_per_tax`，买入 `6` 次，投入 `300 V`，end 收益约 `+114.548261 V / +38.1828%`。
+  - 不限制总投入：最佳收益率仍为 `tax<=89`，买入 `28` 次，投入 `1400 V`，end 收益约 `+542.59385 V / +38.7567%`。
+  - ISC 与 SR 的差异：ISC 的最佳触发更靠后，从 `89%` 开始；早启动会提高绝对收益但降低平均收益率。
+- 2026-05-10 最终动态买入策略：
+  - 入口文档：`docs/phases/phase-052-final-dynamic-buy-strategy-2026-05-10.md`。
+  - 当前主报告：`docs/phases/phase-052-dynamic-buy-recalc-after1-flat10-2026-05-10.md`。
+  - after2 对照报告：`docs/phases/phase-052-dynamic-buy-recalc-2026-05-10.md`。
+  - 脚本：`scripts/ops/recalc_dynamic_buy_strategy.py`。
+  - 采用策略：`25V` 基础买入；若当前含税 FDV 低于我方历史加权买入 FDV `20%` 以上，则买 `50V`；某税率分钟买入后，若下一税率分钟 FDV 相对上一买点变化 `<=10%`，跳过该税率档。
+  - SR `tax<=95` 主规则：买入 `5` 次，投入 `125 V`，end 收益约 `+86.133020 V / +68.9064%`。
+  - SR ROI 最优 `tax<=94`：买入 `4` 次，投入 `100 V`，end 收益约 `+71.463410 V / +71.4634%`。
+  - ISC ROI 最优 `tax<=89`：买入 `14` 次，投入 `350 V`，end 收益约 `+136.284025 V / +38.9383%`。
+  - 明确否掉“看到榜单 V 暴增 / FDV 快速反弹后再加仓”的后验确认策略；SR 中看到榜单 V 从 `21k -> 127k` 时，低位机会已经被重新定价。
+  - 当前边界：策略验证进入 Phase 053 执行链路，后续依次测试 dry-run、交易构造、模拟、签名、小额 canary 和灰度广播。
 
-## 40. 大户榜单团队地址过滤与管理员纠偏（2026-05-07）
+## 40. Phase 053 发射策略执行链路（2026-05-10）
+
+- 新增 Phase 053 子 plan：`docs/phases/phase-053-launch-execution-pipeline-plan.md`。
+- 新增 Phase 053 子 todo：`docs/phases/phase-053-launch-execution-pipeline-todo.md`。
+- 执行链路拆分为：
+  - `StrategyEvaluator -> BuyIntent`。
+  - `OrderBuilder -> unsigned transaction`。
+  - `TxSimulator -> eth_call / allowance / balance / gas / nonce`。
+  - `LocalSigner -> burner wallet signing`。
+  - `Broadcaster -> manual canary and grey rollout`。
+  - `ReceiptVerifier / ExecutionLedger`。
+- 新增脚本：
+  - `scripts/ops/launch_execution_pipeline.py`。
+  - `scripts/ops/test_launch_execution_pipeline.py`。
+  - `scripts/ops/virtuals_buy_calldata_research.py`。
+- 当前已完成：
+  - 实现 after1 `DynamicAfter1StrategyEvaluator`。
+  - 生成 SR dry-run 执行报告：`data/backtests/launch-execution-dry-run-sr-tax95-after1-20260510.json`。
+  - 生成 ISC dry-run 执行报告：`data/backtests/launch-execution-dry-run-isc-tax89-after1-20260510.json`。
+  - 完成 Virtuals buy calldata 研究报告：`docs/phases/phase-053-virtuals-buy-calldata-research-2026-05-10.md`。
+  - SR/ISC 共采集 `19` 个历史买入样本，其中 `18` 个为直接 Virtuals buy route，`1` 个为 alternate/aggregator route。
+  - 确认直接买入路由 `0x1a540088125d00dd3990f9da45ca0859af4d3b01`、selector `0x706910ff`、函数 `buy(uint256 amountIn_, address tokenAddress_, uint256 amountOutMin_, uint256 deadline_)`。
+  - 完成 spender trace 报告：`docs/phases/phase-053-virtuals-buy-spender-trace-2026-05-10.md`。
+  - 确认 VIRTUAL 实际 spender 是 `0x02fe8ec3d9bbf7318eb54590bcc39198a8b47ded`，不是 direct router。
+  - 完成买入方式通用性审计：`docs/phases/phase-053-virtuals-buy-route-universality-audit-2026-05-10.md`。
+  - 本地 SR/ISC/TDS 共 `240` 个样本显示：普通用户 direct buy 基本通用为 router `0x1a540088125d00dd3990f9da45ca0859af4d3b01` + selector `0x706910ff`。
+  - 同时确认边界：团队/初始化交易使用 selector `0x214013ca`，部分成交走 alternate/aggregator router `0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789` + selector `0x1fad948c`；这些不纳入第一版自动买入。
+  - 实现标准 4 参数 calldata encoder 和显式参数 unsigned buy tx builder。
+  - 完成历史 calldata parity test：canonical 样本 exact parity，带尾部标签样本 canonical prefix parity。
+  - 实现 TxSimulator 的 `eth_call / estimateGas / balance / allowance / nonce / deadline` 只读检查。
+  - 新增真实 RPC 只读 probe：`scripts/ops/tx_simulator_probe.py`，输出 `data/backtests/tx-simulator-probe-sr-readonly-20260510.json`。
+  - `tx_simulator_probe.py` 已改为优先使用独立 `VWR_EXEC_HTTP_RPC_URL`，并输出 `rpcSharedWithMain`。
+  - 新增统一 execution RPC helper：`scripts/ops/execution_rpc.py`；`tx_simulator_probe.py / launch_readiness_check.py / live_strategy_dry_run.py / launch_prewarm_executor.py / local_signer_probe.py / launch_latency_probe.py` 均改为复用该入口。
+  - 新增只读 RPC 压力观察脚本：`scripts/ops/launch_rpc_pressure_probe.py`，同一报告记录主采集 RPC、backfill RPC、execution RPC、项目 market reserve latency；不签名、不广播、不输出 endpoint token。
+  - 本地 `TDS` 小样本 probe 已按生产同构入口复测，`.env.local` 提供 `VWR_EXEC_HTTP_RPC_URL`，`execution_rpc.py` 会在进程环境缺失时自动读取该 ignored 文件；输出 `data/backtests/launch-rpc-pressure-probe-local-autoenv-20260511T064241Z.json`，`executionRpcSharedWithMain=false`。
+  - 当前本地 `.env.local` 复用生产 execution endpoint，用途是“本地同构测试 -> 通过后同步生产”的单活流程，减少本地与生产环境漂移；本地测试和远端生产不要并行跑同一套交易 RPC。
+  - 只有在需要本地长期并行压测或多人同时开发时，才应改为单独 dev/local Chainstack endpoint。
+  - `execution_rpc.py` 已加本地广播保护：如果 `VWR_EXEC_HTTP_RPC_URL` 是从本地 `.env.local` 自动加载，真实广播默认阻断；只有显式设置 `VWR_ALLOW_PROJECT_ENV_BROADCAST=1` 才允许本地 canary 广播。
+  - 新增发射前 readiness 检查脚本 `scripts/ops/launch_readiness_check.py`，默认只读模拟 `25V / 50V` 两档，检查项目字段、active fuse、execution RPC、Base ETH gas、VIRTUAL balance/allowance、订单绑定和 TxSimulator。
+  - 完成 order binding / `amountOutMin`：`docs/phases/phase-053-virtuals-order-binding-minout-2026-05-10.md`。
+  - 实现 `VirtualsOrderBinder`：从当前池 reserve quote 计算 `amountOutMin`，默认 `slippage_bps=5000`、`deadline_offset_sec=180`。
+  - 执行层已支持 Virtuals internal pool fallback；TDS 这类 `token0/token1` revert 的池子仍可通过 `getReserves/decimals` 绑定订单。
+  - `TxSimulator` 已把 `amountOutMin > 0` 纳入绿灯检查；真实 TDS 只读 probe 输出 `data/backtests/tx-simulator-probe-tds-bound-minout-readonly-20260510.json`，因测试地址余额不足被正确阻断，`tradeSent=false`。
+  - 接入 `eth-account==0.13.7`，实现 `LocalSigner`。
+  - 完成本地 no-broadcast 签名测试：`docs/phases/phase-053-local-signer-no-broadcast-2026-05-10.md`；签名前要求 `amountOutMin / nonce / gas / EIP-1559 fee` 齐备，签名后 recover sender 校验 from 地址。
+  - 本地 smoke test 通过，且 `tradeSent=false`。
+  - 已并发化执行链路只读检查，`TxSimulator` 不再串行等待 `balance / allowance / nonce / eth_call / estimateGas`。
+  - 新增延迟探针：`scripts/ops/launch_latency_probe.py`。
+  - Chainstack RRR no-broadcast 延迟探针输出：`data/backtests/launch-latency-probe-chainstack-rrr-20260510.json`。
+  - 延迟探针结果：中位 `eth_blockNumber=277.9ms`，中位 `coldPrepareMs=1278.3ms`，中位 `hotPathLocalMs=12.8ms`；冷路径最大值 `3248.9ms`，存在 RPC outlier。
+  - 已明确第一买入速度考核 `tax_tick -> eth_sendRawTransaction ACK`，不是 `tax_tick -> receipt`；`buy_virtual_canary.py` 已增加 `sendRawMs / totalToSendAckMs / waitReceiptMs`。
+  - 生产第一买入必须走预热路径：提前维护状态、预取 nonce/fee/gas、提前构造或预签候选交易，tick 到达时只做本地条件判断和广播。
+  - 已完成极小额主网 canary：
+    - 冷路径 `0.001 VIRTUAL -> RRR`：tx `0xa9deb7b59e365d6c0d961e7deef2a58df1a7dc972c2d276505d4d34ac5336f5b`，`sendRawMs=438.6ms`，`totalToSendAckMs=2644.1ms`，receipt `status=1`。
+    - 热路径 `0.001 VIRTUAL -> RRR`：tx `0xb3542bf282ed76812534681baee3c5fe791031f300f4bed38a95aca4681c62bb`，预热后 `triggerToSendAckMs=450.6ms`，receipt `status=1`。
+    - 结论：冷路径不达标；预热路径满足 `<2s`，本轮实测 `<0.5s`。
+  - 新增 `scripts/ops/prewarmed_buy_canary.py`，把临时 hot-path canary 沉淀为可复用工具：默认不广播，显式 `--broadcast` 才发送。
+  - `prewarmed_buy_canary.py` dry-run 已验证：当前 allowance 不足时会停在 simulation 阶段，`broadcasted=false`、`tradeSent=false`。
+  - `approve_virtual_spender.py` 已改为 receipt 后轮询确认 allowance，解决授权成功但即时读数 stale 的误判。
+  - `approve_virtual_spender.py` 与 `approve_erc20_spender.py` 已改为优先使用独立 execution RPC，并支持 `--skip-sign` 只读验证 approve 的 `eth_call / estimateGas / nonce / fee`；ERC-20 授权不要求当前 VIRTUAL 余额足够，只要求 burner 有 Base ETH 付 gas，后续可转出的 VIRTUAL 仍受 `min(balance, allowance)` 限制。
+  - 真实授权广播默认要求独立 `VWR_EXEC_HTTP_RPC_URL`；共享主采集 RPC 时 fail-closed，除非显式传 `--allow-shared-rpc-broadcast`。
+  - 2026-05-11 已完成 ROO 25V VIRTUAL 授权广播：tx `0x2b5573753c5863f17fc784043956ecafdae04f9adc77a7bd7639226da15d5833`，receipt status `0x1`，allowance 已确认到 `25 VIRTUAL`；这是授权，不是 ROO 买入。
+  - 授权后 ROO 25V readiness：balance/allowance 已通过；但 ROO 仍为 `scheduled`，`buy()` 的 `eth_call / estimateGas` 仍 revert，因此当前只是钱包准备好 25V 基础买入，不代表现在可买。
+  - 2026-05-11 已完成 ROO 300V VIRTUAL 精确授权广播：tx `0xd7ea8c4ec30601edc67f8579a334abaecab0e38970608c79fbd8e6cc5096b36e`，receipt status `0x1`，allowance 已确认到 `300 VIRTUAL`；授权不要求当前 VIRTUAL 余额足够，实际可买额度仍受 `min(balance, allowance, service caps)` 限制。
+  - ROO 300V 授权后 readiness 复查：25V 只剩项目未 live 导致的 `ethCall/estimateGas`；50V 不再报 allowance，只剩 balance 与项目未 live。
+  - 新增 canary 退出工具：
+    - `scripts/ops/approve_erc20_spender.py`：任意 ERC-20 精确授权。
+    - `scripts/ops/sell_virtuals_token.py`：通过 direct sell route 卖回 VIRTUAL。
+  - `sell_virtuals_token.py` 已改为优先使用独立 execution RPC，并输出 `rpcSharedWithMain / executionRpcSource`；真实卖出广播默认要求独立 execution RPC。
+  - 2026-05-11 核心链路审计修复：`sell_virtuals_token.py` 的 `broadcastRequested` 已改为真实反映 `--broadcast`；receipt 输出增加 `receiptOk / reason`，避免 no-broadcast 或失败 receipt 被误读成成功卖出。
+  - 已确认 direct sell selector：`sell(uint256,address,uint256,uint256)` / `0xb233e056`。
+  - 已将本轮 canary 买入的 `TDS / RRR / AURA / ASDSDA` 全部卖回 VIRTUAL，卖回合计 `3.9223602 VIRTUAL`。
+  - 清仓后四个 token 余额均为 `0`，相关 token allowance 均为 `0`，最终 burner VIRTUAL 余额 `12.587713615542899411`。
+  - 已新增执行账本 `launch_execution_ledger` 与 Storage API。
+  - `live_strategy_dry_run.py` 已写入 would-buy / pause 记录，保持 `tradeSent=false`、`broadcastEnabled=false`。
+  - `prewarmed_buy_canary.py` 已支持可选 `--ledger-intent-id`，可记录 simulation / sign / broadcast / receipt 阶段摘要；账本不保存 raw transaction。
+  - 已新增执行熔断表 `launch_execution_fuses` 与 Storage API，熔断只影响自动买入执行链路，不停止主采集。
+  - 已新增执行熔断运维脚本 `scripts/ops/launch_execution_fuse.py`，支持 list / clear。
+  - `prewarmed_buy_canary.py` 已接入 active fuse 检查：同项目/策略/规则存在 active fuse 时，`--broadcast` 会在发送前被阻断。
+  - canary 路径 simulation / sign / broadcast / receipt / canary 异常会触发执行熔断。
+  - 本地已验证 TDS no-broadcast simulation failure 会落 active fuse，同规则 `--broadcast` 会被 active fuse 阻断，随后可用运维脚本 clear。
+  - 已新增生产预热执行器安全骨架 `scripts/ops/launch_prewarm_executor.py`。
+  - 预热执行器复用实时取样和 `DynamicAfter1StrategyEvaluator`，BuyIntent 后接入订单绑定和 TxSimulator。
+  - `simulate` 模式不读取私钥、不签名、不广播；`sign-ready` 模式只保存 signed tx hash 摘要，不保存 raw transaction，不广播。
+  - `broadcast` 模式已接入真实发送路径：simulation green 后签名、`eth_sendRawTransaction`、receipt 验证、账本写入。
+  - `broadcast` 模式必须同时满足 `--enable-broadcast` 与 `VWR_ENABLE_AUTO_BUY_BROADCAST=1`，默认要求独立 `VWR_EXEC_HTTP_RPC_URL`，并检查 active fuse、单笔上限、单项目上限、同税率档防重复。
+  - `buy_virtual_canary.py` 与 `prewarmed_buy_canary.py` 已改为优先使用独立 execution RPC；真实买入广播默认要求独立 execution RPC。
+  - `broadcast/sign-ready` 密钥加载优先使用环境变量 `VWR_BURNER_PRIVATE_KEY`，兼容 systemd root-only `EnvironmentFile`。
+  - `broadcast` 模式下钱包 `balance / allowance` 不足只记录 `readiness_not_ready`，不触发 active fuse；未发出交易时回滚本次策略内存状态，避免稍后转入资金后被误判为已买。
+  - 2026-05-11 核心链路审计修复：`launch_execution_ledger` 后续异常更新不再把已发送交易的 `trade_sent=1 / broadcast_enabled=1` 覆盖回 `0`，避免同税率档防重和项目上限统计失效。
+  - 预热执行器已接入 active fuse 检查和 simulation/sign/prewarm/broadcast/receipt 异常熔断。
+  - `prewarm_simulate` 模式下余额/授权不足记录为 `readiness_not_ready`，不触发 active fuse；`sign-ready` 仍会在 simulation 不绿时触发熔断。
+  - 本地 TDS ended 烟测通过：无 intent、无签名、无广播。
+  - 2026-05-11 已上线 ROO 生产 `simulate` 灰度服务：
+    - 服务：`vwr-launch-prewarm@ROO.service`。
+    - 输出：`data/execution/launch-prewarm-executor-ROO.jsonl`。
+    - 模式：`prewarm_simulate`，不读取私钥、不签名、不广播。
+    - 日志显示 `tradeSent=false`、`broadcastEnabled=false`、`rpcSharedWithMain=false`。
+    - 远端健康检查：主服务、ROO dry-run、ROO prewarm 均 active，`/health` 与 `/healthz` 正常，active fuse 为空，执行账本 `trade_sent=1` 与 `broadcast_enabled=1` 均为 `0`。
+  - 2026-05-11 已安装并启动 ROO 生产 `broadcast` armed 服务：
+    - 服务模板：`deploy/systemd/vwr-launch-autobuy@.service`。
+    - 生产服务：`vwr-launch-autobuy@ROO.service`。
+    - 输出：`data/execution/launch-autobuy-ROO.jsonl`。
+    - 启动策略：由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起 `dry-run / prewarm simulate / autobuy broadcast`。
+    - 主采集预热：ROO 主程序在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
+    - 2026-05-11 远端状态：timer `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行三服务保持 `inactive + disabled` 等待 timer，避免发射前过早占用 RPC。
+    - 模式：`prewarm_broadcast`，日志显示 `broadcastEnabled=true`、`rpcSharedWithMain=false`。
+    - 上限：`maxBuyV=50`、`maxProjectV=300`。
+    - ROO 仍为 `scheduled`，当前只记录 `state_change/not_live`，`tradeSent=false`，没有广播交易。
+- 当前未完成：
+  - 还需在真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
+  - 如果要真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已准备到 300V。
+  - 还需实现真正热路径缓存：提前维护 nonce、fee、gas、allowance、balance，tick 到达时只做本地判断和广播。
+  - 若要进一步降低 execution RPC 延迟，需单独评估 Chainstack Trader node `lax1` 或同一 raw transaction 多 RPC 广播；当前未启用。
+  - 灰度/真实窗口前仍需在生产机运行 `launch_rpc_pressure_probe.py`：要求 `executionRpcSharedWithMain=false`，并同时观察采集健康、market latency、execution RPC 延迟。
+  - 广播仍由显式 gate 控制；除已启动的 ROO autobuy armed 服务外，没有其他项目自动广播。
+  - 自动卖出仍未接入生产常驻服务；当前只有纯策略、回测和手动 sell 工具。进入生产自动卖出前，必须补执行账本状态、真实余额读取、sell simulation、sell broadcast gate 和 receipt/fuse 处理。
+
+## 41. 大户榜单团队地址过滤与管理员纠偏（2026-05-07）
 
 - 新增 Phase 054 子 plan：`docs/phases/phase-054-team-address-filter-plan.md`。
 - 新增 Phase 054 子 todo：`docs/phases/phase-054-team-address-filter-todo.md`。
@@ -2191,3 +2356,24 @@ Phase 052 执行结果：
   - 前端 UI 加入排除、审核区展示、清理后空状态正常
   - `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 已命中自动过滤
 - 当前状态：本地验证完成，尚未同步 GitHub，尚未部署生产。
+
+## 42. 双策略自动卖出口径与 SR/ISC 回测（2026-05-11）
+
+- 新增纯策略模块 `scripts/ops/launch_sell_strategy.py`：
+  - 税率 `<=30%` 后进入卖出观察。
+  - 收益率策略独立控制最多 `50%` 总仓位：收益率 `>=30%` 卖 `30%`，收益率 `>=50%` 卖 `50%`。
+  - 大额买入策略独立控制最多 `50%` 总仓位：单笔买入 `>=5,000 VIRTUAL` 卖 `30%`，单笔买入 `>=8,000 VIRTUAL` 卖 `50%`。
+  - 两条策略独立记账；同一刻同时触发时合并为一笔卖出。
+  - 卖出比例基于累计实际收到 token 数量，而不是当前余额，避免多次卖出时比例被重复折扣。
+  - 若真实余额低于目标卖出数量，只按实际卖出的原始仓位比例更新策略状态，避免误记已卖额度。
+- 新增测试和回测：
+  - 单元测试：`scripts/ops/test_launch_sell_strategy.py`。
+  - 回测脚本：`scripts/ops/recalc_dual_sell_strategy.py`。
+  - 报告：`docs/phases/phase-052-dual-sell-strategy-2026-05-11.md`。
+- SR/ISC 回测结果：
+  - SR：卖出 `2` 次，最终 `+54.432149 V / +43.5457%`，低于纯持有 `+68.9064%`；首次 tax `27` 同时触发收益率 `30%` 档和 `5,535 V` 大额买入，合并卖出 `60%`。
+  - ISC：卖出 `2` 次，最终 `+144.937286 V / +41.4107%`，高于纯持有 `+38.9383%`；仅由收益率策略触发。
+- 当前边界：
+  - 已完成策略决策、单元测试和历史回测。
+  - 尚未接入生产自动卖出服务、执行账本持久化、真实余额读取和 sell broadcast gate。
+  - 2026-05-11 核心链路审计后，生产同步白名单已补齐 Phase 052/053 的 execution RPC、pressure probe、sell strategy、sell 回测与相关测试脚本，避免本地通过但 `deploy_production_safe.sh` 漏同步核心执行文件。

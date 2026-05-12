@@ -8,7 +8,8 @@
 | Phase | 状态 | 子 todo | 下一步 |
 | --- | --- | --- | --- |
 | 051 | Done | `docs/todo.md#phase-5198-分钟税率项目自动买入策略离线回测` | 保留历史记录，不再继续追加细节。 |
-| 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 下一步基于候选策略做 realtime dry-run signal emitter，只记录 would-buy。 |
+| 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 买入策略已冻结为 after1 横盘暂停版；双策略自动卖出已完成本地回测，生产卖出执行接入进入 Phase 053。 |
+| 053 | In Progress | `docs/phases/phase-053-launch-execution-pipeline-todo.md` | execution RPC 已收口到独立 Chainstack endpoint；下一步是真实 live 窗口端到端验证、热路径缓存和 RPC 压力观察。 |
 | 054 | Local Validated | `docs/phases/phase-054-team-address-filter-todo.md` | 同步前做完整 diff 审核；如上线，走生产安全同步并复测 overview。 |
 
 ## 2. 执行规则

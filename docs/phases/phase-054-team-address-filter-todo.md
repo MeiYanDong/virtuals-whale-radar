@@ -34,5 +34,8 @@
 ## 4. 待办
 
 - [x] 同步 GitHub 前做一次完整 `git diff` 审核。
+- [ ] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：保存或缓存 `tx_to / tx_selector / calldata_bytes`。
+- [ ] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
+- [ ] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不应误杀。
 - [ ] 如需上线，使用生产安全同步脚本部署并重启服务。
 - [ ] 生产同步后复测管理员项目详情页和 overview API。

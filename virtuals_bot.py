@@ -1419,6 +1419,70 @@ class Storage:
                 scanned_at INTEGER NOT NULL,
                 PRIMARY KEY(project, tx_hash)
             );
+
+            CREATE TABLE IF NOT EXISTS launch_execution_ledger (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                intent_id TEXT NOT NULL UNIQUE,
+                project TEXT NOT NULL,
+                managed_project_id INTEGER,
+                signalhub_project_id TEXT,
+                strategy TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'dry_run',
+                status TEXT NOT NULL,
+                action TEXT NOT NULL,
+                decision_reason TEXT NOT NULL DEFAULT '',
+                sample_index INTEGER,
+                snapshot_ts INTEGER,
+                tax_rate TEXT,
+                buy_size_v TEXT,
+                entry_tax_fdv_wan_usd TEXT,
+                board_spent_v TEXT,
+                board_cost_wan_usd TEXT,
+                trigger_types_json TEXT NOT NULL DEFAULT '[]',
+                snapshot_json TEXT NOT NULL DEFAULT '{}',
+                intent_json TEXT NOT NULL DEFAULT '{}',
+                simulation_json TEXT,
+                signed_tx_hash TEXT,
+                broadcast_tx_hash TEXT,
+                receipt_json TEXT,
+                failure_stage TEXT,
+                failure_reason TEXT,
+                trade_sent INTEGER NOT NULL DEFAULT 0,
+                broadcast_enabled INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_execution_ledger_project_time
+                ON launch_execution_ledger(project, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_launch_execution_ledger_status_time
+                ON launch_execution_ledger(status, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS launch_execution_fuses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fuse_key TEXT NOT NULL UNIQUE,
+                project TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT 'project_strategy_rule',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                failure_stage TEXT NOT NULL,
+                failure_reason TEXT NOT NULL,
+                source_intent_id TEXT,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                cleared_at INTEGER,
+                cleared_reason TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_execution_fuses_active
+                ON launch_execution_fuses(is_active, project, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_launch_execution_fuses_project_time
+                ON launch_execution_fuses(project, updated_at DESC);
             """
         )
         self._ensure_column("monitored_wallets", "name", "TEXT NOT NULL DEFAULT ''")
@@ -1451,6 +1515,15 @@ class Storage:
         self._ensure_column("user_notifications", "project_id", "INTEGER")
         self.conn.commit()
 
+    @staticmethod
+    def _json_field(value: Any, default: Optional[str]) -> Optional[str]:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            raw = value.strip()
+            return raw if raw else default
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
     def _ensure_column(self, table_name: str, column_name: str, ddl: str) -> None:
         rows = self.conn.execute(f"PRAGMA table_info({table_name})").fetchall()
         known = {str(row["name"]) for row in rows}
@@ -1476,6 +1549,358 @@ class Storage:
             (key, value, now),
         )
         self.conn.commit()
+
+    def upsert_launch_execution_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        intent_id = str(record.get("intent_id") or "").strip()
+        if not intent_id:
+            raise ValueError("intent_id is required")
+        project = str(record.get("project") or "").strip()
+        if not project:
+            raise ValueError("project is required")
+        strategy = str(record.get("strategy") or "").strip()
+        if not strategy:
+            raise ValueError("strategy is required")
+        rule_name = str(record.get("rule_name") or "").strip()
+        if not rule_name:
+            raise ValueError("rule_name is required")
+        status = str(record.get("status") or "").strip()
+        if not status:
+            raise ValueError("status is required")
+        action = str(record.get("action") or "").strip()
+        if not action:
+            raise ValueError("action is required")
+
+        now = int(time.time())
+        values = {
+            "intent_id": intent_id,
+            "project": project,
+            "managed_project_id": record.get("managed_project_id"),
+            "signalhub_project_id": str(record.get("signalhub_project_id") or "").strip() or None,
+            "strategy": strategy,
+            "rule_name": rule_name,
+            "mode": str(record.get("mode") or "dry_run").strip() or "dry_run",
+            "status": status,
+            "action": action,
+            "decision_reason": str(record.get("decision_reason") or "").strip(),
+            "sample_index": record.get("sample_index"),
+            "snapshot_ts": record.get("snapshot_ts"),
+            "tax_rate": str(record.get("tax_rate") or "").strip() or None,
+            "buy_size_v": str(record.get("buy_size_v") or "").strip() or None,
+            "entry_tax_fdv_wan_usd": str(record.get("entry_tax_fdv_wan_usd") or "").strip() or None,
+            "board_spent_v": str(record.get("board_spent_v") or "").strip() or None,
+            "board_cost_wan_usd": str(record.get("board_cost_wan_usd") or "").strip() or None,
+            "trigger_types_json": self._json_field(record.get("trigger_types"), "[]"),
+            "snapshot_json": self._json_field(record.get("snapshot"), "{}"),
+            "intent_json": self._json_field(record.get("intent"), "{}"),
+            "simulation_json": self._json_field(record.get("simulation"), None),
+            "signed_tx_hash": str(record.get("signed_tx_hash") or "").strip() or None,
+            "broadcast_tx_hash": str(record.get("broadcast_tx_hash") or "").strip() or None,
+            "receipt_json": self._json_field(record.get("receipt"), None),
+            "failure_stage": str(record.get("failure_stage") or "").strip() or None,
+            "failure_reason": str(record.get("failure_reason") or "").strip() or None,
+            "trade_sent": 1 if record.get("trade_sent") else 0,
+            "broadcast_enabled": 1 if record.get("broadcast_enabled") else 0,
+            "created_at": int(record.get("created_at") or now),
+            "updated_at": int(record.get("updated_at") or now),
+        }
+        self.conn.execute(
+            """
+            INSERT INTO launch_execution_ledger(
+                intent_id, project, managed_project_id, signalhub_project_id,
+                strategy, rule_name, mode, status, action, decision_reason,
+                sample_index, snapshot_ts, tax_rate, buy_size_v, entry_tax_fdv_wan_usd,
+                board_spent_v, board_cost_wan_usd, trigger_types_json, snapshot_json,
+                intent_json, simulation_json, signed_tx_hash, broadcast_tx_hash, receipt_json,
+                failure_stage, failure_reason, trade_sent, broadcast_enabled, created_at, updated_at
+            ) VALUES (
+                :intent_id, :project, :managed_project_id, :signalhub_project_id,
+                :strategy, :rule_name, :mode, :status, :action, :decision_reason,
+                :sample_index, :snapshot_ts, :tax_rate, :buy_size_v, :entry_tax_fdv_wan_usd,
+                :board_spent_v, :board_cost_wan_usd, :trigger_types_json, :snapshot_json,
+                :intent_json, :simulation_json, :signed_tx_hash, :broadcast_tx_hash, :receipt_json,
+                :failure_stage, :failure_reason, :trade_sent, :broadcast_enabled, :created_at, :updated_at
+            )
+            ON CONFLICT(intent_id) DO UPDATE SET
+                status = excluded.status,
+                action = excluded.action,
+                decision_reason = excluded.decision_reason,
+                sample_index = COALESCE(excluded.sample_index, launch_execution_ledger.sample_index),
+                snapshot_ts = COALESCE(excluded.snapshot_ts, launch_execution_ledger.snapshot_ts),
+                tax_rate = COALESCE(excluded.tax_rate, launch_execution_ledger.tax_rate),
+                buy_size_v = COALESCE(excluded.buy_size_v, launch_execution_ledger.buy_size_v),
+                entry_tax_fdv_wan_usd = COALESCE(excluded.entry_tax_fdv_wan_usd, launch_execution_ledger.entry_tax_fdv_wan_usd),
+                board_spent_v = COALESCE(excluded.board_spent_v, launch_execution_ledger.board_spent_v),
+                board_cost_wan_usd = COALESCE(excluded.board_cost_wan_usd, launch_execution_ledger.board_cost_wan_usd),
+                trigger_types_json = CASE
+                    WHEN excluded.trigger_types_json != '[]' THEN excluded.trigger_types_json
+                    ELSE launch_execution_ledger.trigger_types_json
+                END,
+                snapshot_json = CASE
+                    WHEN excluded.snapshot_json != '{}' THEN excluded.snapshot_json
+                    ELSE launch_execution_ledger.snapshot_json
+                END,
+                intent_json = CASE
+                    WHEN excluded.intent_json != '{}' THEN excluded.intent_json
+                    ELSE launch_execution_ledger.intent_json
+                END,
+                simulation_json = COALESCE(excluded.simulation_json, launch_execution_ledger.simulation_json),
+                signed_tx_hash = COALESCE(excluded.signed_tx_hash, launch_execution_ledger.signed_tx_hash),
+                broadcast_tx_hash = COALESCE(excluded.broadcast_tx_hash, launch_execution_ledger.broadcast_tx_hash),
+                receipt_json = COALESCE(excluded.receipt_json, launch_execution_ledger.receipt_json),
+                failure_stage = excluded.failure_stage,
+                failure_reason = excluded.failure_reason,
+                trade_sent = CASE
+                    WHEN excluded.trade_sent = 1 THEN 1
+                    ELSE launch_execution_ledger.trade_sent
+                END,
+                broadcast_enabled = CASE
+                    WHEN excluded.broadcast_enabled = 1 THEN 1
+                    ELSE launch_execution_ledger.broadcast_enabled
+                END,
+                updated_at = excluded.updated_at
+            """,
+            values,
+        )
+        self.conn.commit()
+        row = self.get_launch_execution_record(intent_id)
+        if not row:
+            raise ValueError("failed to persist launch execution record")
+        return row
+
+    def get_launch_execution_record(self, intent_id: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_execution_ledger
+            WHERE intent_id = ?
+            """,
+            (str(intent_id).strip(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_launch_execution_records(self, project: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 500))
+        if project:
+            rows = self.conn.execute(
+                """
+                SELECT *
+                FROM launch_execution_ledger
+                WHERE project = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (str(project).strip(), bounded_limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT *
+                FROM launch_execution_ledger
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _launch_execution_fuse_key(
+        *,
+        project: str,
+        strategy: str,
+        rule_name: str,
+        scope: str = "project_strategy_rule",
+    ) -> str:
+        parts = [
+            str(scope or "project_strategy_rule").strip().lower(),
+            str(project or "").strip().lower(),
+            str(strategy or "").strip().lower(),
+            str(rule_name or "").strip().lower(),
+        ]
+        if not all(parts):
+            raise ValueError("project, strategy, rule_name, and scope are required")
+        return ":".join(parts)
+
+    def trigger_launch_execution_fuse(
+        self,
+        *,
+        project: str,
+        strategy: str,
+        rule_name: str,
+        failure_stage: str,
+        failure_reason: str,
+        source_intent_id: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None,
+        scope: str = "project_strategy_rule",
+    ) -> Dict[str, Any]:
+        fuse_key = self._launch_execution_fuse_key(
+            project=project,
+            strategy=strategy,
+            rule_name=rule_name,
+            scope=scope,
+        )
+        stage = str(failure_stage or "").strip()
+        reason = str(failure_reason or "").strip()
+        if not stage:
+            raise ValueError("failure_stage is required")
+        if not reason:
+            raise ValueError("failure_reason is required")
+        now = int(time.time())
+        values = {
+            "fuse_key": fuse_key,
+            "project": str(project).strip(),
+            "strategy": str(strategy).strip(),
+            "rule_name": str(rule_name).strip(),
+            "scope": str(scope or "project_strategy_rule").strip(),
+            "failure_stage": stage,
+            "failure_reason": reason,
+            "source_intent_id": str(source_intent_id or "").strip() or None,
+            "details_json": self._json_field(details or {}, "{}"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        self.conn.execute(
+            """
+            INSERT INTO launch_execution_fuses(
+                fuse_key, project, strategy, rule_name, scope, is_active,
+                failure_stage, failure_reason, source_intent_id, details_json,
+                created_at, updated_at, cleared_at, cleared_reason
+            ) VALUES (
+                :fuse_key, :project, :strategy, :rule_name, :scope, 1,
+                :failure_stage, :failure_reason, :source_intent_id, :details_json,
+                :created_at, :updated_at, NULL, NULL
+            )
+            ON CONFLICT(fuse_key) DO UPDATE SET
+                project = excluded.project,
+                strategy = excluded.strategy,
+                rule_name = excluded.rule_name,
+                scope = excluded.scope,
+                is_active = 1,
+                failure_stage = excluded.failure_stage,
+                failure_reason = excluded.failure_reason,
+                source_intent_id = excluded.source_intent_id,
+                details_json = excluded.details_json,
+                updated_at = excluded.updated_at,
+                cleared_at = NULL,
+                cleared_reason = NULL
+            """,
+            values,
+        )
+        self.conn.commit()
+        row = self.get_launch_execution_fuse(
+            project=project,
+            strategy=strategy,
+            rule_name=rule_name,
+            scope=scope,
+        )
+        if not row:
+            raise ValueError("failed to persist launch execution fuse")
+        return row
+
+    def get_launch_execution_fuse(
+        self,
+        *,
+        project: str,
+        strategy: str,
+        rule_name: str,
+        scope: str = "project_strategy_rule",
+    ) -> Optional[Dict[str, Any]]:
+        fuse_key = self._launch_execution_fuse_key(
+            project=project,
+            strategy=strategy,
+            rule_name=rule_name,
+            scope=scope,
+        )
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_execution_fuses
+            WHERE fuse_key = ?
+            """,
+            (fuse_key,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_active_launch_execution_fuse(
+        self,
+        *,
+        project: str,
+        strategy: str,
+        rule_name: str,
+        scope: str = "project_strategy_rule",
+    ) -> Optional[Dict[str, Any]]:
+        row = self.get_launch_execution_fuse(
+            project=project,
+            strategy=strategy,
+            rule_name=rule_name,
+            scope=scope,
+        )
+        if row and int(row.get("is_active") or 0) == 1:
+            return row
+        return None
+
+    def clear_launch_execution_fuse(
+        self,
+        *,
+        project: str,
+        strategy: str,
+        rule_name: str,
+        cleared_reason: str,
+        scope: str = "project_strategy_rule",
+    ) -> Optional[Dict[str, Any]]:
+        fuse_key = self._launch_execution_fuse_key(
+            project=project,
+            strategy=strategy,
+            rule_name=rule_name,
+            scope=scope,
+        )
+        now = int(time.time())
+        self.conn.execute(
+            """
+            UPDATE launch_execution_fuses
+            SET is_active = 0,
+                updated_at = ?,
+                cleared_at = ?,
+                cleared_reason = ?
+            WHERE fuse_key = ?
+            """,
+            (now, now, str(cleared_reason or "").strip(), fuse_key),
+        )
+        self.conn.commit()
+        return self.get_launch_execution_fuse(
+            project=project,
+            strategy=strategy,
+            rule_name=rule_name,
+            scope=scope,
+        )
+
+    def list_launch_execution_fuses(
+        self,
+        project: Optional[str] = None,
+        *,
+        active_only: bool = False,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 500))
+        clauses: List[str] = []
+        params: List[Any] = []
+        if project:
+            clauses.append("project = ?")
+            params.append(str(project).strip())
+        if active_only:
+            clauses.append("is_active = 1")
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(
+            f"""
+            SELECT *
+            FROM launch_execution_fuses
+            {where_sql}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, bounded_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def record_auth_attempt(
         self, event_type: str, subject: str, created_at: Optional[int] = None

@@ -1,0 +1,8 @@
+[Unit]
+Description=Start Virtuals Whale Radar ROO launch execution services
+After=network-online.target vwr@writer.service vwr@realtime.service vwr@backfill.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl start vwr-launch-dryrun@ROO.service vwr-launch-prewarm@ROO.service vwr-launch-autobuy@ROO.service
