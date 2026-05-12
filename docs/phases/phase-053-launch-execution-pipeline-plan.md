@@ -410,9 +410,10 @@ ROO 部署状态：
 发射前 readiness 检查：
 
 - 脚本：`scripts/ops/launch_readiness_check.py`。
-- 作用：只读检查项目字段、active fuse、execution RPC、Base ETH gas、VIRTUAL balance/allowance、订单绑定和 TxSimulator。
+- 作用：只读检查项目字段、active fuse、execution RPC、Base ETH gas、VIRTUAL balance/allowance、订单绑定和 TxSimulator；同时检查主采集协作状态，包括 runtime pause、event queue、realtime/backfill heartbeat、WSS 状态、active scan jobs，以及 prelaunch/live 阶段是否已经生成 launch_config。
 - 默认模拟 `25V` 与 `50V` 两档，覆盖当前策略的基础买入和 dip20 加倍买入。
 - 输出 `ready=false` 时必须先处理原因，再进入 `sign-ready` 或真实广播阶段。
+- 如果本地或远端项目不存在，脚本输出结构化 `managed_project_not_found`，不再 traceback；live 前应优先确认 `coreWorkflowReady=true`，否则自动买卖即使钱包/RPC 准备好，也可能因为采集协作未就绪而延迟。
 
 2026-05-11 ROO readiness 状态：
 

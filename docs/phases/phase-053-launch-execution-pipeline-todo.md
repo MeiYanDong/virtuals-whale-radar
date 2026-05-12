@@ -124,6 +124,8 @@
 - [x] 新增只读 RPC 压力观察脚本：`scripts/ops/launch_rpc_pressure_probe.py`，同一报告记录主采集 RPC、backfill RPC、execution RPC、项目 market reserve latency，不签名、不广播、不输出 endpoint token。
 - [x] 新增 `scripts/ops/test_launch_rpc_pressure_probe.py`；本地 `.env.local` 已补齐 `VWR_EXEC_HTTP_RPC_URL`，`execution_rpc.py` 会在进程环境缺失时自动读取该 ignored 文件。
 - [x] 本地同构 `TDS` pressure probe 通过，输出 `data/backtests/launch-rpc-pressure-probe-local-autoenv-20260511T064241Z.json`，`executionRpcSharedWithMain=false`。
+- [x] 加固主程序多进程协作：主库和 event bus SQLite 连接增加 busy timeout；`launch_configs_rev / my_wallets_rev` 改为纳秒级版本，避免同秒变更被 realtime/backfill 漏感知；receipt 读取增加短重试并在 heartbeat 暴露 `receipt_misses`；rolling backfill 等待本轮 tx 队列处理完成后再推进 `last_processed_block`。
+- [x] `launch_readiness_check.py` 增加 core workflow 检查：runtime pause、event queue、realtime/backfill heartbeat、WSS、active scan jobs、prelaunch/live launch_config；项目不存在时输出 `managed_project_not_found` 而不是 traceback。
 - [x] 本地 `.env.local` 当前复用生产 execution endpoint；口径是“本地同构测试 -> 通过后同步生产”的单活流程，减少配置漂移，本地测试和远端生产不要并行跑同一套交易 RPC。
 - [x] 只有在需要本地长期并行压测或多人同时开发时，才改为单独 dev/local Chainstack endpoint。
 - [x] `execution_rpc.py` 已加本地广播保护：如果 execution RPC 来自本地 `.env.local`，真实广播默认阻断；只有显式设置 `VWR_ALLOW_PROJECT_ENV_BROADCAST=1` 才允许本地 canary 广播。

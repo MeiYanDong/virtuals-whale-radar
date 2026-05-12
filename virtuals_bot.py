@@ -1058,7 +1058,7 @@ class Storage:
     def __init__(self, db_path: str):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
 
@@ -1071,6 +1071,7 @@ class Storage:
             """
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
+            PRAGMA busy_timeout=10000;
             PRAGMA foreign_keys=ON;
 
             CREATE TABLE IF NOT EXISTS events (
@@ -4667,7 +4668,7 @@ class EventBusStorage:
     def __init__(self, db_path: str):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, timeout=10)
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
 
@@ -4680,6 +4681,7 @@ class EventBusStorage:
             """
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
+            PRAGMA busy_timeout=10000;
 
             CREATE TABLE IF NOT EXISTS event_queue (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5078,9 +5080,9 @@ class VirtualsBot:
         self.reload_launch_configs()
         self.reload_my_wallets()
         if not self.storage.get_state("launch_configs_rev"):
-            self.storage.set_state("launch_configs_rev", str(int(time.time())))
+            self.storage.set_state("launch_configs_rev", str(time.time_ns()))
         if not self.storage.get_state("my_wallets_rev"):
-            self.storage.set_state("my_wallets_rev", str(int(time.time())))
+            self.storage.set_state("my_wallets_rev", str(time.time_ns()))
         if self.storage.get_state("runtime_bootstrap_v2") != "1":
             self.storage.set_state("runtime_paused", "1")
             self.storage.set_state("runtime_bootstrap_v2", "1")
@@ -5139,6 +5141,7 @@ class VirtualsBot:
             "inserted_events": 0,
             "rpc_errors": 0,
             "dead_letters": 0,
+            "receipt_misses": 0,
             "last_ws_block": 0,
             "last_backfill_block": 0,
             "last_flush_at": 0,
@@ -7492,12 +7495,12 @@ class VirtualsBot:
         return v
 
     def bump_launch_config_revision(self) -> None:
-        rev = str(int(time.time()))
+        rev = str(time.time_ns())
         self.storage.set_state("launch_configs_rev", rev)
         self.last_launch_cfg_rev = rev
 
     def bump_my_wallet_revision(self) -> None:
-        rev = str(int(time.time()))
+        rev = str(time.time_ns())
         self.storage.set_state("my_wallets_rev", rev)
         self.last_my_wallets_rev = rev
 
@@ -7661,6 +7664,7 @@ class VirtualsBot:
             "parsed_events": int(self.stats.get("parsed_events", 0)),
             "rpc_errors": int(self.stats.get("rpc_errors", 0)),
             "dead_letters": int(self.stats.get("dead_letters", 0)),
+            "receipt_misses": int(self.stats.get("receipt_misses", 0)),
             "last_ws_block": int(self.stats.get("last_ws_block", 0)),
             "last_backfill_block": int(self.stats.get("last_backfill_block", 0)),
             "queue_size": int(self.queue.qsize()),
@@ -8004,8 +8008,9 @@ class VirtualsBot:
     ) -> None:
         try:
             rpc_client = rpc or self.http_rpc
-            receipt = await rpc_client.get_receipt(tx_hash)
+            receipt = await self.get_receipt_with_short_retry(rpc_client, tx_hash)
             if not receipt:
+                self.stats["receipt_misses"] = int(self.stats.get("receipt_misses", 0)) + 1
                 return
             if receipt.get("status") and int(receipt["status"], 16) == 0:
                 return
@@ -8044,6 +8049,23 @@ class VirtualsBot:
             self.stats["dead_letters"] += 1
         finally:
             self.pending_txs.discard(tx_hash)
+
+    async def get_receipt_with_short_retry(
+        self,
+        rpc_client: RPCClient,
+        tx_hash: str,
+        *,
+        attempts: int = 3,
+        delay_sec: float = 0.2,
+    ) -> Optional[Dict[str, Any]]:
+        receipt: Optional[Dict[str, Any]] = None
+        for attempt in range(1, max(1, attempts) + 1):
+            receipt = await rpc_client.get_receipt(tx_hash)
+            if receipt:
+                return receipt
+            if attempt < attempts:
+                await asyncio.sleep(delay_sec * attempt)
+        return receipt
 
     async def consumer_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -8673,6 +8695,8 @@ class VirtualsBot:
                         to_block,
                         rpc_url=scan_rpc.url,
                     )
+                if txs:
+                    await self.queue.join()
                 cursor = to_block
                 self.storage.set_state("last_processed_block", str(cursor))
                 self.stats["last_backfill_block"] = cursor

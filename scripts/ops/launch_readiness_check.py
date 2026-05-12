@@ -56,6 +56,61 @@ def failed_checks(simulation: dict[str, Any]) -> list[str]:
     return [name for name, check in checks.items() if not bool((check or {}).get("ok"))]
 
 
+def heartbeat_payload(bot: VirtualsBot, role: str, now_ts: int) -> dict[str, Any]:
+    row = bot.event_bus.get_role_heartbeat(role)
+    if not row:
+        return {"role": role, "present": False, "fresh": False}
+    updated_at = int(row.get("updated_at") or 0)
+    payload = row.get("payload") or {}
+    return {
+        "role": role,
+        "present": True,
+        "fresh": bool(updated_at and now_ts - updated_at <= 15),
+        "ageSec": max(0, now_ts - updated_at) if updated_at else None,
+        "updatedAt": updated_at,
+        "wsConnected": bool(payload.get("ws_connected")) if role == "realtime" else None,
+        "queueSize": int(payload.get("queue_size") or 0),
+        "pendingTx": int(payload.get("pending_txs") or 0),
+        "rpcErrors": int(payload.get("rpc_errors") or 0),
+        "deadLetters": int(payload.get("dead_letters") or 0),
+        "receiptMisses": int(payload.get("receipt_misses") or 0),
+        "lastWsBlock": int(payload.get("last_ws_block") or 0),
+        "lastBackfillBlock": int(payload.get("last_backfill_block") or 0),
+    }
+
+
+def emit_output(args: argparse.Namespace, output: dict[str, Any]) -> None:
+    if args.output_json:
+        path = Path(args.output_json)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    print(
+        json.dumps(
+            {
+                "ready": output.get("ready"),
+                "project": (output.get("project") or {}).get("name"),
+                "derivedStatus": (output.get("project") or {}).get("derivedStatus"),
+                "rpcSharedWithMain": output.get("rpcSharedWithMain"),
+                "activeFuseCount": len(output.get("activeFuses") or []),
+                "coreWorkflowReady": (output.get("coreWorkflow") or {}).get("ready"),
+                "eventQueueSize": (output.get("coreWorkflow") or {}).get("eventQueueSize"),
+                "buySizeChecks": [
+                    {
+                        "amountV": row.get("amountV"),
+                        "green": row.get("green"),
+                        "failedChecks": row.get("failedChecks"),
+                    }
+                    for row in output.get("buySizeChecks", [])
+                ],
+                "reasons": output.get("reasons", []),
+                "outputJson": args.output_json,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 async def async_main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
@@ -82,12 +137,34 @@ async def async_main() -> None:
     }
 
     async with VirtualsBot(cfg, role="backfill") as bot:
-        project_row = find_project(bot, str(args.project))
+        now_ts = int(time.time())
+        try:
+            project_row = find_project(bot, str(args.project))
+        except Exception as exc:
+            output["ready"] = False
+            output["reason"] = "managed_project_not_found"
+            output["reasons"] = ["managed_project_not_found"]
+            output["error"] = str(exc)
+            emit_output(args, output)
+            return
         project_name = str(project_row.get("name") or args.project).strip()
         project_status = bot.derive_managed_project_status(project_row)
         token_addr = str(project_row.get("token_addr") or "").strip()
         pool_addr = str(project_row.get("internal_pool_addr") or "").strip()
         active_fuses = bot.storage.list_launch_execution_fuses(project_name, active_only=True, limit=20)
+        launch_config = bot.storage.get_launch_config_by_name(project_name)
+        expected_launch_config = (
+            project_status in {"prelaunch", "live"}
+            and bool(project_row.get("is_watched"))
+            and bool(project_row.get("collect_enabled"))
+            and bool(token_addr)
+            and bool(pool_addr)
+        )
+        runtime_paused = bool(bot.refresh_runtime_pause_state(force=True))
+        realtime_hb = heartbeat_payload(bot, "realtime", now_ts)
+        backfill_hb = heartbeat_payload(bot, "backfill", now_ts)
+        event_queue_size = bot.event_bus.queue_size()
+        active_scan_jobs = bot.event_bus.count_scan_jobs(only_active=True)
         output["project"] = {
             "id": project_row.get("id"),
             "name": project_name,
@@ -100,6 +177,25 @@ async def async_main() -> None:
             "startAt": project_row.get("start_at"),
             "resolvedEndAt": project_row.get("resolved_end_at"),
             "complete": bool(token_addr and pool_addr and project_row.get("start_at") and project_row.get("resolved_end_at")),
+        }
+        output["coreWorkflow"] = {
+            "runtimePaused": runtime_paused,
+            "eventQueueSize": event_queue_size,
+            "activeScanJobs": active_scan_jobs,
+            "expectedLaunchConfigActive": expected_launch_config,
+            "launchConfigActive": bool(launch_config),
+            "realtime": realtime_hb,
+            "backfill": backfill_hb,
+            "ready": (
+                not runtime_paused
+                and event_queue_size < 100
+                and realtime_hb.get("present")
+                and realtime_hb.get("fresh")
+                and (not expected_launch_config or realtime_hb.get("wsConnected"))
+                and backfill_hb.get("present")
+                and backfill_hb.get("fresh")
+                and (not expected_launch_config or bool(launch_config))
+            ),
         }
         output["activeFuses"] = [
             {
@@ -160,6 +256,7 @@ async def async_main() -> None:
                 output["buySizeChecks"] = checks
                 output["ready"] = (
                     output["project"]["complete"]
+                    and output["coreWorkflow"]["ready"]
                     and bool(project_row.get("collect_enabled"))
                     and not rpc_selection.rpc_shared_with_main
                     and not active_fuses
@@ -175,38 +272,28 @@ async def async_main() -> None:
                         reasons.append("execution_rpc_missing_or_shared")
                     if active_fuses:
                         reasons.append("active_fuse")
+                    if runtime_paused:
+                        reasons.append("runtime_paused")
+                    if not realtime_hb.get("present"):
+                        reasons.append("realtime_heartbeat_missing")
+                    elif not realtime_hb.get("fresh"):
+                        reasons.append("realtime_heartbeat_stale")
+                    elif expected_launch_config and not realtime_hb.get("wsConnected"):
+                        reasons.append("realtime_ws_disconnected")
+                    if not backfill_hb.get("present"):
+                        reasons.append("backfill_heartbeat_missing")
+                    elif not backfill_hb.get("fresh"):
+                        reasons.append("backfill_heartbeat_stale")
+                    if expected_launch_config and not launch_config:
+                        reasons.append("launch_config_not_active")
+                    if event_queue_size >= 100:
+                        reasons.append("event_queue_backlog")
                     for row in checks:
                         for failed in row.get("failedChecks") or []:
                             reasons.append(f"{row.get('amountV')}V:{failed}")
                     output["reasons"] = reasons
 
-    if args.output_json:
-        path = Path(args.output_json)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-    print(
-        json.dumps(
-            {
-                "ready": output.get("ready"),
-                "project": (output.get("project") or {}).get("name"),
-                "derivedStatus": (output.get("project") or {}).get("derivedStatus"),
-                "rpcSharedWithMain": output.get("rpcSharedWithMain"),
-                "activeFuseCount": len(output.get("activeFuses") or []),
-                "buySizeChecks": [
-                    {
-                        "amountV": row.get("amountV"),
-                        "green": row.get("green"),
-                        "failedChecks": row.get("failedChecks"),
-                    }
-                    for row in output.get("buySizeChecks", [])
-                ],
-                "reasons": output.get("reasons", []),
-                "outputJson": args.output_json,
-            },
-            ensure_ascii=False,
-        )
-    )
+    emit_output(args, output)
 
 
 def main() -> None:
