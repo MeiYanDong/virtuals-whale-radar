@@ -289,16 +289,16 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     elif pause_after_buy_count != 2:
         name = f"dynamic_25v_dip20_after{pause_after_buy_count}_flat10_no_cap"
     config = DynamicBuyConfig(name=name, pause_after_buy_count=pause_after_buy_count)
-    projects = [
-        build_project_result(Path(args.sr_report), config),
-        build_project_result(Path(args.isc_report), config),
-    ]
+    report_paths = [Path(item.split("=", 1)[1] if "=" in item else item) for item in args.report]
+    if not report_paths:
+        report_paths = [Path(args.sr_report), Path(args.isc_report)]
+    projects = [build_project_result(path, config) for path in report_paths]
     return {
         "ok": True,
         "readOnly": True,
         "productionDbTouched": False,
         "tradeSent": False,
-        "scope": "SR and ISC dynamic buy strategy recalculation from existing event-level samples",
+        "scope": "Dynamic buy strategy recalculation from existing event-level samples",
         "strategyRevision": config.name,
         "strategyDefinition": {
             "hardGates": [
@@ -331,7 +331,7 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
     lines: list[str] = []
     lines.append("# Dynamic 25V/50V Strategy Recalculation")
     lines.append("")
-    lines.append("本报告只读取既有 SR/ISC 事件级 sample JSONL，未重新抓链、未写生产库、未发送交易。")
+    lines.append("本报告只读取既有事件级 sample JSONL 或 launch archive，未重新抓链、未写生产库、未发送交易。")
     lines.append("")
     lines.append("## 策略口径")
     lines.append("- 硬条件沿用上一版：榜单累计投入 `>=5,000 V`、榜单人数 `>=20`、成本样本 `>=5`、含税估算 FDV `<=` 榜单成本位、每个税率档位最多买一次。")
@@ -396,7 +396,13 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Recalculate dynamic buy strategy from existing SR/ISC samples.")
+    parser = argparse.ArgumentParser(description="Recalculate dynamic buy strategy from existing samples.")
+    parser.add_argument(
+        "--report",
+        action="append",
+        default=[],
+        help="Project summary/archive JSON. Repeatable. Optional PROJECT=path form is accepted.",
+    )
     parser.add_argument("--sr-report", default="data/backtests/sr-event-level-replay-20260510T073102Z.json")
     parser.add_argument("--isc-report", default="data/backtests/isc-event-level-replay-20260510.json")
     parser.add_argument("--output-json", default="data/backtests/dynamic-buy-recalc-after1-flat10-20260510.json")

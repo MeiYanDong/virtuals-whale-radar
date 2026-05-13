@@ -118,6 +118,35 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def sample_archive_record(
+    *,
+    project: str,
+    rule: str,
+    sample_index: int,
+    sample: dict[str, Any],
+    decision_action: str | None,
+    decision_reason: str | None,
+    rpc_shared_with_main: bool,
+    execution_rpc_source: str,
+) -> dict[str, Any]:
+    record = dict(compact_sample(sample))
+    record.update(
+        {
+            "_recordType": "launch_sample",
+            "_recordedAt": utc_iso(),
+            "_recordedAtCst": cst_iso(),
+            "_project": project,
+            "_rule": rule,
+            "_sampleIndex": sample_index,
+            "_decisionAction": decision_action,
+            "_decisionReason": decision_reason,
+            "_rpcSharedWithMain": rpc_shared_with_main,
+            "_executionRpcSource": execution_rpc_source,
+        }
+    )
+    return record
+
+
 def stable_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -234,6 +263,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project", required=True, help="Managed project name, id, or SignalHub project id.")
     parser.add_argument("--rule", default="gate_5k_tax95_fdv_one_per_tax")
     parser.add_argument("--output-jsonl", default="")
+    parser.add_argument(
+        "--full-samples-jsonl",
+        default="",
+        help="Optional JSONL path that receives every sampled launch snapshot for replay/backtest archives.",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--min-poll-sec", type=float, default=0.25)
@@ -260,6 +294,9 @@ async def async_main() -> None:
         args.output_jsonl
         or f"data/execution/live-strategy-dry-run-{str(args.project).strip().upper()}.jsonl"
     )
+    full_samples_jsonl = Path(args.full_samples_jsonl) if str(args.full_samples_jsonl or "").strip() else None
+    if full_samples_jsonl is not None and full_samples_jsonl.resolve() == output_jsonl.resolve():
+        raise RuntimeError("--full-samples-jsonl must be different from --output-jsonl")
     stop_event = asyncio.Event()
 
     def on_stop() -> None:
@@ -298,6 +335,7 @@ async def async_main() -> None:
             "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
             "executionRpcSource": rpc_selection.source,
             "outputJsonl": str(output_jsonl),
+            "fullSamplesJsonl": str(full_samples_jsonl) if full_samples_jsonl else "",
         }
         append_jsonl(output_jsonl, service_meta)
         print(json.dumps(service_meta, ensure_ascii=False), flush=True)
@@ -313,6 +351,20 @@ async def async_main() -> None:
                 current_fingerprint = fingerprint(sample)
                 decision = evaluator.evaluate(sample, index=sample_count - 1)
                 decisions[decision.action] = decisions.get(decision.action, 0) + 1
+                if full_samples_jsonl is not None:
+                    append_jsonl(
+                        full_samples_jsonl,
+                        sample_archive_record(
+                            project=project_name,
+                            rule=rule.name,
+                            sample_index=sample_count - 1,
+                            sample=sample,
+                            decision_action=decision.action,
+                            decision_reason=decision.reason,
+                            rpc_shared_with_main=rpc_selection.rpc_shared_with_main,
+                            execution_rpc_source=rpc_selection.source,
+                        ),
+                    )
 
                 should_log = False
                 payload: dict[str, Any] = {
@@ -434,6 +486,7 @@ async def async_main() -> None:
         "tradeSent": False,
         "broadcastEnabled": False,
         "outputJsonl": str(output_jsonl),
+        "fullSamplesJsonl": str(full_samples_jsonl) if full_samples_jsonl else "",
     }
     append_jsonl(output_jsonl, summary)
     print(json.dumps(summary, ensure_ascii=False), flush=True)

@@ -2398,3 +2398,24 @@ Phase 052 执行结果：
   - 2026-05-11 核心链路审计后，生产同步白名单已补齐 Phase 052/053 的 execution RPC、pressure probe、sell strategy、sell 回测与相关测试脚本，避免本地通过但 `deploy_production_safe.sh` 漏同步核心执行文件。
   - 2026-05-13 未加入 ACP/项目方卖单冷静期；当前判断是双条件卖出已足够降低“大单抄底误杀”风险，ACP 卖单暂不作为买卖信号。
   - 2026-05-13 ROO 复盘发现执行账本审计字段问题：同一 intent 先由 simulate 写入、后由 broadcast 成功执行时，`status/trade_sent/tx_hash` 已更新但 `mode` 仍可能停留在 `prewarm_simulate`。已修正为有签名/广播/receipt 时同步升级 `mode`，避免事后审计误判。
+
+## 43. Live 发射档案与后续回测复用（2026-05-13）
+
+- 结论：线上生产数据是最真实的数据源，但原先是生产运行日志，不是标准化回测档案。
+- 已新增标准归档入口：`scripts/ops/archive_launch_project.py`。
+  - 只读生产 SQLite。
+  - 输出 `manifest.json / project.json / samples.jsonl / events.jsonl / execution-ledger.jsonl / fuses.jsonl / summary.json / archive.db`。
+  - `summary.json` 暴露 `samplesPath/jsonlPath`，作为后续回测脚本入口。
+- 已新增全量采样记录能力：`scripts/ops/live_strategy_dry_run.py --full-samples-jsonl`。
+  - 常规日志仍只写 `state_change / heartbeat / intent`。
+  - 全量 sample 单独写入 `data/execution/launch-samples-<PROJECT>.jsonl`。
+  - 这样保留税率变化但无交易的关键决策点，避免后续只能从稀疏日志复盘。
+- 已新增生产 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`。
+  - 只读，不读取私钥，不签名，不广播。
+  - 默认输出 `live-strategy-dry-run-%i.jsonl` 和 `launch-samples-%i.jsonl`。
+- 回测入口已泛化：
+  - `recalc_dynamic_buy_strategy.py --report <archive>/summary.json`。
+  - `recalc_dual_sell_strategy.py --report <archive>/summary.json --rule <rule>`。
+- 本地 smoke 已验证：
+  - TDS 本地 DB 可导出 archive。
+  - 指定本地 sample JSONL 后，archive summary 可被 dynamic buy 和 dual sell 回测脚本读取。

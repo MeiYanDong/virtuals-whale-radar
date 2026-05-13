@@ -250,7 +250,7 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
     lines = [
         "# Confirmed Large-Buy Sell Strategy Backtest",
         "",
-        "本报告只读取本地 SR/ISC event-level replay 产物，未重新抓链、未写生产库、未发送交易。",
+        "本报告只读取本地 event-level replay 产物或 launch archive，未重新抓链、未写生产库、未发送交易。",
         "",
         "## 策略口径",
         "",
@@ -327,29 +327,42 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     buy_config = DynamicBuyConfig(pause_after_buy_count=1)
     sell_config = DualSellConfig()
-    projects = [
-        evaluate_project(
-            report_path=Path(args.sr_report),
-            rule_name=args.sr_rule,
-            buy_config=buy_config,
-            sell_config=sell_config,
-            catch_up_events_sec=args.catch_up_events_sec,
-        ),
-        evaluate_project(
-            report_path=Path(args.isc_report),
-            rule_name=args.isc_rule,
-            buy_config=buy_config,
-            sell_config=sell_config,
-            catch_up_events_sec=args.catch_up_events_sec,
-        ),
-    ]
+    if args.report:
+        report_specs = [item.split("=", 1)[1] if "=" in item else item for item in args.report]
+        projects = [
+            evaluate_project(
+                report_path=Path(item),
+                rule_name=args.rule,
+                buy_config=buy_config,
+                sell_config=sell_config,
+                catch_up_events_sec=args.catch_up_events_sec,
+            )
+            for item in report_specs
+        ]
+    else:
+        projects = [
+            evaluate_project(
+                report_path=Path(args.sr_report),
+                rule_name=args.sr_rule,
+                buy_config=buy_config,
+                sell_config=sell_config,
+                catch_up_events_sec=args.catch_up_events_sec,
+            ),
+            evaluate_project(
+                report_path=Path(args.isc_report),
+                rule_name=args.isc_rule,
+                buy_config=buy_config,
+                sell_config=sell_config,
+                catch_up_events_sec=args.catch_up_events_sec,
+            ),
+        ]
     return {
         "ok": True,
         "readOnly": True,
         "productionDbTouched": False,
         "tradeSent": False,
         "catchUpEventsSec": args.catch_up_events_sec,
-        "scope": "SR and ISC confirmed large-buy sell-strategy backtest from existing event-level samples",
+        "scope": "Confirmed large-buy sell-strategy backtest from existing event-level samples",
         "strategyDefinition": {
             "name": sell_config.name,
             "sellWindow": "buyTaxRate <= 30",
@@ -367,7 +380,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backtest confirmed ROI + large-buy sell strategy for SR and ISC.")
+    parser = argparse.ArgumentParser(description="Backtest confirmed ROI + large-buy sell strategy.")
+    parser.add_argument(
+        "--report",
+        action="append",
+        default=[],
+        help="Project summary/archive JSON. Repeatable. Optional PROJECT=path form is accepted.",
+    )
+    parser.add_argument("--rule", default="gate_5k_tax95_fdv_one_per_tax")
     parser.add_argument("--sr-report", default="data/backtests/sr-event-level-replay-20260510T073102Z.json")
     parser.add_argument("--isc-report", default="data/backtests/isc-event-level-replay-20260510.json")
     parser.add_argument("--sr-rule", default="gate_5k_tax95_fdv_one_per_tax")

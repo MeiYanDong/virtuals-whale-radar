@@ -1,0 +1,21 @@
+[Unit]
+Description=Virtuals Whale Radar launch sample recorder and dry-run for %i
+After=network-online.target vwr@writer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vwr
+Group=vwr
+WorkingDirectory=/opt/virtuals-whale-radar
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
+EnvironmentFile=-/etc/virtuals-whale-radar/execution-rpc.env
+ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/live_strategy_dry_run.py --config /opt/virtuals-whale-radar/config.json --project %i --rule gate_5k_tax95_fdv_one_per_tax --output-jsonl /opt/virtuals-whale-radar/data/execution/live-strategy-dry-run-%i.jsonl --full-samples-jsonl /opt/virtuals-whale-radar/data/execution/launch-samples-%i.jsonl --exit-after-end-sec 300
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

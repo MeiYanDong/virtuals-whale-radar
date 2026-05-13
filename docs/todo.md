@@ -1116,3 +1116,16 @@
 - [x] 补齐 `deploy_production_safe.sh` 白名单：execution RPC、pressure probe、sell strategy、sell 回测、Phase 052/053 报告和相关测试脚本都会随生产同步脚本带上。
 - [x] 本地验证：`py_compile`、策略单元测试、SR/ISC 回测、`git diff --check`。
 - [x] Phase 053 已接入生产自动卖出执行链路：执行账本状态、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse。
+
+## Phase 53：Live 发射档案与回测复用
+
+- [x] 新增标准归档脚本：`scripts/ops/archive_launch_project.py`。
+- [x] 归档输出包含：`manifest.json`、`project.json`、`samples.jsonl`、`events.jsonl`、`execution-ledger.jsonl`、`fuses.jsonl`、`summary.json`、`archive.db`。
+- [x] `live_strategy_dry_run.py` 新增 `--full-samples-jsonl`，每轮采样单独写入全量 sample 文件。
+- [x] 新增生产只读 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`。
+- [x] `deploy_production_safe.sh` 白名单加入 archive 脚本和 dry-run recorder 模板。
+- [x] `recalc_dynamic_buy_strategy.py` 支持 `--report <archive>/summary.json`。
+- [x] `recalc_dual_sell_strategy.py` 支持 `--report <archive>/summary.json --rule <rule>`。
+- [x] 本地 smoke：TDS 本地 DB 可导出 archive；指定本地 sample JSONL 后 dynamic/dual sell 回测可读取 archive summary。
+- [ ] 下一次真实 live 项目结束后，立即运行 `archive_launch_project.py --project <SYMBOL>` 并检查 `sampleCount/eventCount/ledgerCount`。
+- [ ] 生产同步后确认 `vwr-launch-dryrun@<SYMBOL>.service` 的 `launch-samples-<SYMBOL>.jsonl` 正常增长。

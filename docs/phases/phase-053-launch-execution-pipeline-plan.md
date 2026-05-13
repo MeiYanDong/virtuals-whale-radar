@@ -467,6 +467,27 @@ ROO 部署状态：
 - 失败处理：sell simulation、approve、sign、broadcast、receipt 任一异常写入 `launch_execution_ledger` 并触发 active fuse。
 - 本地 smoke：TDS ended 项目 `autosell_simulate --once` 正常启动并返回 `no_position`，无签名、无广播。
 
+### Stage 2.8：Live 发射档案与回测复用
+
+- 目标：每个真实发射项目结束后，都能从生产只读数据生成一份可复用回测档案，后续策略回测不直接读生产 DB。
+- 新增只读归档脚本：`scripts/ops/archive_launch_project.py`。
+  - 输入：生产 SQLite、项目名/id、可选 sample JSONL。
+  - 输出：`manifest.json`、`project.json`、`samples.jsonl`、`events.jsonl`、`execution-ledger.jsonl`、`fuses.jsonl`、`summary.json`、`archive.db`。
+  - `summary.json` 暴露 `samplesPath/jsonlPath`，可直接作为回测入口。
+- `live_strategy_dry_run.py` 新增 `--full-samples-jsonl`，用于每轮采样都写入独立 `launch-samples-<PROJECT>.jsonl`。
+  - 生产事件日志仍保持 `state_change/heartbeat/intent` 口径，避免主日志膨胀。
+  - 全量 samples 只由 dry-run/recorder 负责，autobuy/autosell 继续负责交易账本和 receipt，避免多进程重复写同一个样本文件。
+- 新增生产只读 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`。
+  - 默认输出：`data/execution/live-strategy-dry-run-%i.jsonl`。
+  - 全量采样：`data/execution/launch-samples-%i.jsonl`。
+- 回测脚本入口泛化：
+  - `scripts/ops/recalc_dynamic_buy_strategy.py --report <archive>/summary.json`。
+  - `scripts/ops/recalc_dual_sell_strategy.py --report <archive>/summary.json --rule gate_5k_tax95_fdv_one_per_tax`。
+- 本地 smoke：
+  - `archive_launch_project.py --project TDS` 可从本地 DB 导出 `events / ledger / fuses / archive.db`。
+  - 使用本地 prewarm smoke JSONL 指定 `--samples-jsonl` 后，可生成带 `samples.jsonl` 的归档。
+  - 新的 `--report` 回测入口可读取归档 summary 并完成 dynamic/dual sell smoke。
+
 ### Stage 3：历史交易 calldata parity
 
 - 已完成。

@@ -97,6 +97,7 @@ FILES=(
   scripts/ops/sr_strategy_ablation_suite.py
   scripts/ops/sr_strategy_recalc_from_matrix.py
   scripts/ops/strategy_test_matrix_runner.py
+  scripts/ops/archive_launch_project.py
   scripts/ops/test_execution_rpc.py
   scripts/ops/test_launch_execution_pipeline.py
   scripts/ops/test_launch_rpc_pressure_probe.py
@@ -109,6 +110,7 @@ FILES=(
   scripts/ops/virtuals_buy_spender_trace.py
   scripts/ops/run_chainstack_test_suite.py
   scripts/ops/deploy_production_safe.sh
+  deploy/systemd/vwr-launch-dryrun@.service
   deploy/systemd/vwr-launch-autobuy@.service
   deploy/systemd/vwr-launch-autosell@.service
   deploy/systemd/vwr-launch-roo-start.service

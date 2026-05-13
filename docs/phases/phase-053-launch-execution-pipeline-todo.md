@@ -187,6 +187,11 @@
 - [x] 修复 autosell 大额买入去重：不再把“已看见但尚未触发/尚未成功卖出”的买入 tx 写入内存去重；只根据成功卖出账本里的 `processedLargeBuyTxs` 去重，并用 `--catch-up-events-sec` 滚动窗口读取近期事件，避免税率尚未进入 `<=30%` 时提前跳过大单。
 - [x] ROO 复盘修正执行账本 `mode`：同一 intent 先由 simulate 写入、后由 broadcast 成功执行时，`mode` 随签名/广播/receipt 更新，避免审计时出现 `prewarm_simulate + trade_sent=1` 的假象。
 - [x] 补齐 `deploy_production_safe.sh` 白名单：`docs/源码导读图.md` 与 `scripts/ops/test_launch_prewarm_executor.py` 会随生产同步带上。
+- [x] 新增 live 发射档案归档脚本：`scripts/ops/archive_launch_project.py`，只读生产 SQLite，输出 `manifest/project/samples/events/execution-ledger/fuses/summary/archive.db`。
+- [x] `live_strategy_dry_run.py` 新增 `--full-samples-jsonl`，支持每轮采样写入独立 `launch-samples-<PROJECT>.jsonl`。
+- [x] 新增生产只读 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`，默认同时写 `live-strategy-dry-run-%i.jsonl` 与 `launch-samples-%i.jsonl`。
+- [x] `recalc_dynamic_buy_strategy.py` 与 `recalc_dual_sell_strategy.py` 支持 `--report <archive>/summary.json`，不再只能走 SR/ISC 默认入口。
+- [x] 本地归档 smoke：TDS 本地 DB 导出成功；指定本地 sample JSONL 后，dynamic/dual sell 回测脚本可读取 archive summary。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如果要真正买满 ROO 150V 项目预算，需要把足够 VIRTUAL 转入 burner；授权已到 300V，服务上限已收紧为 150V。
