@@ -33,6 +33,7 @@ FILES=(
   frontend/admin/src/pages/InboxPage.tsx
   frontend/admin/src/pages/OverviewPage.tsx
   frontend/admin/src/pages/SettingsPage.tsx
+  frontend/admin/src/pages/WalletsPage.tsx
   frontend/admin/src/types/api.ts
   frontend/admin/dist/
   docs/PLAN.md
