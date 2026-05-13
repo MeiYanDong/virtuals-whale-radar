@@ -23,8 +23,6 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from virtuals_bot import load_config  # noqa: E402
-
 
 PROJECT_TABLES = [
     "events",
@@ -75,6 +73,23 @@ def connect_readonly(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def resolve_source_db(args: argparse.Namespace) -> Path:
+    raw_path = str(args.sqlite_path or "").strip()
+    if not raw_path:
+        config_path = Path(str(args.config or "config.json")).expanduser()
+        if not config_path.is_absolute():
+            config_path = (Path.cwd() / config_path).resolve()
+        try:
+            raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(f"failed to read SQLITE_PATH from {config_path}: {exc}") from exc
+        raw_path = str(raw_config.get("SQLITE_PATH") or "./data/virtuals_v11.db").strip()
+    source_db = Path(raw_path).expanduser()
+    if not source_db.is_absolute():
+        source_db = (Path.cwd() / source_db).resolve()
+    return source_db
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -313,10 +328,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config)
-    source_db = Path(args.sqlite_path or cfg.sqlite_path).expanduser()
-    if not source_db.is_absolute():
-        source_db = (Path.cwd() / source_db).resolve()
+    source_db = resolve_source_db(args)
 
     conn = connect_readonly(source_db)
     try:

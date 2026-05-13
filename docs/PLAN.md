@@ -2404,6 +2404,7 @@ Phase 052 执行结果：
 - 结论：线上生产数据是最真实的数据源，但原先是生产运行日志，不是标准化回测档案。
 - 已新增标准归档入口：`scripts/ops/archive_launch_project.py`。
   - 只读生产 SQLite。
+  - 只读取 `SQLITE_PATH` 或显式 `--sqlite-path`，不解析 RPC 环境变量占位，支持 SSH 手工归档。
   - 输出 `manifest.json / project.json / samples.jsonl / events.jsonl / execution-ledger.jsonl / fuses.jsonl / summary.json / archive.db`。
   - `summary.json` 暴露 `samplesPath/jsonlPath`，作为后续回测脚本入口。
 - 已新增全量采样记录能力：`scripts/ops/live_strategy_dry_run.py --full-samples-jsonl`。

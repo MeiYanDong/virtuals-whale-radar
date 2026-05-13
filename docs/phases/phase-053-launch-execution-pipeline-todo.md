@@ -188,6 +188,7 @@
 - [x] ROO 复盘修正执行账本 `mode`：同一 intent 先由 simulate 写入、后由 broadcast 成功执行时，`mode` 随签名/广播/receipt 更新，避免审计时出现 `prewarm_simulate + trade_sent=1` 的假象。
 - [x] 补齐 `deploy_production_safe.sh` 白名单：`docs/源码导读图.md` 与 `scripts/ops/test_launch_prewarm_executor.py` 会随生产同步带上。
 - [x] 新增 live 发射档案归档脚本：`scripts/ops/archive_launch_project.py`，只读生产 SQLite，输出 `manifest/project/samples/events/execution-ledger/fuses/summary/archive.db`。
+- [x] 修复归档脚本配置边界：归档只读取 `SQLITE_PATH` 或显式 `--sqlite-path`，不再解析 RPC 环境变量占位，保证 SSH 手工归档可运行。
 - [x] `live_strategy_dry_run.py` 新增 `--full-samples-jsonl`，支持每轮采样写入独立 `launch-samples-<PROJECT>.jsonl`。
 - [x] 新增生产只读 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`，默认同时写 `live-strategy-dry-run-%i.jsonl` 与 `launch-samples-%i.jsonl`。
 - [x] `recalc_dynamic_buy_strategy.py` 与 `recalc_dual_sell_strategy.py` 支持 `--report <archive>/summary.json`，不再只能走 SR/ISC 默认入口。

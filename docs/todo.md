@@ -1120,6 +1120,7 @@
 ## Phase 53：Live 发射档案与回测复用
 
 - [x] 新增标准归档脚本：`scripts/ops/archive_launch_project.py`。
+- [x] 归档脚本只读取 `SQLITE_PATH` 或显式 `--sqlite-path`，不解析 RPC 环境变量占位，支持 SSH 手工运行。
 - [x] 归档输出包含：`manifest.json`、`project.json`、`samples.jsonl`、`events.jsonl`、`execution-ledger.jsonl`、`fuses.jsonl`、`summary.json`、`archive.db`。
 - [x] `live_strategy_dry_run.py` 新增 `--full-samples-jsonl`，每轮采样单独写入全量 sample 文件。
 - [x] 新增生产只读 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`。
