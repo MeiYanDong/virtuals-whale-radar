@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backtest the dual independent sell strategy from SR/ISC event-level samples.
+"""Backtest the confirmed ROI + large-buy sell strategy from samples.
 
 Read-only boundaries:
 - reads local replay reports, sample JSONL, and parsed buy-event JSONL files;
@@ -85,10 +85,20 @@ def buy_units(buy: dict[str, Any]) -> Decimal:
     return size_v / entry
 
 
-def find_largest_buy_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not events:
+def find_largest_buy_event(
+    events: list[dict[str, Any]],
+    *,
+    processed_txs: set[str] | None = None,
+) -> dict[str, Any] | None:
+    seen = processed_txs or set()
+    candidates = [
+        item
+        for item in events
+        if str(item.get("txHash") or "").strip().lower() not in seen
+    ]
+    if not candidates:
         return None
-    return max(events, key=lambda item: parse_decimal(item.get("spentV_est")) or Decimal("0"))
+    return max(candidates, key=lambda item: parse_decimal(item.get("spentV_est")) or Decimal("0"))
 
 
 def current_balance_raw(*, remaining_units: Decimal, total_units: Decimal) -> int:
@@ -98,7 +108,14 @@ def current_balance_raw(*, remaining_units: Decimal, total_units: Decimal) -> in
     return int(value)
 
 
-def evaluate_project(*, report_path: Path, rule_name: str, buy_config: DynamicBuyConfig, sell_config: DualSellConfig) -> dict[str, Any]:
+def evaluate_project(
+    *,
+    report_path: Path,
+    rule_name: str,
+    buy_config: DynamicBuyConfig,
+    sell_config: DualSellConfig,
+    catch_up_events_sec: int,
+) -> dict[str, Any]:
     source_report = load_json(report_path)
     samples_path = Path(str(source_report.get("samplesPath") or ""))
     events_path = Path(str(source_report.get("jsonlPath") or ""))
@@ -114,14 +131,9 @@ def evaluate_project(*, report_path: Path, rule_name: str, buy_config: DynamicBu
     remaining_units = total_units
     realized_value_v = Decimal("0")
     sell_events: list[dict[str, Any]] = []
-    event_index = 0
 
     for index, sample in enumerate(samples):
         sample_ts = int(sample.get("simTimestamp") or 0)
-        interval_events: list[dict[str, Any]] = []
-        while event_index < len(buy_events) and int(buy_events[event_index].get("timestamp") or 0) <= sample_ts:
-            interval_events.append(buy_events[event_index])
-            event_index += 1
 
         spot = spot_fdv_wan(sample)
         tax_rate = parse_decimal(sample.get("buyTaxRate"))
@@ -130,7 +142,16 @@ def evaluate_project(*, report_path: Path, rule_name: str, buy_config: DynamicBu
 
         full_position_value_v = total_units * spot
         current_roi = pnl_pct(full_position_value_v, total_spent_v)
-        largest_event = find_largest_buy_event(interval_events)
+        event_since_ts = max(0, sample_ts - max(0, int(catch_up_events_sec)))
+        window_events = [
+            item
+            for item in buy_events
+            if event_since_ts <= int(item.get("timestamp") or 0) <= sample_ts
+        ]
+        largest_event = find_largest_buy_event(
+            window_events,
+            processed_txs=state.processed_large_buy_txs,
+        )
         latest_buy_v = parse_decimal(largest_event.get("spentV_est")) if largest_event else None
         latest_buy_tx = str(largest_event.get("txHash") or "") if largest_event else None
         if latest_buy_tx == "":
@@ -197,6 +218,7 @@ def evaluate_project(*, report_path: Path, rule_name: str, buy_config: DynamicBu
         "buyRule": rule_name,
         "buyStrategy": buy_config.name,
         "sellStrategy": sell_config.name,
+        "catchUpEventsSec": int(catch_up_events_sec),
         "buyCount": buy_result.get("buyCount"),
         "totalSpentV": buy_result.get("totalSpentV"),
         "ownWeightedCostWanUsd": buy_result.get("ownWeightedCostWanUsd"),
@@ -226,17 +248,18 @@ def table_line(cells: list[Any]) -> str:
 
 def write_markdown(report: dict[str, Any], path: Path) -> None:
     lines = [
-        "# Dual Independent Sell Strategy Backtest",
+        "# Confirmed Large-Buy Sell Strategy Backtest",
         "",
         "本报告只读取本地 SR/ISC event-level replay 产物，未重新抓链、未写生产库、未发送交易。",
         "",
         "## 策略口径",
         "",
-        "- 当前采用：先按该双策略作为本地自动卖出候选口径，后续若接生产必须继续走 Phase 053 执行门禁。",
+        "- 当前采用：大额买入必须由自身收益率确认后才触发卖出，后续若接生产必须继续走 Phase 053 执行门禁。",
         "- 进入卖出观察：税率 `<=30%`。",
-        "- 收益率策略：我的收益率 `>=30%` 卖总仓位 `30%`；`>=50%` 卖总仓位 `50%`。",
-        "- 大额买入策略：单笔买入 `>=5,000 VIRTUAL` 卖总仓位 `30%`；`>=8,000 VIRTUAL` 卖总仓位 `50%`。",
-        "- 两条策略独立记账；同一刻同时触发时合并为一笔卖出。",
+        "- 收益率门槛：我的收益率 `>=30%` 对应总仓位 `30%`；`>=50%` 对应总仓位 `50%`。",
+        "- 大额买入门槛：单笔买入 `>=5,000 VIRTUAL` 对应总仓位 `30%`；`>=8,000 VIRTUAL` 对应总仓位 `50%`。",
+        "- 有效卖出目标取收益率门槛和大额买入门槛的较低值；仅收益率达标或仅大额买入都不卖出。",
+        f"- 大额买入事件窗口：沿用生产执行器口径，查看最近 `{report.get('catchUpEventsSec')} 秒`内未处理的大额买入。",
         "- 执行保护：卖出比例基于原始累计收到 token 数量；如果真实余额低于目标卖出数量，只按实际卖出比例更新策略状态。",
         "- 回测估值口径：买入成本使用入场时含税 FDV；卖出和剩余持仓使用当时或 tax-end spot FDV；暂未计入卖出滑点、gas、成交税。",
         "",
@@ -272,13 +295,12 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         lines.append(f"- 纯持有到 tax-end：`{item.get('holdFinalPnlV')} V / {item.get('holdFinalPnlPct')}%`。")
         state = item.get("finalState") or {}
         lines.append(
-            f"- 最终卖出额度：收益率策略 `{state.get('roiSoldPct')}%`，"
-            f"大额买入策略 `{state.get('largeBuySoldPct')}%`，合计 `{state.get('totalSoldPct')}%`。"
+            f"- 最终卖出额度：累计确认卖出 `{state.get('totalSoldPct')}%`。"
         )
         lines.append("")
         if item.get("sellEvents"):
-            lines.append(table_line(["时间(CST)", "税率", "收益率", "大额买入", "本次卖出", "收益率卖", "大额买入卖", "触发原因"]))
-            lines.append(table_line(["---", "---:", "---:", "---:", "---:", "---:", "---:", "---"]))
+            lines.append(table_line(["时间(CST)", "税率", "收益率", "大额买入", "本次卖出", "触发原因"]))
+            lines.append(table_line(["---", "---:", "---:", "---:", "---:", "---"]))
             for event in item.get("sellEvents") or []:
                 lines.append(
                     table_line(
@@ -288,8 +310,6 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
                             f"{event.get('myRoiPct')}%",
                             f"{event.get('latestBuyV') or '-'} V",
                             f"{event.get('sellPctOfOriginal')}%",
-                            f"{event.get('roiSellPct')}%",
-                            f"{event.get('largeBuySellPct')}%",
                             " + ".join(event.get("triggerReasons") or []),
                         ]
                     )
@@ -298,6 +318,8 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             lines.append("未触发卖出。")
         lines.append("")
 
+    while lines and lines[-1] == "":
+        lines.pop()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -311,12 +333,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             rule_name=args.sr_rule,
             buy_config=buy_config,
             sell_config=sell_config,
+            catch_up_events_sec=args.catch_up_events_sec,
         ),
         evaluate_project(
             report_path=Path(args.isc_report),
             rule_name=args.isc_rule,
             buy_config=buy_config,
             sell_config=sell_config,
+            catch_up_events_sec=args.catch_up_events_sec,
         ),
     ]
     return {
@@ -324,16 +348,18 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "readOnly": True,
         "productionDbTouched": False,
         "tradeSent": False,
-        "scope": "SR and ISC dual independent sell-strategy backtest from existing event-level samples",
+        "catchUpEventsSec": args.catch_up_events_sec,
+        "scope": "SR and ISC confirmed large-buy sell-strategy backtest from existing event-level samples",
         "strategyDefinition": {
             "name": sell_config.name,
             "sellWindow": "buyTaxRate <= 30",
-            "roiTrack": ["my ROI >= 30% => sell 30% original position", "my ROI >= 50% => sell 50% original position"],
-            "largeBuyTrack": [
-                "single parsed buy spentV_est >= 5000 VIRTUAL => sell 30% original position",
-                "single parsed buy spentV_est >= 8000 VIRTUAL => sell 50% original position",
+            "catchUpEventsSec": args.catch_up_events_sec,
+            "roiGate": ["my ROI >= 30% => 30% target", "my ROI >= 50% => 50% target"],
+            "largeBuyGate": [
+                "single parsed buy spentV_est >= 5000 VIRTUAL => 30% target",
+                "single parsed buy spentV_est >= 8000 VIRTUAL => 50% target",
             ],
-            "mergeRule": "independent tracks; simultaneous deltas are merged into one sell order",
+            "confirmationRule": "sell target = min(roi target, large-buy target); ROI-only or large-buy-only does not sell",
             "cooldownSec": sell_config.cooldown_sec,
         },
         "projects": projects,
@@ -341,13 +367,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Backtest dual independent sell strategy for SR and ISC.")
+    parser = argparse.ArgumentParser(description="Backtest confirmed ROI + large-buy sell strategy for SR and ISC.")
     parser.add_argument("--sr-report", default="data/backtests/sr-event-level-replay-20260510T073102Z.json")
     parser.add_argument("--isc-report", default="data/backtests/isc-event-level-replay-20260510.json")
     parser.add_argument("--sr-rule", default="gate_5k_tax95_fdv_one_per_tax")
     parser.add_argument("--isc-rule", default="gate_5k_tax89_fdv_one_per_tax")
     parser.add_argument("--output-json", default="data/backtests/dual-sell-strategy-20260511.json")
     parser.add_argument("--output-md", default="docs/phases/phase-052-dual-sell-strategy-2026-05-11.md")
+    parser.add_argument("--catch-up-events-sec", type=int, default=120)
     return parser.parse_args()
 
 

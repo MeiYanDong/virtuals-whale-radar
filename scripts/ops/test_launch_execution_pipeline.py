@@ -374,6 +374,7 @@ def test_launch_execution_ledger_storage() -> None:
                     "project": "LEDGER_TEST",
                     "strategy": "dynamic_25v_dip20_after1_flat10_no_cap",
                     "rule_name": "gate_5k_tax95_fdv_one_per_tax",
+                    "mode": "prewarm_broadcast",
                     "status": "receipt_success",
                     "action": "would_buy",
                     "decision_reason": "receipt_observed",
@@ -384,6 +385,7 @@ def test_launch_execution_ledger_storage() -> None:
                 }
             )
             assert_eq(receipt["status"], "receipt_success", "ledger receipt status")
+            assert_eq(receipt["mode"], "prewarm_broadcast", "ledger upgrades mode on broadcast receipt")
             assert_eq(receipt["signed_tx_hash"], "0x" + "1" * 64, "ledger preserves signed hash")
             assert_eq(receipt["broadcast_tx_hash"], "0x" + "2" * 64, "ledger broadcast hash")
             assert_eq(json.loads(receipt["receipt_json"]), {"blockNumber": "0x2a", "status": "0x1"}, "ledger receipt json")

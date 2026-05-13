@@ -452,16 +452,18 @@ ROO 部署状态：
 - 输出：`data/execution/launch-autosell-ROO.jsonl`。
 - 策略：`dual_roi_large_buy_sell`。
 - 触发窗口：税率 `<=30%`。
-- 收益率轨道：收益率 `>=30%` 卖原始总仓位 `30%`，收益率 `>=50%` 卖原始总仓位 `50%`。
-- 大额买入轨道：单笔买入 `>=5,000 VIRTUAL` 卖原始总仓位 `30%`，单笔买入 `>=8,000 VIRTUAL` 卖原始总仓位 `50%`。
-- 两条卖出轨道独立记账；同一刻同时触发时合并为一笔卖出。
+- 2026-05-13 修正后触发：大额买入必须由自身收益率确认，有效卖出目标取收益率门槛和大额买入门槛的较低值。
+- 典型触发：收益率 `>=30%` 且单笔买入 `>=5,000 VIRTUAL` 卖原始总仓位 `30%`；收益率 `>=50%` 且单笔买入 `>=8,000 VIRTUAL` 卖原始总仓位 `50%`。
+- 仅收益率达标、或仅出现大额买入，都不卖出。
 - 状态来源：
   - 从 `launch_execution_ledger` 重建本程序买入收到的 token、已卖 token、已卖比例和冷却状态。
   - 每轮读取 burner 当前 token 余额，真实余额低于目标时按余额上限卖出。
   - 从实时 `events` 表读取 `--catch-up-events-sec` 窗口内的大额买入事件；只有成功卖出账本里的 `processedLargeBuyTxs` 会参与去重，避免在税率尚未进入 `<=30%` 时把大单提前标记为已处理。
 - 广播门禁：service 内置 `VWR_ENABLE_AUTO_SELL_BROADCAST=1`，ExecStart 显式 `--mode broadcast --enable-broadcast`。
 - 精确授权门禁：service 内置 `VWR_ENABLE_AUTO_SELL_APPROVE=1`，ExecStart 显式 `--auto-approve`；只有目标 token allowance 不足时，才精确授权本次卖出数量。
+- 大额买入事件窗口：service 显式 `--catch-up-events-sec 120`，避免生产行为依赖脚本默认值。
 - RPC：使用独立 execution Chainstack endpoint，默认拒绝共享主采集 RPC 广播。
+- ROO 复盘修正：执行账本 `launch_execution_ledger` 在同一 intent 从 simulate 走到 broadcast/receipt 时，必须同步更新 `mode`，避免出现 `prewarm_simulate + trade_sent=1` 的审计假象。
 - 失败处理：sell simulation、approve、sign、broadcast、receipt 任一异常写入 `launch_execution_ledger` 并触发 active fuse。
 - 本地 smoke：TDS ended 项目 `autosell_simulate --once` 正常启动并返回 `no_position`，无签名、无广播。
 

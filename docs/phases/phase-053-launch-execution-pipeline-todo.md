@@ -185,6 +185,7 @@
 - [x] 本地 autosell smoke：TDS ended 项目只读启动成功，结果 `no_position`，无签名、无广播。
 - [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
 - [x] 修复 autosell 大额买入去重：不再把“已看见但尚未触发/尚未成功卖出”的买入 tx 写入内存去重；只根据成功卖出账本里的 `processedLargeBuyTxs` 去重，并用 `--catch-up-events-sec` 滚动窗口读取近期事件，避免税率尚未进入 `<=30%` 时提前跳过大单。
+- [x] ROO 复盘修正执行账本 `mode`：同一 intent 先由 simulate 写入、后由 broadcast 成功执行时，`mode` 随签名/广播/receipt 更新，避免审计时出现 `prewarm_simulate + trade_sent=1` 的假象。
 - [x] 补齐 `deploy_production_safe.sh` 白名单：`docs/源码导读图.md` 与 `scripts/ops/test_launch_prewarm_executor.py` 会随生产同步带上。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。

@@ -2322,11 +2322,12 @@ Phase 052 执行结果：
     - 生产服务：`vwr-launch-autosell@ROO.service`。
     - 输出：`data/execution/launch-autosell-ROO.jsonl`。
     - 策略：`dual_roi_large_buy_sell`，税率 `<=30%` 后进入卖出窗口。
-    - 触发：收益率 `>=30%/50%` 分别卖原始总仓位 `30%/50%`；单笔买入 `>=5,000/8,000 VIRTUAL` 分别卖原始总仓位 `30%/50%`。
-    - 两条卖出轨道独立记账；同一刻同时触发时合并为一笔卖出。
+    - 2026-05-13 修正后触发：大额买入必须由自身收益率确认，有效卖出目标取收益率门槛和大额买入门槛的较低值。
+    - 典型触发：收益率 `>=30%` 且单笔买入 `>=5,000 VIRTUAL` 卖原始总仓位 `30%`；收益率 `>=50%` 且单笔买入 `>=8,000 VIRTUAL` 卖原始总仓位 `50%`。
     - autosell 支持执行账本状态重建、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse。
     - 本地 TDS ended autosell 只读 smoke 通过：`no_position`，无签名、无广播。
     - 新增测试：`scripts/ops/test_launch_sell_executor.py`。
+    - 大额买入事件窗口：service 显式 `--catch-up-events-sec 120`，避免生产行为依赖脚本默认值。
     - 模式：`prewarm_broadcast`，日志显示 `broadcastEnabled=true`、`rpcSharedWithMain=false`。
     - 上限：`maxBuyV=50`、`maxProjectV=300`。
     - ROO 仍为 `scheduled`，当前只记录 `state_change/not_live`，`tradeSent=false`，没有广播交易。
@@ -2371,9 +2372,12 @@ Phase 052 执行结果：
 
 - 新增纯策略模块 `scripts/ops/launch_sell_strategy.py`：
   - 税率 `<=30%` 后进入卖出观察。
-  - 收益率策略独立控制最多 `50%` 总仓位：收益率 `>=30%` 卖 `30%`，收益率 `>=50%` 卖 `50%`。
-  - 大额买入策略独立控制最多 `50%` 总仓位：单笔买入 `>=5,000 VIRTUAL` 卖 `30%`，单笔买入 `>=8,000 VIRTUAL` 卖 `50%`。
-  - 两条策略独立记账；同一刻同时触发时合并为一笔卖出。
+  - 2026-05-13 根据 ROO live 结果修正卖出口径：大额买入不再独立触发卖出，必须同时满足自身收益率门槛。
+  - 有效卖出目标取两类门槛的较低值：收益率 `>=30%` 对应 `30%`，收益率 `>=50%` 对应 `50%`；单笔买入 `>=5,000 VIRTUAL` 对应 `30%`，单笔买入 `>=8,000 VIRTUAL` 对应 `50%`。
+  - 典型触发：税率 `<=30%` 且单笔买入 `>=5,000 VIRTUAL` 且自身收益率 `>=30%`，卖出总仓位 `30%`。
+  - 升档触发：税率 `<=30%` 且单笔买入 `>=8,000 VIRTUAL` 且自身收益率 `>=50%`，卖出总仓位 `50%`。
+  - 仅收益率达标、或仅出现大额买入，都不卖出；当前 hold reason 为 `large_buy_roi_not_confirmed`。
+  - 回测脚本已对齐生产执行器的大额买入事件窗口：默认查看最近 `120 秒`内未处理的大额买入。
   - 卖出比例基于累计实际收到 token 数量，而不是当前余额，避免多次卖出时比例被重复折扣。
   - 若真实余额低于目标卖出数量，只按实际卖出的原始仓位比例更新策略状态，避免误记已卖额度。
 - 新增测试和回测：
@@ -2381,8 +2385,8 @@ Phase 052 执行结果：
   - 回测脚本：`scripts/ops/recalc_dual_sell_strategy.py`。
   - 报告：`docs/phases/phase-052-dual-sell-strategy-2026-05-11.md`。
 - SR/ISC 回测结果：
-  - SR：卖出 `2` 次，最终 `+54.432149 V / +43.5457%`，低于纯持有 `+68.9064%`；首次 tax `27` 同时触发收益率 `30%` 档和 `5,535 V` 大额买入，合并卖出 `60%`。
-  - ISC：卖出 `2` 次，最终 `+144.937286 V / +41.4107%`，高于纯持有 `+38.9383%`；仅由收益率策略触发。
+  - 2026-05-11 旧口径回测已被 2026-05-13 口径覆盖：旧口径允许收益率策略和大额买入策略独立叠加，ROO live 暴露出“仅大额买入、但自身收益率不达标”也会卖出的风险。
+  - 2026-05-13 新口径回测已重跑：SR 卖出 `1` 次，最终 `+72.574207 V / +58.0594%`，低于纯持有 `+68.9064%`；ISC 不触发卖出，结果等同纯持有 `+38.9383%`。
 - 当前边界：
   - 已完成策略决策、单元测试和历史回测。
   - 已接入生产自动卖出常驻执行器 `scripts/ops/launch_sell_executor.py`。
@@ -2392,3 +2396,5 @@ Phase 052 执行结果：
   - 新增测试 `scripts/ops/test_launch_sell_executor.py`。
   - 尚待真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt。
   - 2026-05-11 核心链路审计后，生产同步白名单已补齐 Phase 052/053 的 execution RPC、pressure probe、sell strategy、sell 回测与相关测试脚本，避免本地通过但 `deploy_production_safe.sh` 漏同步核心执行文件。
+  - 2026-05-13 未加入 ACP/项目方卖单冷静期；当前判断是双条件卖出已足够降低“大单抄底误杀”风险，ACP 卖单暂不作为买卖信号。
+  - 2026-05-13 ROO 复盘发现执行账本审计字段问题：同一 intent 先由 simulate 写入、后由 broadcast 成功执行时，`status/trade_sent/tx_hash` 已更新但 `mode` 仍可能停留在 `prewarm_simulate`。已修正为有签名/广播/receipt 时同步升级 `mode`，避免事后审计误判。

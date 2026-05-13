@@ -1623,6 +1623,15 @@ class Storage:
                 :failure_stage, :failure_reason, :trade_sent, :broadcast_enabled, :created_at, :updated_at
             )
             ON CONFLICT(intent_id) DO UPDATE SET
+                mode = CASE
+                    WHEN excluded.trade_sent = 1
+                        OR excluded.broadcast_enabled = 1
+                        OR excluded.signed_tx_hash IS NOT NULL
+                        OR excluded.broadcast_tx_hash IS NOT NULL
+                        OR excluded.receipt_json IS NOT NULL
+                    THEN excluded.mode
+                    ELSE launch_execution_ledger.mode
+                END,
                 status = excluded.status,
                 action = excluded.action,
                 decision_reason = excluded.decision_reason,

@@ -14,7 +14,7 @@ Environment=VWR_ENABLE_AUTO_SELL_APPROVE=1
 EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
 EnvironmentFile=-/etc/virtuals-whale-radar/execution-rpc.env
 EnvironmentFile=/etc/virtuals-whale-radar/burner-wallet.env
-ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/launch_sell_executor.py --config /opt/virtuals-whale-radar/config.json --project %i --from-address 0x4a371b9b1bf1e7bc0700dff666631f0fc5c96624 --secret-file /etc/virtuals-whale-radar/burner-wallet.env --rule dual_roi_large_buy_sell --mode broadcast --enable-broadcast --auto-approve --output-jsonl /opt/virtuals-whale-radar/data/execution/launch-autosell-%i.jsonl --exit-after-end-sec 300
+ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/launch_sell_executor.py --config /opt/virtuals-whale-radar/config.json --project %i --from-address 0x4a371b9b1bf1e7bc0700dff666631f0fc5c96624 --secret-file /etc/virtuals-whale-radar/burner-wallet.env --rule dual_roi_large_buy_sell --mode broadcast --enable-broadcast --auto-approve --catch-up-events-sec 120 --output-jsonl /opt/virtuals-whale-radar/data/execution/launch-autosell-%i.jsonl --exit-after-end-sec 300
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15

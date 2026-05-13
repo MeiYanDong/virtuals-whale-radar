@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pure dual-track sell strategy for Virtuals launch positions.
+"""Pure confirmed large-buy sell strategy for Virtuals launch positions.
 
 The strategy is intentionally side-effect free. It only decides how much of the
 original position should be sold; callers are responsible for simulation,
@@ -149,9 +149,25 @@ def evaluate_dual_sell(
     if large_tx is None or large_tx not in state.processed_large_buy_txs:
         large_target = large_buy_target_pct(signal.latest_buy_v, config)
 
-    roi_delta = clamp_pct(roi_target - state.roi_sold_pct)
-    large_delta = clamp_pct(large_target - state.large_buy_sold_pct)
-    requested_total_delta = clamp_pct(roi_delta + large_delta)
+    confirmed_target = min(roi_target, large_target)
+    already_sold_pct = clamp_pct(state.roi_sold_pct + state.large_buy_sold_pct)
+    roi_delta = PCT_0
+    if confirmed_target <= 0:
+        return DualSellDecision(
+            action="hold",
+            reason="large_buy_roi_not_confirmed",
+            roi_target_pct=roi_target,
+            large_buy_target_pct=large_target,
+            roi_delta_pct=PCT_0,
+            large_buy_delta_pct=PCT_0,
+            total_sell_pct=PCT_0,
+            amount_raw=0,
+            requested_total_sell_pct=PCT_0,
+            trigger_reasons=(),
+            large_buy_tx_hash=large_tx if large_target > 0 else None,
+        )
+    large_delta = clamp_pct(confirmed_target - already_sold_pct)
+    requested_total_delta = large_delta
     if requested_total_delta <= 0:
         return DualSellDecision(
             action="hold",
@@ -164,7 +180,7 @@ def evaluate_dual_sell(
             amount_raw=0,
             requested_total_sell_pct=PCT_0,
             trigger_reasons=(),
-            large_buy_tx_hash=large_tx,
+            large_buy_tx_hash=large_tx if large_target > 0 else None,
         )
 
     requested_amount_raw = amount_for_original_position_pct(state.total_position_raw, requested_total_delta)
@@ -186,15 +202,12 @@ def evaluate_dual_sell(
     total_delta = Decimal(amount_raw) * PCT_100 / Decimal(state.total_position_raw)
     if requested_amount_raw > amount_raw and requested_total_delta > 0:
         ratio = total_delta / requested_total_delta
-        roi_delta *= ratio
         large_delta *= ratio
-        total_delta = roi_delta + large_delta
+        total_delta = large_delta
 
     reasons: list[str] = []
-    if roi_delta > 0:
-        reasons.append("收益率达标")
     if large_delta > 0:
-        reasons.append("大额买入达标")
+        reasons.append("大额买入且收益率达标")
     return DualSellDecision(
         action="sell",
         reason="dual_sell_target_increased",
