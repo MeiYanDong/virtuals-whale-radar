@@ -41,16 +41,21 @@ export function WalletsPage() {
 
   const addWalletMutation = useMutation({
     mutationFn: async (): Promise<unknown> => {
-      if (isAdmin) {
-        return dashboardApi.admin.addWallet(walletInput.trim(), walletNameInput.trim());
-      }
+      const wallet = walletInput.trim();
+      const name = walletNameInput.trim();
       if (editingWallet) {
-        return dashboardApi.app.updateWallet(Number(editingWallet), { name: walletNameInput.trim() });
+        if (isAdmin) {
+          return dashboardApi.admin.updateWallet(String(editingWallet), { wallet, name });
+        }
+        return dashboardApi.app.updateWallet(Number(editingWallet), { wallet, name });
       }
-      return dashboardApi.app.addWallet(walletInput.trim(), walletNameInput.trim());
+      if (isAdmin) {
+        return dashboardApi.admin.addWallet(wallet, name);
+      }
+      return dashboardApi.app.addWallet(wallet, name);
     },
     onSuccess: async () => {
-      toast.success(editingWallet ? "钱包名称已更新。" : "钱包已添加。");
+      toast.success(editingWallet ? "钱包已更新。" : "钱包已添加。");
       setWalletInput("");
       setWalletNameInput("");
       setEditingWallet("");
@@ -117,13 +122,12 @@ export function WalletsPage() {
               onChange={(event) => setWalletNameInput(event.target.value)}
             />
             <Input
-              placeholder="监控钱包 0x..."
+              placeholder="钱包地址 0x..."
               value={walletInput}
-              readOnly={Boolean(editingWallet)}
               onChange={(event) => setWalletInput(event.target.value)}
             />
             <Button onClick={() => void addWalletMutation.mutate()} disabled={!walletInput.trim()}>
-              {editingWallet ? "保存名称" : "添加钱包"}
+              {editingWallet ? "保存钱包" : "添加钱包"}
             </Button>
             {editingWallet ? (
               <Button
@@ -160,7 +164,7 @@ export function WalletsPage() {
                     setWalletInput(item.wallet);
                     setWalletNameInput(item.name || "");
                   }}
-                  title="编辑钱包名称"
+                  title="编辑钱包"
                 >
                   <PencilLine className="size-4" />
                 </button>

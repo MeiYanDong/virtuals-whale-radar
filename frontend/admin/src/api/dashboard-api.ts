@@ -35,6 +35,7 @@ import type {
   UserProjectAccessItem,
   UserWalletItem,
   UserWalletsResponse,
+  WalletConfigItem,
   WalletConfigsResponse,
   WalletsResponse,
 } from "@/types/api";
@@ -152,6 +153,15 @@ export const dashboardApi = {
         method: "POST",
         body: { wallet, name },
       });
+    },
+    updateWallet(currentWallet: string, payload: { wallet: string; name?: string }) {
+      return requestJson<WalletConfigsResponse & { ok: boolean; item: WalletConfigItem }>(
+        `/api/admin/wallets/${encodeURIComponent(currentWallet)}`,
+        {
+          method: "PATCH",
+          body: payload,
+        },
+      );
     },
     deleteWallet(wallet: string) {
       return requestJson<WalletConfigsResponse & { ok: boolean }>(
@@ -502,7 +512,7 @@ export const dashboardApi = {
         body: { wallet, name },
       });
     },
-    updateWallet(walletId: number, payload: { name?: string; is_enabled?: boolean }) {
+    updateWallet(walletId: number, payload: { wallet?: string; name?: string; is_enabled?: boolean }) {
       return requestJson<{ ok: boolean; item: UserWalletItem }>(`/api/app/wallets/${walletId}`, {
         method: "PATCH",
         body: payload,

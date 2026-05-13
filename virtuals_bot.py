@@ -2181,6 +2181,47 @@ class Storage:
         )
         self.conn.commit()
 
+    def update_monitored_wallet(self, current_wallet: str, wallet: str, name: str = "") -> Dict[str, Any]:
+        now = int(time.time())
+        current_normalized = normalize_address(current_wallet)
+        next_normalized = normalize_address(wallet)
+        display_name = str(name).strip()
+        if current_normalized != next_normalized:
+            existing = self.conn.execute(
+                """
+                SELECT wallet
+                FROM monitored_wallets
+                WHERE wallet = ?
+                """,
+                (next_normalized,),
+            ).fetchone()
+            if existing:
+                raise ValueError(f"wallet already exists: {next_normalized}")
+        cur = self.conn.execute(
+            """
+            UPDATE monitored_wallets
+            SET wallet = ?, name = ?, updated_at = ?
+            WHERE wallet = ?
+            """,
+            (next_normalized, display_name, now, current_normalized),
+        )
+        self.conn.commit()
+        if cur.rowcount <= 0:
+            raise ValueError(f"wallet not found: {current_normalized}")
+        row = self.conn.execute(
+            """
+            SELECT wallet, name, created_at, updated_at
+            FROM monitored_wallets
+            WHERE wallet = ?
+            """,
+            (next_normalized,),
+        ).fetchone()
+        if not row:
+            raise ValueError("failed to persist monitored wallet")
+        item = dict(row)
+        item["wallet"] = normalize_address(str(item["wallet"]))
+        return item
+
     def delete_monitored_wallet(self, wallet: str) -> bool:
         normalized = normalize_address(wallet)
         cur = self.conn.execute(
@@ -3609,11 +3650,26 @@ class Storage:
         user_id: int,
         wallet_id: int,
         *,
+        wallet: Optional[str] = None,
         name: Optional[str] = None,
         is_enabled: Optional[bool] = None,
     ) -> Dict[str, Any]:
         updates: List[str] = []
         params: List[Any] = []
+        if wallet is not None:
+            normalized_wallet = normalize_address(wallet)
+            existing = self.conn.execute(
+                """
+                SELECT id
+                FROM user_wallets
+                WHERE user_id = ? AND wallet = ? AND id != ?
+                """,
+                (int(user_id), normalized_wallet, int(wallet_id)),
+            ).fetchone()
+            if existing:
+                raise ValueError(f"wallet already exists: {normalized_wallet}")
+            updates.append("wallet = ?")
+            params.append(normalized_wallet)
         if name is not None:
             updates.append("name = ?")
             params.append(str(name).strip())
@@ -9659,6 +9715,7 @@ class VirtualsBot:
             item = self.storage.update_user_wallet(
                 int(user["id"]),
                 int(wallet_id_raw),
+                wallet=payload.get("wallet") if "wallet" in payload else None,
                 name=payload.get("name") if "name" in payload else None,
                 is_enabled=parse_bool_like(payload.get("is_enabled")) if "is_enabled" in payload else None,
             )
@@ -10290,6 +10347,37 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def monitored_wallet_update_handler(self, request: web.Request) -> web.Response:
+        wallet_raw = str(request.match_info.get("wallet", "")).strip()
+        if not wallet_raw:
+            return web.json_response({"error": "wallet is required"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+
+        try:
+            item = self.storage.update_monitored_wallet(
+                wallet_raw,
+                wallet=require_nonempty_text(payload.get("wallet"), "wallet"),
+                name=str(payload.get("name", "")).strip(),
+            )
+            self.reload_my_wallets()
+            self.bump_my_wallet_revision()
+            return web.json_response(
+                {
+                    "ok": True,
+                    "item": item,
+                    "wallets": sorted(self.get_my_wallets()),
+                    "items": self.storage.list_monitored_wallet_rows(),
+                    "count": len(self.get_my_wallets()),
+                }
+            )
+        except Exception as e:
+            if "not found" in str(e):
+                return web.json_response({"error": str(e)}, status=404)
+            return web.json_response({"error": str(e)}, status=400)
+
     async def monitored_wallet_delete_handler(self, request: web.Request) -> web.Response:
         wallet_raw = str(request.match_info.get("wallet", "")).strip()
         if not wallet_raw:
@@ -10856,6 +10944,7 @@ class VirtualsBot:
         app.router.add_post("/api/admin/signalhub/watchlist/batch-remove", admin_only(self.signalhub_watch_batch_remove_handler))
         app.router.add_get("/api/admin/wallets", admin_only(self.monitored_wallets_handler))
         app.router.add_post("/api/admin/wallets", admin_only(self.monitored_wallet_add_handler))
+        app.router.add_patch("/api/admin/wallets/{wallet}", admin_only(self.monitored_wallet_update_handler))
         app.router.add_delete("/api/admin/wallets/{wallet}", admin_only(self.monitored_wallet_delete_handler))
         app.router.add_post("/api/admin/wallet-recalc", admin_only(self.wallet_recalc_handler))
         app.router.add_get("/api/admin/runtime/db-batch-size", admin_only(self.runtime_db_batch_size_get_handler))
@@ -10908,6 +10997,7 @@ class VirtualsBot:
         app.router.add_post("/signalhub/watchlist/batch-remove", legacy_route(self.signalhub_watch_batch_remove_handler, replacement="/api/admin/signalhub/watchlist/batch-remove"))
         app.router.add_get("/wallet-configs", legacy_route(self.monitored_wallets_handler, replacement="/api/admin/wallets"))
         app.router.add_post("/wallet-configs", legacy_route(self.monitored_wallet_add_handler, replacement="/api/admin/wallets"))
+        app.router.add_patch("/wallet-configs/{wallet}", legacy_route(self.monitored_wallet_update_handler, replacement="/api/admin/wallets/{wallet}"))
         app.router.add_delete("/wallet-configs/{wallet}", legacy_route(self.monitored_wallet_delete_handler, replacement="/api/admin/wallets/{wallet}"))
         app.router.add_post("/wallet-recalc", legacy_route(self.wallet_recalc_handler, replacement="/api/admin/wallet-recalc"))
         app.router.add_get("/runtime/db-batch-size", legacy_route(self.runtime_db_batch_size_get_handler, replacement="/api/admin/runtime/db-batch-size"))
