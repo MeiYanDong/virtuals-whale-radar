@@ -1564,7 +1564,12 @@ class Storage:
         known = {str(row["name"]) for row in rows}
         if column_name in known:
             return
-        self.conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")
+        try:
+            self.conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" in str(exc).lower():
+                return
+            raise
 
     def get_state(self, key: str) -> Optional[str]:
         cur = self.conn.execute("SELECT value FROM system_state WHERE key = ?", (key,))
