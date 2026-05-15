@@ -271,6 +271,8 @@ EVENT_DECIMAL_FIELDS = {
 }
 EVENT_INT_FIELDS = {"block_number", "block_timestamp"}
 EVENT_BOOL_FIELDS = {"is_my_wallet", "anomaly", "is_price_stale"}
+VIRTUALS_DIRECT_BUY_ROUTER = "0x1a540088125d00dd3990f9da45ca0859af4d3b01"
+VIRTUALS_TEAM_INITIALIZATION_SELECTOR = "0x214013ca"
 MANAGED_PROJECT_STATUSES = {"draft", "scheduled", "prelaunch", "live", "ended", "removed"}
 PROJECT_PRELAUNCH_LEAD_SEC = 30 * 60
 PROJECT_SCHEDULER_INTERVAL_SEC = 30
@@ -490,6 +492,28 @@ def deserialize_event_from_bus(payload: Dict[str, Any]) -> Dict[str, Any]:
         if key in out and out[key] is not None:
             out[key] = bool(out[key])
     return out
+
+
+def transaction_route_metadata(tx: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not tx:
+        return {"tx_to": "", "tx_selector": "", "calldata_bytes": 0}
+    tx_to = ""
+    try:
+        raw_to = str(tx.get("to") or "").strip()
+        tx_to = normalize_address(raw_to) if raw_to else ""
+    except Exception:
+        tx_to = str(tx.get("to") or "").strip().lower()
+    raw_input = str(tx.get("input") or "").strip().lower()
+    if raw_input and not raw_input.startswith("0x"):
+        raw_input = "0x" + raw_input
+    tx_selector = raw_input[:10] if len(raw_input) >= 10 else ""
+    calldata_hex_len = max(0, len(raw_input[2:] if raw_input.startswith("0x") else raw_input))
+    calldata_bytes = calldata_hex_len // 2
+    return {
+        "tx_to": tx_to,
+        "tx_selector": tx_selector,
+        "calldata_bytes": calldata_bytes,
+    }
 
 
 def rpc_error_text(exc: Exception) -> str:
@@ -932,6 +956,9 @@ class RPCClient:
     async def get_receipt(self, tx_hash: str) -> Optional[Dict[str, Any]]:
         return await self.call("eth_getTransactionReceipt", [tx_hash])
 
+    async def get_transaction(self, tx_hash: str) -> Optional[Dict[str, Any]]:
+        return await self.call("eth_getTransactionByHash", [tx_hash])
+
     async def get_block_by_number(self, block_number: int) -> Optional[Dict[str, Any]]:
         return await self.call("eth_getBlockByNumber", [hex(block_number), False])
 
@@ -1084,6 +1111,9 @@ class Storage:
                 internal_pool TEXT NOT NULL,
                 fee_addr TEXT NOT NULL,
                 tax_addr TEXT NOT NULL,
+                tx_to TEXT NOT NULL DEFAULT '',
+                tx_selector TEXT NOT NULL DEFAULT '',
+                calldata_bytes INTEGER NOT NULL DEFAULT 0,
                 buyer TEXT NOT NULL,
                 token_addr TEXT NOT NULL,
                 token_bought TEXT NOT NULL,
@@ -1499,6 +1529,9 @@ class Storage:
         self._ensure_column("credit_ledger", "payment_amount", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("credit_ledger", "payment_proof_ref", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("launch_configs", "token_addr", "TEXT")
+        self._ensure_column("events", "tx_to", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("events", "tx_selector", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("events", "calldata_bytes", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("billing_requests", "credited_credit_ledger_id", "INTEGER")
         self._ensure_column("billing_requests", "operator_user_id", "INTEGER")
@@ -3957,6 +3990,9 @@ class Storage:
             event["internal_pool"],
             event["fee_addr"],
             event["tax_addr"],
+            str(event.get("tx_to") or ""),
+            str(event.get("tx_selector") or ""),
+            int(event.get("calldata_bytes") or 0),
             event["buyer"],
             event["token_addr"],
             decimal_to_str(event["token_bought"], 18),
@@ -4058,11 +4094,12 @@ class Storage:
                     """
                     INSERT OR IGNORE INTO events(
                         project, tx_hash, block_number, block_timestamp,
-                        internal_pool, fee_addr, tax_addr, buyer, token_addr,
+                        internal_pool, fee_addr, tax_addr, tx_to, tx_selector, calldata_bytes,
+                        buyer, token_addr,
                         token_bought, fee_v, tax_v, spent_v_est, spent_v_actual,
                         cost_v, total_supply, virtual_price_usd, breakeven_fdv_v,
                         breakeven_fdv_usd, is_my_wallet, anomaly, is_price_stale, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     self._event_tuple(e),
                 )
@@ -4482,6 +4519,9 @@ class Storage:
                 tx_hash,
                 block_number,
                 block_timestamp,
+                tx_to,
+                tx_selector,
+                calldata_bytes,
                 tax_v,
                 spent_v_est,
                 token_bought,
@@ -4501,6 +4541,9 @@ class Storage:
                 "firstTxHash": str(row["tx_hash"] or ""),
                 "firstBlockNumber": int(row["block_number"] or 0),
                 "firstBlockTimestamp": int(row["block_timestamp"] or 0),
+                "firstTxTo": str(row["tx_to"] or ""),
+                "firstTxSelector": str(row["tx_selector"] or ""),
+                "firstCalldataBytes": int(row["calldata_bytes"] or 0),
                 "firstTaxV": str(row["tax_v"] or "0"),
                 "firstSpentV": str(row["spent_v_est"] or "0"),
                 "firstTokenBought": str(row["token_bought"] or "0"),
@@ -6415,6 +6458,12 @@ class VirtualsBot:
                 else None
             )
             first_tax_v = Decimal(str(feature.get("firstTaxV") or "0"))
+            first_tx_to = str(feature.get("firstTxTo") or "").strip().lower()
+            first_tx_selector = str(feature.get("firstTxSelector") or "").strip().lower()
+            team_initialization_route = (
+                first_tx_to == VIRTUALS_DIRECT_BUY_ROUTER
+                and first_tx_selector == VIRTUALS_TEAM_INITIALIZATION_SELECTOR
+            )
             token_share_total = (token / total_supply) if total_supply > 0 else Decimal(0)
             token_share_board = (token / total_board_token) if total_board_token > 0 else Decimal(0)
             large_token_share = token_share_total >= Decimal("0.05") or token_share_board >= Decimal("0.50")
@@ -6446,7 +6495,11 @@ class VirtualsBot:
                 and (zero_or_near_zero_tax or extreme_low_cost)
                 and (extreme_low_cost or strong_size_signal)
             )
-            is_team_candidate = first_minute_zero_tax_when_tax_expected or legacy_team_candidate
+            is_team_candidate = (
+                team_initialization_route
+                or first_minute_zero_tax_when_tax_expected
+                or legacy_team_candidate
+            )
             if override_action == "include":
                 row["isTeamCandidate"] = bool(is_team_candidate)
                 row["costExcluded"] = False
@@ -6455,7 +6508,9 @@ class VirtualsBot:
             if is_team_candidate:
                 row["isTeamCandidate"] = True
                 row["costExcluded"] = True
-                if first_minute_zero_tax_when_tax_expected:
+                if team_initialization_route:
+                    row["costExclusionReason"] = "命中团队/初始化购买路径，默认不计入打新成本位。"
+                elif first_minute_zero_tax_when_tax_expected:
                     row["costExclusionReason"] = "首分钟零税但当时预期应有税，默认不计入打新成本位。"
                 else:
                     row["costExclusionReason"] = "开盘极早期、低税/无税且买到占比异常高，默认不计入打新成本位。"
@@ -7674,6 +7729,9 @@ class VirtualsBot:
                         "internalPool": e["internal_pool"],
                         "feeAddr": e["fee_addr"],
                         "taxAddr": e["tax_addr"],
+                        "txTo": e.get("tx_to") or "",
+                        "txSelector": e.get("tx_selector") or "",
+                        "calldataBytes": int(e.get("calldata_bytes") or 0),
                         "buyer": e["buyer"],
                         "tokenAddr": e["token_addr"],
                         "tokenBought": decimal_to_str(e["token_bought"], 18),
@@ -7885,10 +7943,12 @@ class VirtualsBot:
         virtual_price_usd: Optional[Decimal],
         is_price_stale: bool,
         rpc: Optional[RPCClient] = None,
+        transaction: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         logs = receipt.get("logs", [])
         tx_hash = receipt["transactionHash"].lower()
         block_number = int(receipt["blockNumber"], 16)
+        route_meta = transaction_route_metadata(transaction)
 
         transfer_logs = []
         for idx, lg in enumerate(logs):
@@ -8036,6 +8096,9 @@ class VirtualsBot:
                     "internal_pool": launch.internal_pool_addr,
                     "fee_addr": launch.fee_addr,
                     "tax_addr": launch.tax_addr,
+                    "tx_to": route_meta["tx_to"],
+                    "tx_selector": route_meta["tx_selector"],
+                    "calldata_bytes": route_meta["calldata_bytes"],
                     "buyer": effective_buyer,
                     "token_addr": token_addr,
                     "token_bought": token_bought,
@@ -8088,9 +8151,17 @@ class VirtualsBot:
             all_events: List[Dict[str, Any]] = []
             logs = receipt.get("logs", [])
             active_launch_configs = launch_configs if launch_configs is not None else self.get_launch_configs()
+            tx_details: Optional[Dict[str, Any]] = None
+            tx_details_loaded = False
             for launch in active_launch_configs:
                 if not self.is_related_to_launch(logs, launch):
                     continue
+                if not tx_details_loaded:
+                    tx_details_loaded = True
+                    try:
+                        tx_details = await rpc_client.get_transaction(tx_hash)
+                    except Exception:
+                        tx_details = None
                 events = await self.parse_receipt_for_launch(
                     launch=launch,
                     receipt=receipt,
@@ -8098,6 +8169,7 @@ class VirtualsBot:
                     virtual_price_usd=virtual_price_usd,
                     is_price_stale=is_price_stale,
                     rpc=rpc_client,
+                    transaction=tx_details,
                 )
                 all_events.extend(events)
 

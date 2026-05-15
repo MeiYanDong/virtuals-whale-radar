@@ -71,6 +71,7 @@ FILES=(
   docs/phases/phase-053-virtuals-order-binding-minout-2026-05-10.md
   docs/phases/phase-054-team-address-filter-plan.md
   docs/phases/phase-054-team-address-filter-todo.md
+  docs/phases/phase-054-route-filter-validation-2026-05-15.md
   scripts/ops/backup_runtime.sh
   scripts/ops/approve_erc20_spender.py
   scripts/ops/approve_virtual_spender.py

@@ -2371,7 +2371,8 @@ Phase 052 执行结果：
   - 远端代码已包含 `team_address_overrides`、管理员覆盖 API、团队过滤聚合字段和前端相关代码。
   - 生产服务健康：`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
   - 仍需生产复测管理员项目详情页和 overview API。
-  - 仍需接入更高置信的团队/初始化 route 自动过滤：持久化或缓存 `tx_to / tx_selector / calldata_bytes`，并用 `selector == 0x214013ca` 对 SR/ISC/TDS 回放验证。
+  - 已接入更高置信的团队/初始化 route 自动过滤：事件入库持久化 `tx_to / tx_selector / calldata_bytes`，`selector == 0x214013ca` 直接作为疑似团队/初始化购买信号。
+  - SR/ISC/TDS route 审计验证通过：每个项目各 1 条 `team_or_initialization_route`，均命中 `0x81f7ca6af86d1ca6335e44a2c28bc88807491415`；普通 `0x706910ff` direct buy 不误杀。报告：`docs/phases/phase-054-route-filter-validation-2026-05-15.md`。
 
 ## 42. 双策略自动卖出口径与 SR/ISC 回测（2026-05-11）
 

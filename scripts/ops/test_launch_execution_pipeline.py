@@ -9,7 +9,9 @@ import sys
 import asyncio
 import tempfile
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 OPS_DIR = Path(__file__).resolve().parent
@@ -38,7 +40,13 @@ from launch_execution_pipeline import (  # noqa: E402
     run_dry_run,
     SafeBroadcaster,
 )
-from virtuals_bot import Storage  # noqa: E402
+from virtuals_bot import (  # noqa: E402
+    Storage,
+    VirtualsBot,
+    VIRTUALS_DIRECT_BUY_ROUTER,
+    VIRTUALS_TEAM_INITIALIZATION_SELECTOR,
+    transaction_route_metadata,
+)
 
 
 def assert_eq(actual, expected, label: str) -> None:
@@ -455,12 +463,127 @@ def test_launch_execution_ledger_storage() -> None:
             storage.close()
 
 
+def test_route_metadata_storage_and_team_filter() -> None:
+    wallet = "0x81f7ca6af86d1ca6335e44a2c28bc88807491415"
+    route = transaction_route_metadata(
+        {
+            "to": VIRTUALS_DIRECT_BUY_ROUTER,
+            "input": VIRTUALS_TEAM_INITIALIZATION_SELECTOR + "00" * 128,
+        }
+    )
+    assert_eq(route["tx_to"], VIRTUALS_DIRECT_BUY_ROUTER, "route tx_to")
+    assert_eq(route["tx_selector"], VIRTUALS_TEAM_INITIALIZATION_SELECTOR, "route selector")
+    assert_eq(route["calldata_bytes"], 132, "route calldata bytes")
+
+    with tempfile.TemporaryDirectory() as td:
+        storage = Storage(str(Path(td) / "vwr.db"))
+        try:
+            storage.flush_events(
+                [
+                    {
+                        "project": "ROUTE_TEST",
+                        "tx_hash": "0x" + "1" * 64,
+                        "block_number": 1,
+                        "block_timestamp": 100,
+                        "internal_pool": "0x" + "2" * 40,
+                        "fee_addr": "0x" + "3" * 40,
+                        "tax_addr": "0x" + "4" * 40,
+                        "tx_to": route["tx_to"],
+                        "tx_selector": route["tx_selector"],
+                        "calldata_bytes": route["calldata_bytes"],
+                        "buyer": wallet,
+                        "token_addr": "0x" + "5" * 40,
+                        "token_bought": Decimal("100"),
+                        "fee_v": Decimal("0"),
+                        "tax_v": Decimal("0"),
+                        "spent_v_est": Decimal("1"),
+                        "spent_v_actual": Decimal("1"),
+                        "cost_v": Decimal("0.01"),
+                        "total_supply": Decimal("1000000000"),
+                        "virtual_price_usd": Decimal("1"),
+                        "breakeven_fdv_v": Decimal("10000000"),
+                        "breakeven_fdv_usd": Decimal("10000000"),
+                        "is_my_wallet": False,
+                        "anomaly": False,
+                        "is_price_stale": False,
+                    }
+                ],
+                1,
+            )
+            feature = storage.query_project_first_buy_features("ROUTE_TEST", [wallet])[wallet]
+            assert_eq(feature["firstTxTo"], VIRTUALS_DIRECT_BUY_ROUTER, "stored tx_to")
+            assert_eq(
+                feature["firstTxSelector"],
+                VIRTUALS_TEAM_INITIALIZATION_SELECTOR,
+                "stored tx_selector",
+            )
+            assert_eq(feature["firstCalldataBytes"], 132, "stored calldata bytes")
+        finally:
+            storage.close()
+
+
+async def test_team_initialization_route_excludes_cost() -> None:
+    wallet = "0x81f7ca6af86d1ca6335e44a2c28bc88807491415"
+
+    class FakeStorage:
+        def get_launch_config_by_name(self, project):
+            return SimpleNamespace(token_total_supply=Decimal("1000000000"))
+
+        def query_project_first_buy_features(self, project, wallets):
+            return {
+                wallet: {
+                    "projectFirstBlockTimestamp": 100,
+                    "firstTxHash": "0x" + "1" * 64,
+                    "firstBlockNumber": 1,
+                    "firstBlockTimestamp": 100,
+                    "firstTxTo": VIRTUALS_DIRECT_BUY_ROUTER,
+                    "firstTxSelector": VIRTUALS_TEAM_INITIALIZATION_SELECTOR,
+                    "firstCalldataBytes": 132,
+                    "firstTaxV": "1",
+                    "firstSpentV": "1",
+                    "firstTokenBought": "100",
+                    "firstBreakevenFdvV": "10000000",
+                }
+            }
+
+        def get_team_address_override_map(self, project):
+            return {}
+
+    class FakePriceService:
+        async def get_price(self):
+            return Decimal("1"), False
+
+    class FakeBot:
+        storage = FakeStorage()
+        fixed_token_total_supply = Decimal("1000000000")
+        price_service = FakePriceService()
+
+        async def build_project_tax_filter_context(self, project):
+            return {}
+
+        def compute_expected_buy_tax_rate_from_context(self, context, event_ts):
+            return Decimal("99")
+
+    rows = await VirtualsBot.enrich_overview_board_items(
+        FakeBot(),
+        "ROUTE_TEST",
+        [{"wallet": wallet, "spentV": "1", "tokenBought": "100", "breakevenFdvUsd": None}],
+    )
+    row = rows[0]
+    assert_eq(row["isTeamCandidate"], True, "team route candidate")
+    assert_eq(row["costExcluded"], True, "team route cost excluded")
+    if "团队/初始化购买路径" not in str(row.get("costExclusionReason") or ""):
+        raise AssertionError(f"unexpected costExclusionReason: {row.get('costExclusionReason')!r}")
+
+
 def main() -> None:
     test_virtuals_buy_calldata_parity()
     asyncio.run(test_tx_simulator_green_and_blocked())
     asyncio.run(test_order_binder_quote_and_min_out())
     test_local_signer_signs_and_recovers_without_broadcast()
     test_launch_execution_ledger_storage()
+    test_route_metadata_storage_and_team_filter()
+    asyncio.run(test_team_initialization_route_excludes_cost())
 
     cases = [
         {

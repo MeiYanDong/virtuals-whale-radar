@@ -10,7 +10,7 @@
 | 051 | Done | `docs/todo.md#phase-5198-分钟税率项目自动买入策略离线回测` | 保留历史记录，不再继续追加细节。 |
 | 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 买入策略已冻结为 after1 横盘暂停版；双策略自动卖出已完成本地回测，生产卖出执行接入进入 Phase 053。 |
 | 053 | In Progress | `docs/phases/phase-053-launch-execution-pipeline-todo.md` | execution RPC 已收口到独立 Chainstack endpoint，live 发射档案归档已接入，生产健康已复核；下一步是真实 live 窗口端到端验证、归档落地、热路径缓存和 RPC 压力观察。 |
-| 054 | Prod Deployed / Verify Pending | `docs/phases/phase-054-team-address-filter-todo.md` | 代码已随当前生产部署进入远端；下一步复测生产项目详情页、overview API，并接入 `0x214013ca` selector 高置信过滤。 |
+| 054 | Prod Deployed / UI Verify Pending | `docs/phases/phase-054-team-address-filter-todo.md` | selector 高置信过滤已接入并完成 SR/ISC/TDS 只读验证；下一步复测生产项目详情页和 overview API。 |
 
 ## 2. 执行规则
 

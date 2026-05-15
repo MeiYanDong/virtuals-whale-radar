@@ -1099,9 +1099,9 @@
 - [x] 2026-05-15 状态校准：当前生产部署已包含团队过滤表、管理员覆盖 API 和前端相关代码；生产服务健康。
 - [x] 代码已随生产安全同步进入远端。
 - [ ] 生产复测管理员项目详情页和 overview API。
-- [ ] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：保存或缓存 `tx_to / tx_selector / calldata_bytes`。
-- [ ] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
-- [ ] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不应误杀。
+- [x] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：事件入库持久化 `tx_to / tx_selector / calldata_bytes`。
+- [x] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
+- [x] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不误杀；报告见 `docs/phases/phase-054-route-filter-validation-2026-05-15.md`。
 
 ## Phase 52：双策略自动卖出回测
 
