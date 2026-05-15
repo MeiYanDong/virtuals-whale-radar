@@ -40,4 +40,5 @@
 - [x] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：事件入库持久化 `tx_to / tx_selector / calldata_bytes`。
 - [x] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
 - [x] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不误杀；报告见 `docs/phases/phase-054-route-filter-validation-2026-05-15.md`。
-- [ ] 生产复测管理员项目详情页和 overview API。
+- [x] 生产 overview API 烟测通过：管理员短期 session 只读访问项目列表与 ROO overview，返回 `ok=true`、`whaleBoard=20`、`trackedWallets=6`、`hiddenTeamRows=1`。
+- [ ] 生产管理员项目详情页 UI 浏览器复测。
