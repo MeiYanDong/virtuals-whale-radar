@@ -30,7 +30,7 @@
 - [x] 本地前端 UI 测试：加入排除、审核区展示、清理后空状态均正常。
 - [x] 验证 `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 会被自动过滤。
 - [x] 修复手动排除后“纳入成本位”按钮因 pending wallet 残留而无法点击的问题。
-- [x] 2026-05-15 确认当前生产部署 `a6a23412e99a6682e3909a5fd5edb95d3237d7e7` 已包含 `team_address_overrides`、管理员团队过滤 API 和前端钱包编辑修复相关代码。
+- [x] 2026-05-15 确认当前生产部署已包含 `team_address_overrides`、管理员团队过滤 API 和前端钱包编辑修复相关代码；具体部署 commit 以服务器 `DEPLOYED_COMMIT` 为准。
 - [x] 2026-05-15 生产健康检查通过：`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`/healthz status=ok`。
 
 ## 4. 待办

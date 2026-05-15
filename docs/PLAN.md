@@ -2367,7 +2367,7 @@ Phase 052 执行结果：
   - 前端 UI 加入排除、审核区展示、清理后空状态正常
   - `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 已命中自动过滤
 - 2026-05-15 状态校准：
-  - 当前生产部署标记为 `a6a23412e99a6682e3909a5fd5edb95d3237d7e7`。
+  - 当前生产部署已包含 Phase 053/054 代码与文档同步；具体部署 commit 以服务器 `DEPLOYED_COMMIT` 为准。
   - 远端代码已包含 `team_address_overrides`、管理员覆盖 API、团队过滤聚合字段和前端相关代码。
   - 生产服务健康：`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
   - 仍需生产复测管理员项目详情页和 overview API。

@@ -63,6 +63,6 @@
 ## 7. 当前状态
 
 - 2026-05-07：本地实现并通过验证。
-- 2026-05-15：代码已随生产部署 `a6a23412e99a6682e3909a5fd5edb95d3237d7e7` 进入远端；生产服务健康。
+- 2026-05-15：代码已随生产部署进入远端；生产服务健康。具体部署 commit 以服务器 `DEPLOYED_COMMIT` 为准。
 - 仍需生产项目详情页和 overview API 复测。
 - 仍需接入更高置信的团队/初始化 route 自动过滤：持久化或缓存 `tx_to / tx_selector / calldata_bytes`，并对 `selector == 0x214013ca` 做 SR/ISC/TDS 回放验证。
