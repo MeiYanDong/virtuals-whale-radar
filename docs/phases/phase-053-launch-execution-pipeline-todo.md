@@ -193,6 +193,7 @@
 - [x] 新增生产只读 recorder 模板：`deploy/systemd/vwr-launch-dryrun@.service`，默认同时写 `live-strategy-dry-run-%i.jsonl` 与 `launch-samples-%i.jsonl`。
 - [x] `recalc_dynamic_buy_strategy.py` 与 `recalc_dual_sell_strategy.py` 支持 `--report <archive>/summary.json`，不再只能走 SR/ISC 默认入口。
 - [x] 本地归档 smoke：TDS 本地 DB 导出成功；指定本地 sample JSONL 后，dynamic/dual sell 回测脚本可读取 archive summary。
+- [x] 2026-05-15 生产状态复核：部署标记为 `8cf9b064a9a91becc0be096fe4c295d1ffefe10c`，`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如果要真正买满 ROO 150V 项目预算，需要把足够 VIRTUAL 转入 burner；授权已到 300V，服务上限已收紧为 150V。

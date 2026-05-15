@@ -18,8 +18,8 @@
 | --- | --- | --- | --- | --- |
 | 051 | Done | `docs/launch-strategy-backtest-2026-05-07.md` | `docs/todo.md#phase-5198-分钟税率项目自动买入策略离线回测` | 98 分钟税率项目策略离线回测、压力测试、消融测试已完成第一轮。 |
 | 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-plan.md` | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 统一 runner 已完成并用 SR/ISC/TDS Chainstack replay 生成矩阵报告；双策略自动卖出已完成本地策略模块与 SR/ISC 回测。 |
-| 053 | In Progress | `docs/phases/phase-053-launch-execution-pipeline-plan.md` | `docs/phases/phase-053-launch-execution-pipeline-todo.md` | 已完成 direct buy、签名、授权、预热广播、execution RPC 隔离、ROO 灰度 armed 与 live 发射档案归档；下一步是真实 live 窗口端到端验证、归档落地、热路径缓存和 RPC 压力观察。 |
-| 054 | Local Validated | `docs/phases/phase-054-team-address-filter-plan.md` | `docs/phases/phase-054-team-address-filter-todo.md` | 大户榜单团队地址自动过滤与管理员手动纠偏已在本地验证，尚未同步生产。 |
+| 053 | In Progress | `docs/phases/phase-053-launch-execution-pipeline-plan.md` | `docs/phases/phase-053-launch-execution-pipeline-todo.md` | 已完成 direct buy、签名、授权、预热广播、execution RPC 隔离、ROO 灰度 armed、自动卖出和 live 发射档案归档；当前生产健康，下一步是真实 live 窗口端到端验证、归档落地、热路径缓存和 RPC 压力观察。 |
+| 054 | Prod Deployed / Verify Pending | `docs/phases/phase-054-team-address-filter-plan.md` | `docs/phases/phase-054-team-address-filter-todo.md` | 大户榜单团队地址自动过滤与管理员手动纠偏已实现并随当前生产部署进入远端；仍需生产 UI/API 复测，并补齐 selector 高置信过滤。 |
 
 ## 3. 更新规则
 

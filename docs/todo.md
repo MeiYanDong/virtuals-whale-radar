@@ -1070,6 +1070,7 @@
 - [x] autosell 支持执行账本状态重建、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse 处理。
 - [x] 本地 TDS ended autosell 只读 smoke 通过：`no_position`，无签名、无广播。
 - [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
+- [x] 2026-05-15 状态校准：生产部署标记 `8cf9b064a9a91becc0be096fe4c295d1ffefe10c`；`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如需真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已准备到 300V。
@@ -1095,8 +1096,12 @@
 - [x] 验证 `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 会被自动过滤。
 - [x] 修复手动排除后“纳入成本位”按钮因 pending wallet 残留而无法点击的问题。
 - [x] 同步前做完整 `git diff` 审核。
-- [ ] 如需上线，走生产安全同步脚本并重启服务。
-- [ ] 生产同步后复测管理员项目详情页和 overview API。
+- [x] 2026-05-15 状态校准：当前生产部署已包含团队过滤表、管理员覆盖 API 和前端相关代码；生产服务健康。
+- [x] 代码已随生产安全同步进入远端。
+- [ ] 生产复测管理员项目详情页和 overview API。
+- [ ] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：保存或缓存 `tx_to / tx_selector / calldata_bytes`。
+- [ ] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
+- [ ] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不应误杀。
 
 ## Phase 52：双策略自动卖出回测
 

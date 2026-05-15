@@ -2366,7 +2366,12 @@ Phase 052 执行结果：
   - API 排除、纳入、删除覆盖规则正常
   - 前端 UI 加入排除、审核区展示、清理后空状态正常
   - `0x81f7ca6af86d1ca6335e44a2c28bc88807491415` 已命中自动过滤
-- 当前状态：本地验证完成，尚未同步 GitHub，尚未部署生产。
+- 2026-05-15 状态校准：
+  - 当前生产部署标记为 `8cf9b064a9a91becc0be096fe4c295d1ffefe10c`。
+  - 远端代码已包含 `team_address_overrides`、管理员覆盖 API、团队过滤聚合字段和前端相关代码。
+  - 生产服务健康：`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
+  - 仍需生产复测管理员项目详情页和 overview API。
+  - 仍需接入更高置信的团队/初始化 route 自动过滤：持久化或缓存 `tx_to / tx_selector / calldata_bytes`，并用 `selector == 0x214013ca` 对 SR/ISC/TDS 回放验证。
 
 ## 42. 双策略自动卖出口径与 SR/ISC 回测（2026-05-11）
 
