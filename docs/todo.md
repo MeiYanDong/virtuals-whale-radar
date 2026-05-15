@@ -1070,7 +1070,7 @@
 - [x] autosell 支持执行账本状态重建、真实余额读取、sell simulation、精确 token approve、broadcast gate、receipt/fuse 处理。
 - [x] 本地 TDS ended autosell 只读 smoke 通过：`no_position`，无签名、无广播。
 - [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
-- [x] 2026-05-15 状态校准：生产部署标记 `8cf9b064a9a91becc0be096fe4c295d1ffefe10c`；`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
+- [x] 2026-05-15 状态校准：生产部署标记 `a6a23412e99a6682e3909a5fd5edb95d3237d7e7`；`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
 - [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
 - [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
 - [ ] 如需真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已准备到 300V。
