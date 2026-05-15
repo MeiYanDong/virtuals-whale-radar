@@ -69,6 +69,8 @@ FILES=(
   docs/phases/phase-053-virtuals-buy-route-universality-audit-2026-05-10.md
   docs/phases/phase-053-virtuals-buy-spender-trace-2026-05-10.md
   docs/phases/phase-053-virtuals-order-binding-minout-2026-05-10.md
+  docs/phases/phase-054-team-address-filter-plan.md
+  docs/phases/phase-054-team-address-filter-todo.md
   scripts/ops/backup_runtime.sh
   scripts/ops/approve_erc20_spender.py
   scripts/ops/approve_virtual_spender.py
