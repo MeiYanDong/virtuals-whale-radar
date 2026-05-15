@@ -1099,7 +1099,7 @@
 - [x] 2026-05-15 状态校准：当前生产部署已包含团队过滤表、管理员覆盖 API 和前端相关代码；生产服务健康。
 - [x] 代码已随生产安全同步进入远端。
 - [x] 生产 overview API 烟测通过：管理员短期 session 只读访问项目列表与 ROO overview，返回 `ok=true`、`whaleBoard=20`、`trackedWallets=6`、`hiddenTeamRows=1`。
-- [ ] 生产管理员项目详情页 UI 浏览器复测。
+- [x] 生产管理员项目详情页 UI 浏览器复测通过：ROO 详情页返回 200，未回登录页，页面包含 `ROO`、`打新成本位`、`自动过滤`，前端 error 数为 0。
 - [x] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：事件入库持久化 `tx_to / tx_selector / calldata_bytes`。
 - [x] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
 - [x] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不误杀；报告见 `docs/phases/phase-054-route-filter-validation-2026-05-15.md`。

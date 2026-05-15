@@ -41,4 +41,4 @@
 - [x] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
 - [x] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不误杀；报告见 `docs/phases/phase-054-route-filter-validation-2026-05-15.md`。
 - [x] 生产 overview API 烟测通过：管理员短期 session 只读访问项目列表与 ROO overview，返回 `ok=true`、`whaleBoard=20`、`trackedWallets=6`、`hiddenTeamRows=1`。
-- [ ] 生产管理员项目详情页 UI 浏览器复测。
+- [x] 生产管理员项目详情页 UI 浏览器复测通过：ROO 详情页返回 200，未回登录页，页面包含 `ROO`、`打新成本位`、`自动过滤`，前端 error 数为 0。

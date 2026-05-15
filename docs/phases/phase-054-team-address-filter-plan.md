@@ -65,6 +65,6 @@
 - 2026-05-07：本地实现并通过验证。
 - 2026-05-15：代码已随生产部署进入远端；生产服务健康。具体部署 commit 以服务器 `DEPLOYED_COMMIT` 为准。
 - 生产 overview API 烟测已通过：ROO overview 返回 `ok=true`、`whaleBoard=20`、`trackedWallets=6`、`hiddenTeamRows=1`。
-- 仍需生产管理员项目详情页 UI 浏览器复测。
+- 生产管理员项目详情页 UI 浏览器复测通过：ROO 详情页返回 200，未回登录页，页面包含 `ROO`、`打新成本位`、`自动过滤`，前端 error 数为 0。
 - 已接入更高置信的团队/初始化 route 自动过滤：事件入库持久化 `tx_to / tx_selector / calldata_bytes`，`selector == 0x214013ca` 直接作为疑似团队/初始化购买信号。
 - SR/ISC/TDS 回放验证已完成：`0x214013ca` 均命中 `0x81f7ca6af86d1ca6335e44a2c28bc88807491415`，普通 `0x706910ff` direct buy 不误杀；报告见 `docs/phases/phase-054-route-filter-validation-2026-05-15.md`。
