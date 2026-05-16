@@ -169,7 +169,7 @@
   - 启动策略：由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起；主采集仍在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
   - 2026-05-11 远端状态：timer `active(waiting)`；执行服务均为 `inactive + disabled`，避免发射前过早占用 RPC；timer 到点后自动启动。
   - 模式：`prewarm_broadcast`，日志显示 `broadcastEnabled=true`、`rpcSharedWithMain=false`。
-  - 上限：`maxBuyV=50`、`maxProjectV=300`。
+  - 上限：`maxBuyV=50`、`maxProjectV=150`；300V 是授权上限，不是本项目预算。
   - ROO 仍为 `scheduled`，当前只记录 `state_change/not_live`，`tradeSent=false`。
 - [x] 新增生产自动卖出常驻执行器：`scripts/ops/launch_sell_executor.py`。
   - 读取同一份项目、事件、市场和执行账本数据。
@@ -194,9 +194,25 @@
 - [x] `recalc_dynamic_buy_strategy.py` 与 `recalc_dual_sell_strategy.py` 支持 `--report <archive>/summary.json`，不再只能走 SR/ISC 默认入口。
 - [x] 本地归档 smoke：TDS 本地 DB 导出成功；指定本地 sample JSONL 后，dynamic/dual sell 回测脚本可读取 archive summary。
 - [x] 2026-05-15 生产状态复核：当前生产部署已包含 Phase 053/054 代码与文档同步；具体部署 commit 以服务器 `DEPLOYED_COMMIT` 为准。`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
-- [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
-- [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
+- [x] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径：
+  - 2026-05-15 复核 ROO 生产账本与链上 receipt，`launch_execution_ledger` 有 2 笔 `would_buy / receipt_success / trade_sent=1 / broadcast_enabled=1`。
+  - 买入 tx：`0xa1a2786e18e1b83f66724d4b930bd42ad73883df3f5f86c3bc21bd8ef0afd950`，链上 receipt `status=0x1`，block `45905833`。
+  - 买入 tx：`0xcf25aede650a00f134355ba73e8407fced8ccbd7c634c093919a09f95c4806d5`，链上 receipt `status=0x1`，block `45907033`。
+- [x] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径：
+  - 2026-05-15 复核 ROO 生产账本与链上 receipt，`launch_execution_ledger` 有 2 笔 `sell / receipt_success / trade_sent=1 / broadcast_enabled=1`。
+  - 卖出 tx：`0x87ccc9c6935362af1786eeab5974c52cafc938c404a0b275de7be2b117a7398b`，链上 receipt `status=0x1`，block `45906445`。
+  - 卖出 tx：`0xf476b21b47df21a012f47c62a2c90057a1d03795dedb50272b0107e9b291e7ff`，链上 receipt `status=0x1`，block `45907039`。
+  - 卖出链路包含精确 token approve；相关 approval receipt 在 `launch-autosell-ROO.jsonl` 中记录为 `approval_confirmed`。
+- [x] 2026-05-15 当前即时 canary 边界已确认：ROO 已 ended，新的 `0.001V` launch direct-buy readiness 会在 `eth_call/estimateGas` 失败；这不是 RPC 或钱包故障，下一次只能在真实 live 项目窗口复测新的 canary。
 - [ ] 如果要真正买满 ROO 150V 项目预算，需要把足够 VIRTUAL 转入 burner；授权已到 300V，服务上限已收紧为 150V。
+- [x] 2026-05-16 完成 ROO live regression 标准归档：`sampleCount=7993`、`eventCount=505`、`ledgerCount=240`、`warnings=[]`，报告见 `docs/phases/phase-053-roo-live-regression-2026-05-16.md`。
+- [x] 2026-05-16 完成 ROO canonical 买入回放：当前主策略买入 `6` 次，总投入 `150V`，最终收益率 `+31.8845%`。
+- [x] 2026-05-16 完成 ROO canonical 卖出回放：卖出 `1` 次，最终收益率 `+32.7369%`，相对纯持有提升 `+0.846%`。
+- [x] 2026-05-16 重新查链确认 ROO 2 笔买入与 2 笔卖出 receipt 均为 `status=0x1`。
+- [x] 新增通用 live 项目启动编排脚本：`scripts/ops/schedule_launch_services.py`，替代后续继续复制 `vwr-launch-roo-start.timer` 的手工流程。
+- [x] 新增本地 prewarm systemd 模板：`deploy/systemd/vwr-launch-prewarm@.service`。
+- [x] 新增通用启动编排测试：`scripts/ops/test_schedule_launch_services.py`。
+- [x] `deploy_production_safe.sh` 白名单加入通用启动脚本、prewarm 模板、测试脚本和 ROO 回归报告。
 
 ## 6.1.1 ROO 开盘即时验证
 

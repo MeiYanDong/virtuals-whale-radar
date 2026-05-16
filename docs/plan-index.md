@@ -18,8 +18,10 @@
 | --- | --- | --- | --- | --- |
 | 051 | Done | `docs/launch-strategy-backtest-2026-05-07.md` | `docs/todo.md#phase-5198-分钟税率项目自动买入策略离线回测` | 98 分钟税率项目策略离线回测、压力测试、消融测试已完成第一轮。 |
 | 052 | Validated | `docs/phases/phase-052-strategy-test-matrix-plan.md` | `docs/phases/phase-052-strategy-test-matrix-todo.md` | 统一 runner 已完成并用 SR/ISC/TDS Chainstack replay 生成矩阵报告；双策略自动卖出已完成本地策略模块与 SR/ISC 回测。 |
-| 053 | In Progress | `docs/phases/phase-053-launch-execution-pipeline-plan.md` | `docs/phases/phase-053-launch-execution-pipeline-todo.md` | 已完成 direct buy、签名、授权、预热广播、execution RPC 隔离、ROO 灰度 armed、自动卖出和 live 发射档案归档；当前生产健康，下一步是真实 live 窗口端到端验证、归档落地、热路径缓存和 RPC 压力观察。 |
+| 053 | In Progress | `docs/phases/phase-053-launch-execution-pipeline-plan.md` | `docs/phases/phase-053-launch-execution-pipeline-todo.md` | 已完成 direct buy、签名、授权、预热广播、execution RPC 隔离、ROO 真正 live 买卖、ROO 回归归档、自动卖出和通用启动编排；下一步是新 live 项目用通用 timer 验证并继续压低热路径延迟。 |
 | 054 | Production Verified | `docs/phases/phase-054-team-address-filter-plan.md` | `docs/phases/phase-054-team-address-filter-todo.md` | 大户榜单团队地址自动过滤、selector 高置信过滤与管理员手动纠偏已实现；overview API 与生产项目详情页 UI 烟测均已通过。 |
+| 055 | Production Probed | `docs/phases/phase-055-runtime-strategy-control-plan.md` | `docs/phases/phase-055-runtime-strategy-control-todo.md` | 管理员自动买入运行时控制台、配置 API、审计表和执行器热加载已实现；生产网页保存、DB 同步和执行器热读取探针已通过。 |
+| 056 | Local Verified | `docs/phases/phase-056-runtime-autosell-control-plan.md` | `docs/phases/phase-056-runtime-autosell-control-todo.md` | 管理员自动卖出运行时控制台、配置 API、审计表和执行器热加载已实现；配置缺失默认阻断真实卖出。 |
 
 ## 3. 更新规则
 

@@ -27,6 +27,8 @@ class DualSellConfig:
     roi_high_pct: Decimal = Decimal("50")
     large_buy_low_v: Decimal = Decimal("5000")
     large_buy_high_v: Decimal = Decimal("8000")
+    sell_low_pct: Decimal = Decimal("30")
+    sell_high_pct: Decimal = Decimal("50")
     cooldown_sec: int = 60
 
 
@@ -87,9 +89,9 @@ def roi_target_pct(roi_pct: Decimal | None, config: DualSellConfig = DualSellCon
     if roi_pct is None:
         return PCT_0
     if roi_pct >= config.roi_high_pct:
-        return PCT_50
+        return clamp_pct(config.sell_high_pct)
     if roi_pct >= config.roi_low_pct:
-        return PCT_30
+        return clamp_pct(config.sell_low_pct)
     return PCT_0
 
 
@@ -97,9 +99,9 @@ def large_buy_target_pct(latest_buy_v: Decimal | None, config: DualSellConfig = 
     if latest_buy_v is None:
         return PCT_0
     if latest_buy_v >= config.large_buy_high_v:
-        return PCT_50
+        return clamp_pct(config.sell_high_pct)
     if latest_buy_v >= config.large_buy_low_v:
-        return PCT_30
+        return clamp_pct(config.sell_low_pct)
     return PCT_0
 
 

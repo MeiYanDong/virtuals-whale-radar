@@ -34,6 +34,7 @@ FILES=(
   frontend/admin/src/pages/OverviewPage.tsx
   frontend/admin/src/pages/SettingsPage.tsx
   frontend/admin/src/pages/WalletsPage.tsx
+  frontend/admin/src/styles/globals.css
   frontend/admin/src/types/api.ts
   frontend/admin/dist/
   docs/PLAN.md
@@ -69,9 +70,14 @@ FILES=(
   docs/phases/phase-053-virtuals-buy-route-universality-audit-2026-05-10.md
   docs/phases/phase-053-virtuals-buy-spender-trace-2026-05-10.md
   docs/phases/phase-053-virtuals-order-binding-minout-2026-05-10.md
+  docs/phases/phase-053-roo-live-regression-2026-05-16.md
   docs/phases/phase-054-team-address-filter-plan.md
   docs/phases/phase-054-team-address-filter-todo.md
   docs/phases/phase-054-route-filter-validation-2026-05-15.md
+  docs/phases/phase-055-runtime-strategy-control-plan.md
+  docs/phases/phase-055-runtime-strategy-control-todo.md
+  docs/phases/phase-056-runtime-autosell-control-plan.md
+  docs/phases/phase-056-runtime-autosell-control-todo.md
   scripts/ops/backup_runtime.sh
   scripts/ops/approve_erc20_spender.py
   scripts/ops/approve_virtual_spender.py
@@ -102,10 +108,12 @@ FILES=(
   scripts/ops/sr_strategy_recalc_from_matrix.py
   scripts/ops/strategy_test_matrix_runner.py
   scripts/ops/archive_launch_project.py
+  scripts/ops/schedule_launch_services.py
   scripts/ops/test_execution_rpc.py
   scripts/ops/test_launch_execution_pipeline.py
   scripts/ops/test_launch_rpc_pressure_probe.py
   scripts/ops/test_launch_prewarm_executor.py
+  scripts/ops/test_schedule_launch_services.py
   scripts/ops/test_launch_sell_executor.py
   scripts/ops/test_launch_sell_strategy.py
   scripts/ops/tx_simulator_probe.py
@@ -115,6 +123,7 @@ FILES=(
   scripts/ops/run_chainstack_test_suite.py
   scripts/ops/deploy_production_safe.sh
   deploy/systemd/vwr-launch-dryrun@.service
+  deploy/systemd/vwr-launch-prewarm@.service
   deploy/systemd/vwr-launch-autobuy@.service
   deploy/systemd/vwr-launch-autosell@.service
   deploy/systemd/vwr-launch-roo-start.service

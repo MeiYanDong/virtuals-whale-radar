@@ -15,6 +15,8 @@ import type {
   EventDelayRow,
   HealthResponse,
   LaunchConfig,
+  LaunchSellRuntimeConfigResponse,
+  LaunchStrategyRuntimeConfigResponse,
   LegacyApisResponse,
   LeaderboardRow,
   ManagedProjectItem,
@@ -221,6 +223,63 @@ export const dashboardApi = {
     },
     getProjectMarket(projectId: number) {
       return requestJson<ProjectMarketResponse>(`/api/admin/projects/${projectId}/market`);
+    },
+    getLaunchStrategyConfig(projectId: number) {
+      return requestJson<LaunchStrategyRuntimeConfigResponse>(
+        `/api/admin/projects/${projectId}/launch-strategy-config`,
+      );
+    },
+    setLaunchStrategyConfig(
+      projectId: number,
+      payload: {
+        enabled: boolean;
+        mode: "simulate" | "broadcast";
+        baseBuyV: string;
+        dipBuyV: string;
+        dipFromOwnCostPct: string;
+        flatPausePct: string;
+        maxBuyV: string;
+        maxProjectV: string;
+        updatedReason?: string;
+      },
+    ) {
+      return requestJson<LaunchStrategyRuntimeConfigResponse>(
+        `/api/admin/projects/${projectId}/launch-strategy-config`,
+        {
+          method: "POST",
+          body: payload,
+        },
+      );
+    },
+    getLaunchSellConfig(projectId: number) {
+      return requestJson<LaunchSellRuntimeConfigResponse>(
+        `/api/admin/projects/${projectId}/launch-sell-config`,
+      );
+    },
+    setLaunchSellConfig(
+      projectId: number,
+      payload: {
+        enabled: boolean;
+        mode: "simulate" | "broadcast";
+        maxTaxRate: string;
+        roiLowPct: string;
+        roiHighPct: string;
+        largeBuyLowV: string;
+        largeBuyHighV: string;
+        sellLowPct: string;
+        sellHighPct: string;
+        cooldownSec: string;
+        catchUpEventsSec: string;
+        updatedReason?: string;
+      },
+    ) {
+      return requestJson<LaunchSellRuntimeConfigResponse>(
+        `/api/admin/projects/${projectId}/launch-sell-config`,
+        {
+          method: "POST",
+          body: payload,
+        },
+      );
     },
     createScanJob(project: string | null, startTs: number, endTs: number) {
       return requestJson<{ ok: boolean; jobId: string }>("/api/admin/scan-range", {

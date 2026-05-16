@@ -487,6 +487,34 @@ ROO 部署状态：
   - `archive_launch_project.py --project TDS` 可从本地 DB 导出 `events / ledger / fuses / archive.db`。
   - 使用本地 prewarm smoke JSONL 指定 `--samples-jsonl` 后，可生成带 `samples.jsonl` 的归档。
   - 新的 `--report` 回测入口可读取归档 summary 并完成 dynamic/dual sell smoke。
+- 2026-05-16 ROO live regression：
+  - 报告：`docs/phases/phase-053-roo-live-regression-2026-05-16.md`。
+  - 标准归档：`sampleCount=7993`、`eventCount=505`、`ledgerCount=240`、`warnings=[]`。
+  - 买入 canonical 回放：当前主策略买入 `6` 次，总投入 `150 VIRTUAL`，最终收益率 `+31.8845%`。
+  - 卖出 canonical 回放：触发 `1` 次卖出，最终收益率 `+32.7369%`，相对纯持有提升 `+0.846%`。
+  - ROO live 期间 2 笔真实买入和 2 笔真实卖出 receipt 均复核为 `status=0x1`。
+
+### Stage 2.9：通用 live 项目启动编排
+
+- 问题：ROO 使用 `vwr-launch-roo-start.timer` 专用 timer，下一次项目不能继续手工复制 ROO 单项目启动文件。
+- 新增通用编排脚本：`scripts/ops/schedule_launch_services.py`。
+  - 输入：`--project <SYMBOL>` 与 `--start-at "YYYY-MM-DD HH:MM:SS"`。
+  - 默认在发射前 `35` 分钟启动 `dryrun / prewarm / autobuy / autosell`。
+  - 默认按 `99` 分钟发射窗口 + `10` 分钟延迟创建归档 timer。
+  - 默认只输出计划；只有显式 `--apply` 才写入 systemd unit 并执行 `systemctl daemon-reload / enable --now`。
+  - 支持 `--start-now`，用于项目已进入 live 或临时补启服务。
+- 新增本地 systemd prewarm 模板：`deploy/systemd/vwr-launch-prewarm@.service`，与生产现有模板对齐。
+- 通用启动脚本会安装/刷新四个模板：
+  - `vwr-launch-dryrun@.service`
+  - `vwr-launch-prewarm@.service`
+  - `vwr-launch-autobuy@.service`
+  - `vwr-launch-autosell@.service`
+- 通用启动脚本会生成项目级 unit：
+  - `vwr-launch-<symbol>-start.service`
+  - `vwr-launch-<symbol>-start.timer`
+  - `vwr-launch-<symbol>-archive.service`
+  - `vwr-launch-<symbol>-archive.timer`
+- 验收脚本：`scripts/ops/test_schedule_launch_services.py`。
 
 ### Stage 3：历史交易 calldata parity
 

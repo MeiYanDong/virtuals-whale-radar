@@ -150,6 +150,87 @@ def decimal_or_none(value: Any) -> Decimal | None:
         return None
 
 
+def decimal_value(value: Any, default: Decimal = Decimal("0")) -> Decimal:
+    parsed = decimal_or_none(value)
+    return parsed if parsed is not None else default
+
+
+def int_value(value: Any, default: int = 0) -> int:
+    try:
+        if value is None or str(value).strip() == "":
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+
+def runtime_sell_config(row: dict[str, Any] | None, *, default_name: str) -> DualSellConfig:
+    if not row:
+        return DualSellConfig(name=str(default_name or DualSellConfig().name))
+    return DualSellConfig(
+        name=str(row.get("strategy") or row.get("rule_name") or default_name or DualSellConfig().name),
+        max_tax_rate=decimal_value(row.get("max_tax_rate"), DualSellConfig().max_tax_rate),
+        roi_low_pct=decimal_value(row.get("roi_low_pct"), DualSellConfig().roi_low_pct),
+        roi_high_pct=decimal_value(row.get("roi_high_pct"), DualSellConfig().roi_high_pct),
+        large_buy_low_v=decimal_value(row.get("large_buy_low_v"), DualSellConfig().large_buy_low_v),
+        large_buy_high_v=decimal_value(row.get("large_buy_high_v"), DualSellConfig().large_buy_high_v),
+        sell_low_pct=decimal_value(row.get("sell_low_pct"), DualSellConfig().sell_low_pct),
+        sell_high_pct=decimal_value(row.get("sell_high_pct"), DualSellConfig().sell_high_pct),
+        cooldown_sec=int_value(row.get("cooldown_sec"), DualSellConfig().cooldown_sec),
+    )
+
+
+def runtime_effective_args(args: argparse.Namespace, row: dict[str, Any] | None) -> argparse.Namespace:
+    if not row:
+        return args
+    out = copy.copy(args)
+    out.catch_up_events_sec = int_value(row.get("catch_up_events_sec"), int(args.catch_up_events_sec))
+    return out
+
+
+def compact_runtime_sell_config(
+    row: dict[str, Any] | None,
+    args: argparse.Namespace,
+    config: DualSellConfig,
+) -> dict[str, Any]:
+    if not row:
+        return {
+            "hasOverride": False,
+            "version": 0,
+            "enabled": False,
+            "mode": "simulate",
+            "strategy": config.name,
+            "ruleName": config.name,
+            "maxTaxRate": str(config.max_tax_rate),
+            "roiLowPct": str(config.roi_low_pct),
+            "roiHighPct": str(config.roi_high_pct),
+            "largeBuyLowV": str(config.large_buy_low_v),
+            "largeBuyHighV": str(config.large_buy_high_v),
+            "sellLowPct": str(config.sell_low_pct),
+            "sellHighPct": str(config.sell_high_pct),
+            "cooldownSec": int(config.cooldown_sec),
+            "catchUpEventsSec": int(args.catch_up_events_sec),
+        }
+    return {
+        "hasOverride": True,
+        "version": int(row.get("version") or 0),
+        "enabled": bool(int(row.get("enabled") or 0)),
+        "mode": str(row.get("mode") or "simulate"),
+        "strategy": str(row.get("strategy") or ""),
+        "ruleName": str(row.get("rule_name") or ""),
+        "maxTaxRate": str(row.get("max_tax_rate") or ""),
+        "roiLowPct": str(row.get("roi_low_pct") or ""),
+        "roiHighPct": str(row.get("roi_high_pct") or ""),
+        "largeBuyLowV": str(row.get("large_buy_low_v") or ""),
+        "largeBuyHighV": str(row.get("large_buy_high_v") or ""),
+        "sellLowPct": str(row.get("sell_low_pct") or ""),
+        "sellHighPct": str(row.get("sell_high_pct") or ""),
+        "cooldownSec": int(row.get("cooldown_sec") or config.cooldown_sec),
+        "catchUpEventsSec": int(row.get("catch_up_events_sec") or args.catch_up_events_sec),
+        "updatedAt": int(row.get("updated_at") or 0),
+    }
+
+
 def json_dict(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -565,6 +646,7 @@ async def execute_sell_decision(
     sample_index: int,
     decision: Any,
     position: dict[str, Any],
+    sell_config: DualSellConfig,
     owner: str,
     token: str,
     pool: str,
@@ -910,7 +992,7 @@ async def execute_sell_decision(
                 state=state,
                 decision=decision,
                 timestamp=int(sample.get("simTimestamp") or time.time()),
-                config=DualSellConfig(),
+                config=sell_config,
             )
         return payload
     except Exception as exc:
@@ -991,7 +1073,6 @@ async def async_main() -> None:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, on_stop)
 
-    sell_config = DualSellConfig(name=str(args.rule))
     clock = LiveClock()
     previous_sample: dict[str, Any] | None = None
     previous_fingerprint: tuple[Any, ...] | None = None
@@ -1003,6 +1084,10 @@ async def async_main() -> None:
         project_name = str(project_row.get("name") or args.project).strip()
         token = normalize_hex_address(str(project_row.get("token_addr") or ""))
         pool = normalize_hex_address(str(project_row.get("internal_pool_addr") or ""))
+        runtime_config_row = bot.storage.get_launch_sell_runtime_config_by_project(project_name)
+        runtime_config_version = int(runtime_config_row.get("version") or 0) if runtime_config_row else 0
+        sell_config = runtime_sell_config(runtime_config_row, default_name=str(args.rule))
+        effective_args = runtime_effective_args(args, runtime_config_row)
 
         service_meta = {
             "event": "service_start",
@@ -1025,6 +1110,7 @@ async def async_main() -> None:
             "token": token,
             "pool": pool,
             "outputJsonl": str(output_jsonl),
+            "runtimeSellConfig": compact_runtime_sell_config(runtime_config_row, effective_args, sell_config),
         }
         append_jsonl(output_jsonl, service_meta)
         print(json.dumps(service_meta, ensure_ascii=False), flush=True)
@@ -1048,6 +1134,45 @@ async def async_main() -> None:
                         sample.get("liveFdvUsd"),
                         sample.get("estimatedFdvWanUsdWithTax"),
                     )
+                    latest_runtime_config = bot.storage.get_launch_sell_runtime_config_by_project(project_name)
+                    latest_runtime_version = int(latest_runtime_config.get("version") or 0) if latest_runtime_config else 0
+                    if latest_runtime_version != runtime_config_version:
+                        runtime_config_version = latest_runtime_version
+                        runtime_config_row = latest_runtime_config
+                        sell_config = runtime_sell_config(runtime_config_row, default_name=str(args.rule))
+                        effective_args = runtime_effective_args(args, runtime_config_row)
+                        reload_payload = {
+                            "event": "sell_config_reloaded",
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": sell_config.name,
+                            "strategy": sell_config.name,
+                            "mode": executor_mode(args),
+                            "readOnly": args.mode != "broadcast",
+                            "tradeSent": False,
+                            "broadcastEnabled": broadcast_enabled(args),
+                            "autoApproveEnabled": auto_approve_enabled(args),
+                            "runtimeSellConfig": compact_runtime_sell_config(runtime_config_row, effective_args, sell_config),
+                        }
+                        append_jsonl(output_jsonl, reload_payload)
+                        print(json.dumps(reload_payload, ensure_ascii=False), flush=True)
+                    else:
+                        runtime_config_row = latest_runtime_config
+                        effective_args = runtime_effective_args(args, runtime_config_row)
+
+                    runtime_block_reason = ""
+                    if not runtime_config_row:
+                        runtime_block_reason = "runtime_config_missing"
+                    elif not bool(int(runtime_config_row.get("enabled") or 0)):
+                        runtime_block_reason = "runtime_config_disabled"
+                    elif (
+                        runtime_config_row
+                        and args.mode == "broadcast"
+                        and str(runtime_config_row.get("mode") or "simulate") != "broadcast"
+                    ):
+                        runtime_block_reason = "runtime_config_mode_not_broadcast"
+
                     current_balance_raw = 0
                     if token and token != "0x0000000000000000000000000000000000000000":
                         current_balance_raw = await read_erc20_balance(rpc, token=token, owner=owner)
@@ -1056,7 +1181,7 @@ async def async_main() -> None:
                     state = dual_state_from_position(position)
                     event_since_ts = max(
                         0,
-                        int(sample.get("simTimestamp") or now_ts) - max(0, int(args.catch_up_events_sec)),
+                        int(sample.get("simTimestamp") or now_ts) - max(0, int(effective_args.catch_up_events_sec)),
                     )
                     latest_buy = latest_unseen_buy_event(
                         bot,
@@ -1106,9 +1231,20 @@ async def async_main() -> None:
                         if latest_buy
                         else None,
                         "decision": decision.as_dict(),
+                        "runtimeSellConfig": compact_runtime_sell_config(runtime_config_row, effective_args, sell_config),
                     }
                     should_log = False
-                    if decision.should_sell:
+                    if runtime_block_reason:
+                        counts["skip"] = counts.get("skip", 0) + 1
+                        payload["event"] = "runtime_config_blocked"
+                        payload["reason"] = runtime_block_reason
+                        payload["readOnly"] = True
+                        payload["broadcastEnabled"] = False
+                        should_log = (
+                            current_fingerprint != previous_fingerprint
+                            or (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec)
+                        )
+                    elif decision.should_sell:
                         counts["sell"] = counts.get("sell", 0) + 1
                         payload = await execute_sell_decision(
                             args=args,
@@ -1125,10 +1261,12 @@ async def async_main() -> None:
                             sample_index=sample_count - 1,
                             decision=decision,
                             position=position,
+                            sell_config=sell_config,
                             owner=owner,
                             token=token,
                             pool=pool,
                         )
+                        payload["runtimeSellConfig"] = compact_runtime_sell_config(runtime_config_row, effective_args, sell_config)
                         should_log = True
                     elif current_fingerprint != previous_fingerprint:
                         counts["hold"] = counts.get("hold", 0) + 1

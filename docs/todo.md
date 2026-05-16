@@ -1062,7 +1062,7 @@
 - [x] 接入生产 systemd `simulate` 灰度服务：`vwr-launch-prewarm@ROO.service`，只读、不读取私钥、不签名、不广播。
 - [x] 远端 ROO prewarm smoke 与健康检查通过：主服务/ROO dry-run/ROO prewarm 均 active，active fuse 为空，执行账本 `trade_sent=1` 与 `broadcast_enabled=1` 均为 `0`。
 - [x] 新增并安装 ROO 生产 `broadcast` armed 服务：`vwr-launch-autobuy@ROO.service`，`broadcastEnabled=true`、`rpcSharedWithMain=false`。
-- [x] ROO autobuy 服务上限已调整为单笔 `50V`、单项目 `300V`，匹配 25V/50V 策略和 300V 项目预算。
+- [x] ROO autobuy 服务上限已调整为单笔 `50V`、单项目 `150V`；300V 只是授权上限，不是本项目预算。
 - [x] ROO 执行服务改为由 `vwr-launch-roo-start.timer` 在 `2026-05-12 22:25:00 CST` 拉起；主采集仍在 `2026-05-12 22:30:00 CST` 自动进入 `prelaunch`。
 - [x] 2026-05-11 远端验证：ROO timer `active(waiting)`，下一次触发 `2026-05-12 22:25:00 CST`；执行服务在 timer 触发前为 `inactive + disabled`，active fuse 为空，ROO `tradeSent=true` 计数为 `0`。
 - [x] 接入生产自动卖出常驻执行器 `scripts/ops/launch_sell_executor.py`。
@@ -1071,9 +1071,9 @@
 - [x] 本地 TDS ended autosell 只读 smoke 通过：`no_position`，无签名、无广播。
 - [x] 新增 autosell 状态重建测试：`scripts/ops/test_launch_sell_executor.py`。
 - [x] 2026-05-15 状态校准：当前生产部署已包含 Phase 053/054 代码与文档同步；具体部署 commit 以服务器 `DEPLOYED_COMMIT` 为准。`writer / realtime / backfill / SignalHub / nginx` 均 active，`/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`，`/healthz status=ok`。
-- [ ] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径。
-- [ ] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径。
-- [ ] 如需真正买满 300V，需要把足够 VIRTUAL 转入 burner；授权和服务上限已准备到 300V。
+- [x] 真实 live 项目窗口内验证 BuyIntent -> simulation/prewarm/broadcast/receipt 的完整路径：2026-05-15 复核 ROO 生产账本与链上 receipt，2 笔真实买入均 `receipt_success / status=0x1`。
+- [x] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径：2026-05-15 复核 ROO 生产账本与链上 receipt，2 笔真实卖出均 `receipt_success / status=0x1`，包含精确 approve 后卖出。
+- [ ] 如需真正买满 ROO 150V 项目预算，需要把足够 VIRTUAL 转入 burner；授权已到 300V，服务上限已收紧为 150V。
 - [ ] 生产预热热路径：提前维护 nonce、fee、gas、allowance、balance，tick 到达时只做本地判断和广播。
 - [ ] 生产机运行 RPC 压力观察：以 `/etc/virtuals-whale-radar/execution-rpc.env` 注入独立 execution RPC，确认 `executionRpcSharedWithMain=false`。
 
@@ -1103,6 +1103,47 @@
 - [x] 将 Phase 053 的团队/初始化 route 识别接入自动过滤：事件入库持久化 `tx_to / tx_selector / calldata_bytes`。
 - [x] 自动过滤规则新增高置信条件：`to == direct router`、`selector == 0x214013ca`。
 - [x] 回放验证 SR/ISC/TDS：团队/初始化地址应被过滤，普通 `0x706910ff` direct buy 不误杀；报告见 `docs/phases/phase-054-route-filter-validation-2026-05-15.md`。
+
+## Phase 55：自动买入运行时控制台
+
+- [x] 新增 Phase 055 子 plan：`docs/phases/phase-055-runtime-strategy-control-plan.md`。
+- [x] 新增 Phase 055 子 todo：`docs/phases/phase-055-runtime-strategy-control-todo.md`。
+- [x] 新增 `launch_strategy_runtime_configs` 表。
+- [x] 新增 `launch_strategy_runtime_config_audit` 审计表。
+- [x] 新增管理员读取/保存运行时策略配置 API。
+- [x] 项目详情页新增管理员专用“自动买入控制”模块。
+- [x] 支持恢复默认 `25/50/50/150` 与 `20/10` 阈值。
+- [x] 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限和项目预算。
+- [x] 前端收敛为 `恢复默认`、`保存并启用`、`停用自动买入`，隐藏 mode/updatedReason 等原生字段。
+- [x] `launch_prewarm_executor.py` 支持配置热加载。
+- [x] 配置缺失时沿用 CLI/systemd 默认值。
+- [x] `enabled=false` 或 `mode=simulate` 时阻断真实买入。
+- [x] 配置版本变化时写入 `strategy_config_reloaded`。
+- [x] 静态风控校验：买入金额不能超过单笔上限，项目预算不能低于已发送买入 V。
+- [x] 本地验证：Python `py_compile`、`test_launch_execution_pipeline.py`、`test_launch_prewarm_executor.py`。
+- [x] 前端验证：`npm run build`、`npm run lint`。
+- [x] 本地管理员页面浏览器烟测：`/admin/projects/1?project=TDS` 可渲染“自动买入控制”，主要动作收敛为恢复默认、保存并启用、停用自动买入。
+- [x] 本地 HTTP 保存烟测：POST simulate `100/200/200/300` 成功后重置为 disabled `25/50/50/150`。
+
+## Phase 56：自动卖出运行时控制台
+
+- [x] 新增 Phase 056 子 plan：`docs/phases/phase-056-runtime-autosell-control-plan.md`。
+- [x] 新增 Phase 056 子 todo：`docs/phases/phase-056-runtime-autosell-control-todo.md`。
+- [x] 新增 `launch_sell_runtime_configs` 表。
+- [x] 新增 `launch_sell_runtime_config_audit` 审计表。
+- [x] 新增管理员读取/保存自动卖出配置 API。
+- [x] 项目详情页新增管理员专用“自动卖出控制”模块。
+- [x] 支持恢复默认收益率 `30/50`、大单 `5000/8000`、卖出比例 `30/50`、冷却 `60s` 和事件回看 `120s`。
+- [x] 支持编辑税率窗口、收益率档位、大单档位、卖出比例、冷却时间和事件回看窗口。
+- [x] 前端收敛为 `恢复默认`、`保存并启用`、`停用自动卖出`，隐藏 mode/updatedReason 等原生字段。
+- [x] `launch_sell_executor.py` 支持配置热加载。
+- [x] 配置缺失时默认阻断真实卖出。
+- [x] `enabled=false` 或 `mode=simulate` 时阻断真实卖出。
+- [x] 配置版本变化时写入 `sell_config_reloaded`。
+- [x] `DualSellConfig` 支持运行时卖出一档/二档比例。
+- [x] 本地验证：Python `py_compile`、`test_launch_execution_pipeline.py`、`test_launch_sell_strategy.py`、`test_launch_sell_executor.py`。
+- [x] 前端验证：`npm run build`、`npm run lint`。
+- [x] 本地执行器热加载探针：保存探针配置后，`launch_sell_executor.py` 记录 `sell_config_reloaded`，随后恢复 disabled 默认配置。
 
 ## Phase 52：双策略自动卖出回测
 
@@ -1134,5 +1175,12 @@
 - [x] `recalc_dynamic_buy_strategy.py` 支持 `--report <archive>/summary.json`。
 - [x] `recalc_dual_sell_strategy.py` 支持 `--report <archive>/summary.json --rule <rule>`。
 - [x] 本地 smoke：TDS 本地 DB 可导出 archive；指定本地 sample JSONL 后 dynamic/dual sell 回测可读取 archive summary。
-- [ ] 下一次真实 live 项目结束后，立即运行 `archive_launch_project.py --project <SYMBOL>` 并检查 `sampleCount/eventCount/ledgerCount`。
-- [ ] 生产同步后确认 `vwr-launch-dryrun@<SYMBOL>.service` 的 `launch-samples-<SYMBOL>.jsonl` 正常增长。
+- [x] 2026-05-16 ROO live regression 标准归档完成：`sampleCount=7993`、`eventCount=505`、`ledgerCount=240`、`warnings=[]`。
+- [x] 2026-05-16 ROO canonical 买入回放完成：当前主策略买入 `6` 次，总投入 `150V`，最终收益率 `+31.8845%`。
+- [x] 2026-05-16 ROO canonical 卖出回放完成：卖出 `1` 次，最终收益率 `+32.7369%`，相对纯持有提升 `+0.846%`。
+- [x] 2026-05-16 重新查链确认 ROO 2 笔买入与 2 笔卖出 receipt 均为 `status=0x1`。
+- [x] 新增通用 live 项目启动编排脚本：`scripts/ops/schedule_launch_services.py`。
+- [x] 新增本地 prewarm systemd 模板：`deploy/systemd/vwr-launch-prewarm@.service`。
+- [x] 新增通用启动编排测试：`scripts/ops/test_schedule_launch_services.py`。
+- [ ] 下一次真实 live 项目使用 `schedule_launch_services.py --project <SYMBOL> --start-at <SERVER_LOCAL_TIME> --apply` 创建启动与归档 timer。
+- [ ] 下一次真实 live 项目结束后，检查 archive `sampleCount/eventCount/ledgerCount`，并确认 `launch-samples-<SYMBOL>.jsonl` 正常增长。

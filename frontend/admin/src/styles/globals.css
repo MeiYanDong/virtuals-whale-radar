@@ -279,6 +279,147 @@
     background: var(--surface-soft-strong);
   }
 
+  .launch-strategy-panel {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .launch-strategy-panel::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 28px;
+    right: 28px;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--primary) 42%, transparent),
+      color-mix(in srgb, var(--warning) 28%, transparent),
+      transparent
+    );
+    opacity: 0.82;
+  }
+
+  .launch-strategy-metric,
+  .launch-strategy-action,
+  .launch-strategy-command-bar,
+  .launch-strategy-fuse,
+  .launch-strategy-input {
+    transition:
+      background-color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      color 180ms ease,
+      transform 180ms ease;
+  }
+
+  .launch-strategy-label {
+    transition:
+      color 180ms ease,
+      transform 180ms ease;
+  }
+
+  .launch-strategy-metric:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+    background-color: var(--surface-soft-strong);
+    box-shadow: 0 16px 34px color-mix(in srgb, var(--primary) 16%, transparent);
+  }
+
+  .launch-strategy-metric:hover .launch-strategy-label {
+    color: color-mix(in srgb, var(--primary) 84%, var(--foreground));
+  }
+
+  .launch-strategy-action {
+    will-change: transform;
+  }
+
+  .launch-strategy-action:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow:
+      0 12px 24px color-mix(in srgb, var(--primary) 15%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #ffffff 28%, transparent);
+  }
+
+  .launch-strategy-action:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+
+  .launch-strategy-action-primary:hover:not(:disabled) {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent),
+      0 16px 34px color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+
+  .launch-strategy-action-danger {
+    border-color: color-mix(in srgb, var(--danger) 72%, var(--border));
+    background-color: color-mix(in srgb, var(--danger-soft) 72%, transparent);
+    color: var(--danger-foreground);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 22%, transparent);
+  }
+
+  .launch-strategy-action-danger:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--danger) 88%, var(--border));
+    background-color: color-mix(in srgb, var(--danger-soft) 92%, transparent);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--danger) 18%, transparent),
+      0 14px 28px color-mix(in srgb, var(--danger) 18%, transparent);
+  }
+
+  .launch-strategy-command-bar:hover {
+    border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
+    background-color: var(--surface-soft-strong);
+    box-shadow: 0 12px 26px color-mix(in srgb, var(--primary) 8%, transparent);
+  }
+
+  .launch-strategy-field:hover .launch-strategy-label,
+  .launch-strategy-field:focus-within .launch-strategy-label {
+    color: color-mix(in srgb, var(--primary) 86%, var(--foreground));
+    transform: translateX(2px);
+  }
+
+  .launch-strategy-field:hover .launch-strategy-input,
+  .launch-strategy-field:focus-within .launch-strategy-input {
+    border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+    background-color: var(--surface-soft-strong);
+    box-shadow:
+      0 10px 24px color-mix(in srgb, var(--primary) 10%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #ffffff 28%, transparent);
+  }
+
+  .launch-strategy-input:focus-visible {
+    transform: translateY(-1px);
+  }
+
+  .launch-strategy-fuse:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 28px color-mix(in srgb, var(--danger) 18%, transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .launch-strategy-metric,
+    .launch-strategy-action,
+    .launch-strategy-command-bar,
+    .launch-strategy-fuse,
+    .launch-strategy-input,
+    .launch-strategy-label {
+      transition: none;
+    }
+
+    .launch-strategy-metric:hover,
+    .launch-strategy-action:hover:not(:disabled),
+    .launch-strategy-action:active:not(:disabled),
+    .launch-strategy-field:hover .launch-strategy-label,
+    .launch-strategy-field:focus-within .launch-strategy-label,
+    .launch-strategy-input:focus-visible,
+    .launch-strategy-fuse:hover {
+      transform: none;
+    }
+  }
+
   .tax-fdv-card {
     position: relative;
     isolation: isolate;

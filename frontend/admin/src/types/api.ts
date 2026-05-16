@@ -377,6 +377,103 @@ export interface ProjectSchedulerStatusResponse {
   items: ProjectSchedulerItem[];
 }
 
+export interface LaunchStrategyRuntimeConfigItem {
+  id: number | null;
+  projectId: number;
+  project: string;
+  strategy: string;
+  ruleName: string;
+  enabled: boolean;
+  mode: "simulate" | "broadcast";
+  baseBuyV: string;
+  dipBuyV: string;
+  dipFromOwnCostPct: string;
+  flatPausePct: string;
+  maxBuyV: string;
+  maxProjectV: string;
+  version: number;
+  updatedByUserId: number | null;
+  updatedReason: string;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+export interface LaunchStrategyRuntimeConfigResponse {
+  ok: boolean;
+  project: {
+    id: number;
+    name: string;
+    status: string;
+    projectedStatus: string;
+    startAt: number;
+    resolvedEndAt: number;
+  };
+  hasOverride: boolean;
+  item: LaunchStrategyRuntimeConfigItem;
+  runtime: {
+    sentProjectV: string;
+    activeFuse?: Record<string, unknown> | null;
+  };
+  audit: Array<{
+    id: number;
+    version: number;
+    updatedByUserId: number | null;
+    updatedReason: string;
+    createdAt: number;
+  }>;
+}
+
+export interface LaunchSellRuntimeConfigItem {
+  id: number | null;
+  projectId: number;
+  project: string;
+  strategy: string;
+  ruleName: string;
+  enabled: boolean;
+  mode: "simulate" | "broadcast";
+  maxTaxRate: string;
+  roiLowPct: string;
+  roiHighPct: string;
+  largeBuyLowV: string;
+  largeBuyHighV: string;
+  sellLowPct: string;
+  sellHighPct: string;
+  cooldownSec: number;
+  catchUpEventsSec: number;
+  version: number;
+  updatedByUserId: number | null;
+  updatedReason: string;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+export interface LaunchSellRuntimeConfigResponse {
+  ok: boolean;
+  project: {
+    id: number;
+    name: string;
+    status: string;
+    projectedStatus: string;
+    startAt: number;
+    resolvedEndAt: number;
+  };
+  hasOverride: boolean;
+  item: LaunchSellRuntimeConfigItem;
+  runtime: {
+    sellCount: number;
+    soldPct: string;
+    lastSellAt: number | null;
+    activeFuse?: Record<string, unknown> | null;
+  };
+  audit: Array<{
+    id: number;
+    version: number;
+    updatedByUserId: number | null;
+    updatedReason: string;
+    createdAt: number;
+  }>;
+}
+
 export interface OverviewBoardItem {
   wallet: string;
   name: string;

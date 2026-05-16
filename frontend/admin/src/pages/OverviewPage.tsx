@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Gauge, LockKeyhole, Pause, Play, RotateCcw, WalletCards } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { Gauge, Info, LockKeyhole, Pause, Play, RotateCcw, WalletCards } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -8,13 +8,19 @@ import { ApiError } from "@/api/client";
 import { dashboardApi } from "@/api/dashboard-api";
 import { queryKeys } from "@/api/query-keys";
 import { useShell } from "@/app/shell-context";
-import { EmptyState, LoadingState, PageHeader } from "@/components/app-primitives";
+import { EmptyState, LoadingState, PageHeader, SectionCard } from "@/components/app-primitives";
 import { ProjectOverviewSections } from "@/components/project-overview-sections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
-import type { OverviewActiveResponse, ProjectLockedResponse, ReplayStatusResponse } from "@/types/api";
+import type {
+  LaunchSellRuntimeConfigResponse,
+  LaunchStrategyRuntimeConfigResponse,
+  OverviewActiveResponse,
+  ProjectLockedResponse,
+  ReplayStatusResponse,
+} from "@/types/api";
 
 function isRealtimeStatus(status: string) {
   return ["prelaunch", "live"].includes(String(status || "").toLowerCase());
@@ -175,6 +181,692 @@ function ReplayControlPanel({
   );
 }
 
+type LaunchStrategyFormState = {
+  enabled: boolean;
+  mode: "simulate" | "broadcast";
+  baseBuyV: string;
+  dipBuyV: string;
+  dipFromOwnCostPct: string;
+  flatPausePct: string;
+  maxBuyV: string;
+  maxProjectV: string;
+  updatedReason: string;
+};
+
+type LaunchSellFormState = {
+  enabled: boolean;
+  mode: "simulate" | "broadcast";
+  maxTaxRate: string;
+  roiLowPct: string;
+  roiHighPct: string;
+  largeBuyLowV: string;
+  largeBuyHighV: string;
+  sellLowPct: string;
+  sellHighPct: string;
+  cooldownSec: string;
+  catchUpEventsSec: string;
+  updatedReason: string;
+};
+
+function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse): LaunchStrategyFormState {
+  const item = data?.item;
+  const baseBuyV = formatEditableNumber(item?.baseBuyV ?? "25");
+  const dipBuyV = formatEditableNumber(item?.dipBuyV ?? "50");
+  const rawMaxBuyV = formatEditableNumber(item?.maxBuyV ?? "50");
+  const baseBuy = parseStrategyInputNumber(baseBuyV);
+  const dipBuy = parseStrategyInputNumber(dipBuyV);
+  const maxBuy = parseStrategyInputNumber(rawMaxBuyV);
+  const maxBuyV =
+    baseBuy !== null && dipBuy !== null && maxBuy !== null
+      ? formatStrategyInputNumber(Math.max(baseBuy, dipBuy, maxBuy))
+      : rawMaxBuyV;
+
+  return {
+    enabled: item?.enabled ?? false,
+    mode: item?.mode ?? "simulate",
+    baseBuyV,
+    dipBuyV,
+    dipFromOwnCostPct: formatEditableNumber(item?.dipFromOwnCostPct ?? "20", 0),
+    flatPausePct: formatEditableNumber(item?.flatPausePct ?? "10", 0),
+    maxBuyV,
+    maxProjectV: formatEditableNumber(item?.maxProjectV ?? "150"),
+    updatedReason: "",
+  };
+}
+
+function formFromLaunchSellConfig(data?: LaunchSellRuntimeConfigResponse): LaunchSellFormState {
+  const item = data?.item;
+  const roiLowPct = formatEditableNumber(item?.roiLowPct ?? "30", 0);
+  const rawRoiHighPct = formatEditableNumber(item?.roiHighPct ?? "50", 0);
+  const largeBuyLowV = formatEditableNumber(item?.largeBuyLowV ?? "5000", 0);
+  const rawLargeBuyHighV = formatEditableNumber(item?.largeBuyHighV ?? "8000", 0);
+  const sellLowPct = formatEditableNumber(item?.sellLowPct ?? "30", 0);
+  const rawSellHighPct = formatEditableNumber(item?.sellHighPct ?? "50", 0);
+  const roiLow = parseStrategyInputNumber(roiLowPct);
+  const roiHigh = parseStrategyInputNumber(rawRoiHighPct);
+  const largeLow = parseStrategyInputNumber(largeBuyLowV);
+  const largeHigh = parseStrategyInputNumber(rawLargeBuyHighV);
+  const sellLow = parseStrategyInputNumber(sellLowPct);
+  const sellHigh = parseStrategyInputNumber(rawSellHighPct);
+
+  return {
+    enabled: item?.enabled ?? false,
+    mode: item?.mode ?? "simulate",
+    maxTaxRate: formatEditableNumber(item?.maxTaxRate ?? "30", 0),
+    roiLowPct,
+    roiHighPct:
+      roiLow !== null && roiHigh !== null ? formatStrategyInputNumber(Math.max(roiLow, roiHigh)) : rawRoiHighPct,
+    largeBuyLowV,
+    largeBuyHighV:
+      largeLow !== null && largeHigh !== null
+        ? formatStrategyInputNumber(Math.max(largeLow, largeHigh))
+        : rawLargeBuyHighV,
+    sellLowPct,
+    sellHighPct:
+      sellLow !== null && sellHigh !== null
+        ? formatStrategyInputNumber(Math.max(sellLow, sellHigh))
+        : rawSellHighPct,
+    cooldownSec: formatEditableNumber(item?.cooldownSec ?? 60, 0),
+    catchUpEventsSec: formatEditableNumber(item?.catchUpEventsSec ?? 120, 0),
+    updatedReason: "",
+  };
+}
+
+function formatEditableNumber(value: string | number | null | undefined, maximumFractionDigits = 4) {
+  const parsed = Number(value ?? "");
+  if (!Number.isFinite(parsed)) return String(value ?? "");
+  return parsed.toLocaleString("en-US", {
+    maximumFractionDigits,
+    useGrouping: false,
+  });
+}
+
+function formatConfigValue(value: string | number | null | undefined, suffix = "", maximumFractionDigits = 4) {
+  const parsed = Number(value ?? "");
+  if (!Number.isFinite(parsed)) return "-";
+  return `${parsed.toLocaleString(undefined, { maximumFractionDigits })}${suffix}`;
+}
+
+function parseStrategyInputNumber(value: string | number | null | undefined) {
+  const parsed = Number(value ?? "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatStrategyInputNumber(value: number) {
+  return formatEditableNumber(value, 4);
+}
+
+function normalizeLaunchStrategyFormForSubmit(form: LaunchStrategyFormState): LaunchStrategyFormState {
+  const baseBuy = parseStrategyInputNumber(form.baseBuyV);
+  const dipBuy = parseStrategyInputNumber(form.dipBuyV);
+  const maxBuy = parseStrategyInputNumber(form.maxBuyV);
+  const next = { ...form };
+
+  if (baseBuy !== null && dipBuy !== null && maxBuy !== null) {
+    const requiredMaxBuy = Math.max(baseBuy, dipBuy, maxBuy);
+    next.maxBuyV = formatStrategyInputNumber(requiredMaxBuy);
+  }
+
+  return next;
+}
+
+function normalizeLaunchSellFormForSubmit(form: LaunchSellFormState): LaunchSellFormState {
+  const roiLow = parseStrategyInputNumber(form.roiLowPct);
+  const roiHigh = parseStrategyInputNumber(form.roiHighPct);
+  const largeLow = parseStrategyInputNumber(form.largeBuyLowV);
+  const largeHigh = parseStrategyInputNumber(form.largeBuyHighV);
+  const sellLow = parseStrategyInputNumber(form.sellLowPct);
+  const sellHigh = parseStrategyInputNumber(form.sellHighPct);
+  const next = { ...form };
+
+  if (roiLow !== null && roiHigh !== null) next.roiHighPct = formatStrategyInputNumber(Math.max(roiLow, roiHigh));
+  if (largeLow !== null && largeHigh !== null) next.largeBuyHighV = formatStrategyInputNumber(Math.max(largeLow, largeHigh));
+  if (sellLow !== null && sellHigh !== null) next.sellHighPct = formatStrategyInputNumber(Math.max(sellLow, sellHigh));
+
+  return next;
+}
+
+function applyLaunchStrategyPatch(
+  current: LaunchStrategyFormState,
+  patch: Partial<LaunchStrategyFormState>,
+): Partial<LaunchStrategyFormState> {
+  const next = { ...current, ...patch };
+  const baseBuy = parseStrategyInputNumber(next.baseBuyV);
+  const dipBuy = parseStrategyInputNumber(next.dipBuyV);
+  const maxBuy = parseStrategyInputNumber(next.maxBuyV);
+
+  if ((patch.baseBuyV !== undefined || patch.dipBuyV !== undefined) && baseBuy !== null && dipBuy !== null && maxBuy !== null) {
+    const requiredMaxBuy = Math.max(baseBuy, dipBuy, maxBuy);
+    if (requiredMaxBuy > maxBuy) {
+      return { ...patch, maxBuyV: formatStrategyInputNumber(requiredMaxBuy) };
+    }
+  }
+
+  return patch;
+}
+
+function applyLaunchSellPatch(
+  current: LaunchSellFormState,
+  patch: Partial<LaunchSellFormState>,
+): Partial<LaunchSellFormState> {
+  const next = { ...current, ...patch };
+  const roiLow = parseStrategyInputNumber(next.roiLowPct);
+  const roiHigh = parseStrategyInputNumber(next.roiHighPct);
+  const largeLow = parseStrategyInputNumber(next.largeBuyLowV);
+  const largeHigh = parseStrategyInputNumber(next.largeBuyHighV);
+  const sellLow = parseStrategyInputNumber(next.sellLowPct);
+  const sellHigh = parseStrategyInputNumber(next.sellHighPct);
+  const out: Partial<LaunchSellFormState> = { ...patch };
+
+  if (patch.roiLowPct !== undefined && roiLow !== null && roiHigh !== null && roiLow > roiHigh) {
+    out.roiHighPct = formatStrategyInputNumber(roiLow);
+  }
+  if (patch.largeBuyLowV !== undefined && largeLow !== null && largeHigh !== null && largeLow > largeHigh) {
+    out.largeBuyHighV = formatStrategyInputNumber(largeLow);
+  }
+  if (patch.sellLowPct !== undefined && sellLow !== null && sellHigh !== null && sellLow > sellHigh) {
+    out.sellHighPct = formatStrategyInputNumber(sellLow);
+  }
+
+  return out;
+}
+
+function friendlyLaunchStrategyError(error: Error) {
+  const message = error.message || "";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("basebuyv") && normalized.includes("maxbuyv")) {
+    return "基础买入不能高于单笔上限。";
+  }
+  if (normalized.includes("dipbuyv") && normalized.includes("maxbuyv")) {
+    return "抄底买入不能高于单笔上限。";
+  }
+  if (normalized.includes("maxprojectv") && normalized.includes("already sent")) {
+    return "项目预算不能低于已买入金额。";
+  }
+  if (normalized.includes("must be positive")) {
+    return "买入金额和预算必须大于 0。";
+  }
+  if (normalized.includes("cannot be negative")) {
+    return "参数不能为负数。";
+  }
+  if (normalized.includes("cannot exceed 100")) {
+    return "百分比不能超过 100%。";
+  }
+  if (error instanceof ApiError) {
+    return "自动买入配置保存失败，请检查参数。";
+  }
+  return message || "自动买入配置保存失败。";
+}
+
+function friendlyLaunchSellError(error: Error) {
+  const message = error.message || "";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("roihighpct") && normalized.includes("roilowpct")) {
+    return "收益率二档不能低于一档。";
+  }
+  if (normalized.includes("largebuyhighv") && normalized.includes("largebuylowv")) {
+    return "大单二档不能低于一档。";
+  }
+  if (normalized.includes("sellhighpct") && normalized.includes("selllowpct")) {
+    return "卖出二档不能低于一档。";
+  }
+  if (normalized.includes("cannot exceed 100")) {
+    return "税率和卖出比例不能超过 100%。";
+  }
+  if (normalized.includes("must be positive")) {
+    return "大单回看和大单门槛必须大于 0。";
+  }
+  if (normalized.includes("cannot be negative")) {
+    return "参数不能为负数。";
+  }
+  if (error instanceof ApiError) {
+    return "自动卖出配置保存失败，请检查参数。";
+  }
+  return message || "自动卖出配置保存失败。";
+}
+
+const strategyMetricCardClass =
+  "launch-strategy-metric rounded-[22px] border border-border bg-[color:var(--surface-soft)] px-4 py-4";
+const strategyActionClass = "launch-strategy-action";
+const strategyFieldClass = "launch-strategy-field space-y-2";
+const strategyLabelClass =
+  "launch-strategy-label text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground";
+const strategyInputClass = "launch-strategy-input";
+const defaultStrategyPatch: Partial<LaunchStrategyFormState> = {
+  baseBuyV: "25",
+  dipBuyV: "50",
+  dipFromOwnCostPct: "20",
+  flatPausePct: "10",
+  maxBuyV: "50",
+  maxProjectV: "150",
+};
+const defaultSellPatch: Partial<LaunchSellFormState> = {
+  maxTaxRate: "30",
+  roiLowPct: "30",
+  roiHighPct: "50",
+  largeBuyLowV: "5000",
+  largeBuyHighV: "8000",
+  sellLowPct: "30",
+  sellHighPct: "50",
+  cooldownSec: "60",
+  catchUpEventsSec: "120",
+};
+
+function StrategyInfoHint({ label }: { label: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        className="inline-flex size-5 shrink-0 cursor-help items-center justify-center rounded-full text-muted-foreground transition hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+      >
+        <Info className="size-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-[14px] border border-border bg-popover px-3 py-2 text-left text-xs font-normal leading-5 tracking-normal text-foreground opacity-0 shadow-[var(--shadow-soft)] transition duration-150 group-focus-within:opacity-100 group-hover:opacity-100 sm:w-80"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+function StrategyFieldLabel({
+  label,
+  unit,
+  hint,
+}: {
+  label: string;
+  unit: string;
+  hint?: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className={strategyLabelClass}>{label}</span>
+        {hint ? <StrategyInfoHint label={hint} /> : null}
+      </div>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+        {unit}
+      </span>
+    </div>
+  );
+}
+
+function LaunchStrategyControlPanel({
+  data,
+  form,
+  pending,
+  onChange,
+  onSave,
+}: {
+  data?: LaunchStrategyRuntimeConfigResponse;
+  form: LaunchStrategyFormState;
+  pending: boolean;
+  onChange: (patch: Partial<LaunchStrategyFormState>) => void;
+  onSave: (mode: "broadcast" | "disabled") => void;
+}) {
+  const item = data?.item;
+  const activeFuse = data?.runtime.activeFuse;
+  const statusVariant = form.enabled ? "success" : "secondary";
+  const statusLabel = form.enabled ? "已启用" : "未启用";
+  const lastAudit = data?.audit[0];
+
+  return (
+    <SectionCard
+      className="launch-strategy-panel overflow-hidden border-primary/20"
+      title="自动买入控制"
+      description="管理员运行时参数。保存后由自动买入执行器热读取；真实广播仍受独立 RPC、熔断和系统门禁保护。"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={statusVariant}>{statusLabel}</Badge>
+          <Badge variant="secondary">版本 {item?.version ?? 0}</Badge>
+        </div>
+      }
+    >
+      <div className="launch-strategy-control grid gap-4 xl:grid-cols-[0.62fr_1.38fr]">
+        <div className="space-y-3">
+          <div className={strategyMetricCardClass}>
+            <div className={strategyLabelClass}>已买入</div>
+            <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">
+              {formatConfigValue(data?.runtime.sentProjectV ?? "0", " V")}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">自动买入已成交总额</div>
+          </div>
+          {activeFuse ? (
+            <div className="launch-strategy-fuse rounded-[22px] border border-[color:var(--danger)] bg-[color:var(--danger-soft)] px-4 py-4 text-sm text-[color:var(--danger-foreground)]">
+              当前存在 active fuse，执行器会阻断广播。
+            </div>
+          ) : null}
+        </div>
+
+        <div className="space-y-4">
+          <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              <div className={strategyLabelClass}>参数设置</div>
+              <div className="text-sm text-muted-foreground">保存后自动买入执行器会热读取这些参数。</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className={strategyActionClass}
+                onClick={() => onChange(defaultStrategyPatch)}
+              >
+                恢复默认
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="launch-strategy-action launch-strategy-action-danger"
+                onClick={() => onSave("disabled")}
+                disabled={pending}
+              >
+                停用自动买入
+              </Button>
+              <Button
+                type="button"
+                className="launch-strategy-action launch-strategy-action-primary"
+                onClick={() => onSave("broadcast")}
+                disabled={pending}
+              >
+                保存并启用
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="基础买入" unit="VIRTUAL" />
+              <Input
+                className={strategyInputClass}
+                inputMode="decimal"
+                aria-label="基础买入，单位 VIRTUAL"
+                value={form.baseBuyV}
+                onChange={(event) => onChange(applyLaunchStrategyPatch(form, { baseBuyV: event.target.value }))}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="抄底买入" unit="VIRTUAL" />
+              <Input
+                className={strategyInputClass}
+                inputMode="decimal"
+                aria-label="抄底买入，单位 VIRTUAL"
+                value={form.dipBuyV}
+                onChange={(event) => onChange(applyLaunchStrategyPatch(form, { dipBuyV: event.target.value }))}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="单笔上限" unit="VIRTUAL" />
+              <Input
+                className={strategyInputClass}
+                inputMode="decimal"
+                aria-label="单笔上限，单位 VIRTUAL"
+                value={form.maxBuyV}
+                onChange={(event) => onChange({ maxBuyV: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="项目预算" unit="VIRTUAL" />
+              <Input
+                className={strategyInputClass}
+                inputMode="decimal"
+                aria-label="项目预算，单位 VIRTUAL"
+                value={form.maxProjectV}
+                onChange={(event) => onChange({ maxProjectV: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="抄底阈值"
+                unit="%"
+                hint="当当前含税估算 FDV 低于我方历史加权买入 FDV 这个比例以上时，下一次满足买入条件会使用抄底买入金额。默认 20%，表示比我方成本低 20% 才加大买入。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="抄底阈值，单位百分比"
+                value={form.dipFromOwnCostPct}
+                onChange={(event) => onChange({ dipFromOwnCostPct: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="横盘跳过"
+                unit="%"
+                hint="某税率档买入后，如果下一相邻税率档的含税估算 FDV 相对上一买点变化不超过这个比例，就跳过这一档；只跳过一次，下一档会重新判断。默认 10%。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="横盘跳过，单位百分比"
+                value={form.flatPausePct}
+                onChange={(event) => onChange({ flatPausePct: event.target.value })}
+              />
+            </div>
+          </div>
+
+          {lastAudit ? (
+            <div className="text-xs text-muted-foreground">
+              上次调整：版本 {lastAudit.version} / {formatDateTime(lastAudit.createdAt)}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function LaunchSellControlPanel({
+  data,
+  form,
+  pending,
+  onChange,
+  onSave,
+}: {
+  data?: LaunchSellRuntimeConfigResponse;
+  form: LaunchSellFormState;
+  pending: boolean;
+  onChange: (patch: Partial<LaunchSellFormState>) => void;
+  onSave: (mode: "broadcast" | "disabled") => void;
+}) {
+  const item = data?.item;
+  const activeFuse = data?.runtime.activeFuse;
+  const statusVariant = form.enabled ? "success" : "secondary";
+  const statusLabel = form.enabled ? "已启用" : "未启用";
+  const lastAudit = data?.audit[0];
+
+  return (
+    <SectionCard
+      className="launch-strategy-panel overflow-hidden border-border"
+      title="自动卖出控制"
+      description="管理员运行时参数。保存后由自动卖出执行器热读取；真实广播仍受独立 RPC、熔断、授权和系统门禁保护。"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={statusVariant}>{statusLabel}</Badge>
+          <Badge variant="secondary">版本 {item?.version ?? 0}</Badge>
+        </div>
+      }
+    >
+      <div className="launch-strategy-control grid gap-4 xl:grid-cols-[0.62fr_1.38fr]">
+        <div className="space-y-3">
+          <div className={strategyMetricCardClass}>
+            <div className={strategyLabelClass}>已卖出目标</div>
+            <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">
+              {formatConfigValue(data?.runtime.soldPct ?? "0", "%", 2)}
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              成功卖出 {data?.runtime.sellCount ?? 0} 次
+              {data?.runtime.lastSellAt ? ` / 最近 ${formatDateTime(data.runtime.lastSellAt)}` : ""}
+            </div>
+          </div>
+          {activeFuse ? (
+            <div className="launch-strategy-fuse rounded-[22px] border border-[color:var(--danger)] bg-[color:var(--danger-soft)] px-4 py-4 text-sm text-[color:var(--danger-foreground)]">
+              当前存在 active fuse，自动卖出会阻断广播。
+            </div>
+          ) : null}
+        </div>
+
+        <div className="space-y-4">
+          <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              <div className={strategyLabelClass}>卖出规则</div>
+              <div className="text-sm text-muted-foreground">收益率和大单买入必须同时满足，才会触发自动卖出。</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className={strategyActionClass}
+                onClick={() => onChange(defaultSellPatch)}
+              >
+                恢复默认
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="launch-strategy-action launch-strategy-action-danger"
+                onClick={() => onSave("disabled")}
+                disabled={pending}
+              >
+                停用自动卖出
+              </Button>
+              <Button
+                type="button"
+                className="launch-strategy-action launch-strategy-action-primary"
+                onClick={() => onSave("broadcast")}
+                disabled={pending}
+              >
+                保存并启用
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="税率窗口"
+                unit="%"
+                hint="只有当前买入税率低于或等于这个数值时，自动卖出才开始观察。默认 30%。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="自动卖出税率窗口，单位百分比"
+                value={form.maxTaxRate}
+                onChange={(event) => onChange({ maxTaxRate: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="收益率一档"
+                unit="%"
+                hint="我方持仓按当前现货 FDV 估算的收益率达到这一档，且同时出现一档大单买入时，卖出一档比例。默认 30%。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="收益率一档，单位百分比"
+                value={form.roiLowPct}
+                onChange={(event) => onChange(applyLaunchSellPatch(form, { roiLowPct: event.target.value }))}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="收益率二档" unit="%" />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="收益率二档，单位百分比"
+                value={form.roiHighPct}
+                onChange={(event) => onChange({ roiHighPct: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="大单一档"
+                unit="VIRTUAL"
+                hint="税率窗口内最近回看时间里，单笔买入达到这个数量，并且收益率也达到一档，才会卖出一档比例。默认 5,000 VIRTUAL。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="大单一档，单位 VIRTUAL"
+                value={form.largeBuyLowV}
+                onChange={(event) => onChange(applyLaunchSellPatch(form, { largeBuyLowV: event.target.value }))}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="大单二档" unit="VIRTUAL" />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="大单二档，单位 VIRTUAL"
+                value={form.largeBuyHighV}
+                onChange={(event) => onChange({ largeBuyHighV: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="大单回看"
+                unit="秒"
+                hint="每轮判断只看最近这段时间内尚未处理过的大单买入，避免很久以前的大单反复触发。默认 120 秒。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="大单回看，单位秒"
+                value={form.catchUpEventsSec}
+                onChange={(event) => onChange({ catchUpEventsSec: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="卖出一档" unit="%" />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="卖出一档，单位百分比"
+                value={form.sellLowPct}
+                onChange={(event) => onChange(applyLaunchSellPatch(form, { sellLowPct: event.target.value }))}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel label="卖出二档" unit="%" />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="卖出二档，单位百分比"
+                value={form.sellHighPct}
+                onChange={(event) => onChange({ sellHighPct: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="冷却"
+                unit="秒"
+                hint="成功卖出后，在这段时间内不再触发新的自动卖出，避免同一波行情连续广播。默认 60 秒。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="自动卖出冷却时间，单位秒"
+                value={form.cooldownSec}
+                onChange={(event) => onChange({ cooldownSec: event.target.value })}
+              />
+            </div>
+          </div>
+
+          {lastAudit ? (
+            <div className="text-xs text-muted-foreground">
+              上次调整：版本 {lastAudit.version} / {formatDateTime(lastAudit.createdAt)}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 function confirmProjectUnlock(projectName: string, unlockCost: number) {
   return window.confirm(
     `解锁 ${projectName} 的项目详情将消耗 ${unlockCost} 积分，解锁后以后都能直接查看。确认继续吗？`,
@@ -229,6 +921,110 @@ export function OverviewPage() {
   const lockedProject = lockedDetails?.project ?? null;
   const targetProjectId = detailProjectId ?? lockedProject?.id ?? 0;
   const currentProjectName = overviewQuery.data?.item?.name ?? lockedProject?.name ?? "";
+  const [launchStrategyDraft, setLaunchStrategyDraft] = useState<Partial<LaunchStrategyFormState>>({});
+  const [launchSellDraft, setLaunchSellDraft] = useState<Partial<LaunchSellFormState>>({});
+
+  const launchStrategyConfigQuery = useQuery({
+    queryKey: detailProjectId ? queryKeys.adminLaunchStrategyConfig(detailProjectId) : ["admin-launch-strategy-config", 0],
+    queryFn: () => dashboardApi.admin.getLaunchStrategyConfig(detailProjectId || 0),
+    enabled: viewer === "admin" && isProjectDetailView && detailProjectId !== null,
+  });
+
+  const launchSellConfigQuery = useQuery({
+    queryKey: detailProjectId ? queryKeys.adminLaunchSellConfig(detailProjectId) : ["admin-launch-sell-config", 0],
+    queryFn: () => dashboardApi.admin.getLaunchSellConfig(detailProjectId || 0),
+    enabled: viewer === "admin" && isProjectDetailView && detailProjectId !== null,
+    refetchInterval: 5_000,
+  });
+
+  const launchStrategyForm = useMemo(
+    () => ({
+      ...formFromLaunchStrategyConfig(launchStrategyConfigQuery.data),
+      ...launchStrategyDraft,
+    }),
+    [launchStrategyConfigQuery.data, launchStrategyDraft],
+  );
+
+  const launchSellForm = useMemo(
+    () => ({
+      ...formFromLaunchSellConfig(launchSellConfigQuery.data),
+      ...launchSellDraft,
+    }),
+    [launchSellConfigQuery.data, launchSellDraft],
+  );
+
+  const launchStrategyConfigMutation = useMutation({
+    mutationFn: async (payload: LaunchStrategyFormState) => {
+      if (!detailProjectId) {
+        throw new Error("当前没有可配置的项目。");
+      }
+      return dashboardApi.admin.setLaunchStrategyConfig(detailProjectId, payload);
+    },
+    onSuccess: async () => {
+      setLaunchStrategyDraft({});
+      toast.success("自动买入配置已保存。");
+      if (detailProjectId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.adminLaunchStrategyConfig(detailProjectId) });
+      }
+    },
+    onError: (error: Error) => toast.error(friendlyLaunchStrategyError(error)),
+  });
+
+  const launchSellConfigMutation = useMutation({
+    mutationFn: async (payload: LaunchSellFormState) => {
+      if (!detailProjectId) {
+        throw new Error("当前没有可配置的项目。");
+      }
+      return dashboardApi.admin.setLaunchSellConfig(detailProjectId, payload);
+    },
+    onSuccess: async () => {
+      setLaunchSellDraft({});
+      toast.success("自动卖出配置已保存。");
+      if (detailProjectId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.adminLaunchSellConfig(detailProjectId) });
+      }
+    },
+    onError: (error: Error) => toast.error(friendlyLaunchSellError(error)),
+  });
+
+  const saveLaunchStrategyConfig = (mode: "broadcast" | "disabled") => {
+    const next: LaunchStrategyFormState = {
+      ...normalizeLaunchStrategyFormForSubmit(launchStrategyForm),
+      enabled: mode !== "disabled",
+      mode: mode === "broadcast" ? "broadcast" : "simulate",
+      updatedReason:
+        launchStrategyForm.updatedReason.trim() ||
+        (mode === "broadcast" ? "管理员手动保存并启用自动买入" : "管理员手动停用自动买入"),
+    };
+    if (mode === "disabled" && !window.confirm("确认停用自动买入？")) return;
+    if (mode === "broadcast") {
+      const base = Number(next.baseBuyV);
+      const dip = Number(next.dipBuyV);
+      const message =
+        base >= 100 || dip >= 200
+          ? `将以 ${next.baseBuyV} / ${next.dipBuyV} VIRTUAL 作为买入金额，并启用自动买入。确认继续？`
+          : "保存后会按当前参数启用自动买入。确认继续？";
+      if (!window.confirm(message)) return;
+    }
+    launchStrategyConfigMutation.mutate(next);
+  };
+
+  const saveLaunchSellConfig = (mode: "broadcast" | "disabled") => {
+    const next: LaunchSellFormState = {
+      ...normalizeLaunchSellFormForSubmit(launchSellForm),
+      enabled: mode !== "disabled",
+      mode: mode === "broadcast" ? "broadcast" : "simulate",
+      updatedReason:
+        launchSellForm.updatedReason.trim() ||
+        (mode === "broadcast" ? "管理员手动保存并启用自动卖出" : "管理员手动停用自动卖出"),
+    };
+    if (mode === "disabled" && !window.confirm("确认停用自动卖出？")) return;
+    if (mode === "broadcast") {
+      const message = `将启用自动卖出：税率 <= ${next.maxTaxRate}%，收益率 ${next.roiLowPct}/${next.roiHighPct}%，大单 ${next.largeBuyLowV}/${next.largeBuyHighV} VIRTUAL。确认继续？`;
+      if (!window.confirm(message)) return;
+    }
+    launchSellConfigMutation.mutate(next);
+  };
 
   const teamOverrideMutation = useMutation({
     mutationFn: async (payload: {
@@ -640,6 +1436,25 @@ export function OverviewPage() {
         />
 
         {replayControl}
+
+        {viewer === "admin" ? (
+          <>
+            <LaunchStrategyControlPanel
+              data={launchStrategyConfigQuery.data}
+              form={launchStrategyForm}
+              pending={launchStrategyConfigMutation.isPending}
+              onChange={(patch) => setLaunchStrategyDraft((prev) => ({ ...prev, ...patch }))}
+              onSave={saveLaunchStrategyConfig}
+            />
+            <LaunchSellControlPanel
+              data={launchSellConfigQuery.data}
+              form={launchSellForm}
+              pending={launchSellConfigMutation.isPending}
+              onChange={(patch) => setLaunchSellDraft((prev) => ({ ...prev, ...patch }))}
+              onSave={saveLaunchSellConfig}
+            />
+          </>
+        ) : null}
 
         <ProjectOverviewSections
           item={detailItem}

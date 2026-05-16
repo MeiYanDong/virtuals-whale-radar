@@ -202,6 +202,33 @@ def parse_required_int(value: Any, field_name: str) -> int:
         raise ValueError(f"{field_name} must be integer") from exc
 
 
+def parse_strategy_decimal(value: Any, field_name: str, default: Optional[Decimal] = None) -> Decimal:
+    if value is None or str(value).strip() == "":
+        if default is not None:
+            return default
+        raise ValueError(f"{field_name} is required")
+    try:
+        parsed = Decimal(str(value).strip())
+    except Exception as exc:
+        raise ValueError(f"{field_name} must be decimal") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{field_name} must be finite")
+    return parsed
+
+
+def parse_named_bool(value: Any, field_name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return int(value) != 0
+    raw = str(value).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"{field_name} must be boolean")
+
+
 def normalize_billing_request_status(value: Any) -> str:
     status = str(value or "").strip().lower() or "pending_review"
     if status not in BILLING_REQUEST_STATUSES:
@@ -273,6 +300,25 @@ EVENT_INT_FIELDS = {"block_number", "block_timestamp"}
 EVENT_BOOL_FIELDS = {"is_my_wallet", "anomaly", "is_price_stale"}
 VIRTUALS_DIRECT_BUY_ROUTER = "0x1a540088125d00dd3990f9da45ca0859af4d3b01"
 VIRTUALS_TEAM_INITIALIZATION_SELECTOR = "0x214013ca"
+DEFAULT_LAUNCH_BUY_STRATEGY = "dynamic_25v_dip20_after1_flat10_no_cap"
+DEFAULT_LAUNCH_BUY_RULE = "gate_5k_tax95_fdv_one_per_tax"
+DEFAULT_LAUNCH_BASE_BUY_V = Decimal("25")
+DEFAULT_LAUNCH_DIP_BUY_V = Decimal("50")
+DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT = Decimal("20")
+DEFAULT_LAUNCH_FLAT_PAUSE_PCT = Decimal("10")
+DEFAULT_LAUNCH_MAX_BUY_V = Decimal("50")
+DEFAULT_LAUNCH_MAX_PROJECT_V = Decimal("150")
+DEFAULT_LAUNCH_SELL_STRATEGY = "dual_roi_large_buy_sell"
+DEFAULT_LAUNCH_SELL_RULE = "dual_roi_large_buy_sell"
+DEFAULT_LAUNCH_SELL_MAX_TAX_RATE = Decimal("30")
+DEFAULT_LAUNCH_SELL_ROI_LOW_PCT = Decimal("30")
+DEFAULT_LAUNCH_SELL_ROI_HIGH_PCT = Decimal("50")
+DEFAULT_LAUNCH_SELL_LARGE_BUY_LOW_V = Decimal("5000")
+DEFAULT_LAUNCH_SELL_LARGE_BUY_HIGH_V = Decimal("8000")
+DEFAULT_LAUNCH_SELL_SELL_LOW_PCT = Decimal("30")
+DEFAULT_LAUNCH_SELL_SELL_HIGH_PCT = Decimal("50")
+DEFAULT_LAUNCH_SELL_COOLDOWN_SEC = 60
+DEFAULT_LAUNCH_SELL_CATCH_UP_EVENTS_SEC = 120
 MANAGED_PROJECT_STATUSES = {"draft", "scheduled", "prelaunch", "live", "ended", "removed"}
 PROJECT_PRELAUNCH_LEAD_SEC = 30 * 60
 PROJECT_SCHEDULER_INTERVAL_SEC = 30
@@ -1515,6 +1561,99 @@ class Storage:
 
             CREATE INDEX IF NOT EXISTS idx_launch_execution_fuses_project_time
                 ON launch_execution_fuses(project, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS launch_strategy_runtime_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL UNIQUE,
+                project TEXT NOT NULL,
+                strategy TEXT NOT NULL DEFAULT 'dynamic_25v_dip20_after1_flat10_no_cap',
+                rule_name TEXT NOT NULL DEFAULT 'gate_5k_tax95_fdv_one_per_tax',
+                enabled INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT 'simulate',
+                base_buy_v TEXT NOT NULL DEFAULT '25',
+                dip_buy_v TEXT NOT NULL DEFAULT '50',
+                dip_from_own_cost_pct TEXT NOT NULL DEFAULT '20',
+                flat_pause_pct TEXT NOT NULL DEFAULT '10',
+                max_buy_v TEXT NOT NULL DEFAULT '50',
+                max_project_v TEXT NOT NULL DEFAULT '150',
+                version INTEGER NOT NULL DEFAULT 1,
+                updated_by_user_id INTEGER,
+                updated_reason TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES managed_projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_strategy_runtime_configs_project
+                ON launch_strategy_runtime_configs(project);
+
+            CREATE TABLE IF NOT EXISTS launch_strategy_runtime_config_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                project TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                before_json TEXT NOT NULL DEFAULT '{}',
+                after_json TEXT NOT NULL DEFAULT '{}',
+                updated_by_user_id INTEGER,
+                updated_reason TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES managed_projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_strategy_runtime_config_audit_project
+                ON launch_strategy_runtime_config_audit(project_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS launch_sell_runtime_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL UNIQUE,
+                project TEXT NOT NULL,
+                strategy TEXT NOT NULL DEFAULT 'dual_roi_large_buy_sell',
+                rule_name TEXT NOT NULL DEFAULT 'dual_roi_large_buy_sell',
+                enabled INTEGER NOT NULL DEFAULT 0,
+                mode TEXT NOT NULL DEFAULT 'simulate',
+                max_tax_rate TEXT NOT NULL DEFAULT '30',
+                roi_low_pct TEXT NOT NULL DEFAULT '30',
+                roi_high_pct TEXT NOT NULL DEFAULT '50',
+                large_buy_low_v TEXT NOT NULL DEFAULT '5000',
+                large_buy_high_v TEXT NOT NULL DEFAULT '8000',
+                sell_low_pct TEXT NOT NULL DEFAULT '30',
+                sell_high_pct TEXT NOT NULL DEFAULT '50',
+                cooldown_sec INTEGER NOT NULL DEFAULT 60,
+                catch_up_events_sec INTEGER NOT NULL DEFAULT 120,
+                version INTEGER NOT NULL DEFAULT 1,
+                updated_by_user_id INTEGER,
+                updated_reason TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES managed_projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_sell_runtime_configs_project
+                ON launch_sell_runtime_configs(project);
+
+            CREATE TABLE IF NOT EXISTS launch_sell_runtime_config_audit (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                project TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                rule_name TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                before_json TEXT NOT NULL DEFAULT '{}',
+                after_json TEXT NOT NULL DEFAULT '{}',
+                updated_by_user_id INTEGER,
+                updated_reason TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES managed_projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_sell_runtime_config_audit_project
+                ON launch_sell_runtime_config_audit(project_id, created_at DESC);
             """
         )
         self._ensure_column("monitored_wallets", "name", "TEXT NOT NULL DEFAULT ''")
@@ -1950,6 +2089,597 @@ class Storage:
             (*params, bounded_limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_launch_strategy_runtime_config(self, project_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_strategy_runtime_configs
+            WHERE project_id = ?
+            """,
+            (int(project_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_launch_strategy_runtime_config_by_project(self, project: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_strategy_runtime_configs
+            WHERE lower(project) = lower(?)
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (str(project or "").strip(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_launch_strategy_runtime_config_audit(
+        self,
+        project_id: int,
+        *,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 100))
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_strategy_runtime_config_audit
+            WHERE project_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (int(project_id), bounded_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def sum_launch_execution_sent_buy_v(
+        self,
+        *,
+        project: str,
+        strategy: str = DEFAULT_LAUNCH_BUY_STRATEGY,
+        rule_name: str = DEFAULT_LAUNCH_BUY_RULE,
+    ) -> Decimal:
+        rows = self.conn.execute(
+            """
+            SELECT buy_size_v
+            FROM launch_execution_ledger
+            WHERE project = ?
+              AND strategy = ?
+              AND rule_name = ?
+              AND action = 'would_buy'
+              AND trade_sent = 1
+            """,
+            (str(project or "").strip(), str(strategy or "").strip(), str(rule_name or "").strip()),
+        ).fetchall()
+        total = Decimal("0")
+        for row in rows:
+            with contextlib.suppress(Exception):
+                total += Decimal(str(row["buy_size_v"] or "0"))
+        return total
+
+    def default_launch_strategy_runtime_config(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": None,
+            "project_id": int(project_row["id"]),
+            "project": str(project_row.get("name") or "").strip(),
+            "strategy": DEFAULT_LAUNCH_BUY_STRATEGY,
+            "rule_name": DEFAULT_LAUNCH_BUY_RULE,
+            "enabled": 0,
+            "mode": "simulate",
+            "base_buy_v": decimal_to_str(DEFAULT_LAUNCH_BASE_BUY_V, 6),
+            "dip_buy_v": decimal_to_str(DEFAULT_LAUNCH_DIP_BUY_V, 6),
+            "dip_from_own_cost_pct": decimal_to_str(DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT, 6),
+            "flat_pause_pct": decimal_to_str(DEFAULT_LAUNCH_FLAT_PAUSE_PCT, 6),
+            "max_buy_v": decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6),
+            "max_project_v": decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6),
+            "version": 0,
+            "updated_by_user_id": None,
+            "updated_reason": "",
+            "created_at": None,
+            "updated_at": None,
+        }
+
+    def effective_launch_strategy_runtime_config(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
+        return self.get_launch_strategy_runtime_config(int(project_row["id"])) or self.default_launch_strategy_runtime_config(project_row)
+
+    def normalize_launch_strategy_runtime_config_payload(
+        self,
+        payload: Dict[str, Any],
+        *,
+        project_row: Dict[str, Any],
+        current: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        baseline = current or self.default_launch_strategy_runtime_config(project_row)
+        strategy = str(payload.get("strategy") or baseline.get("strategy") or DEFAULT_LAUNCH_BUY_STRATEGY).strip()
+        rule_name = str(payload.get("ruleName") or payload.get("rule_name") or baseline.get("rule_name") or DEFAULT_LAUNCH_BUY_RULE).strip()
+        if not strategy:
+            raise ValueError("strategy is required")
+        if not rule_name:
+            raise ValueError("ruleName is required")
+
+        mode = str(payload.get("mode") or baseline.get("mode") or "simulate").strip().lower()
+        if mode not in {"simulate", "broadcast"}:
+            raise ValueError("mode must be simulate or broadcast")
+
+        enabled = parse_named_bool(payload.get("enabled", bool(int(baseline.get("enabled") or 0))), "enabled")
+        base_buy_v = parse_strategy_decimal(
+            payload.get("baseBuyV", payload.get("base_buy_v", baseline.get("base_buy_v"))),
+            "baseBuyV",
+            DEFAULT_LAUNCH_BASE_BUY_V,
+        )
+        dip_buy_v = parse_strategy_decimal(
+            payload.get("dipBuyV", payload.get("dip_buy_v", baseline.get("dip_buy_v"))),
+            "dipBuyV",
+            DEFAULT_LAUNCH_DIP_BUY_V,
+        )
+        dip_from_own_cost_pct = parse_strategy_decimal(
+            payload.get(
+                "dipFromOwnCostPct",
+                payload.get("dip_from_own_cost_pct", baseline.get("dip_from_own_cost_pct")),
+            ),
+            "dipFromOwnCostPct",
+            DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT,
+        )
+        flat_pause_pct = parse_strategy_decimal(
+            payload.get("flatPausePct", payload.get("flat_pause_pct", baseline.get("flat_pause_pct"))),
+            "flatPausePct",
+            DEFAULT_LAUNCH_FLAT_PAUSE_PCT,
+        )
+        max_buy_v = parse_strategy_decimal(
+            payload.get("maxBuyV", payload.get("max_buy_v", baseline.get("max_buy_v"))),
+            "maxBuyV",
+            DEFAULT_LAUNCH_MAX_BUY_V,
+        )
+        max_project_v = parse_strategy_decimal(
+            payload.get("maxProjectV", payload.get("max_project_v", baseline.get("max_project_v"))),
+            "maxProjectV",
+            DEFAULT_LAUNCH_MAX_PROJECT_V,
+        )
+
+        checks = {
+            "baseBuyV": base_buy_v,
+            "dipBuyV": dip_buy_v,
+            "dipFromOwnCostPct": dip_from_own_cost_pct,
+            "flatPausePct": flat_pause_pct,
+            "maxBuyV": max_buy_v,
+            "maxProjectV": max_project_v,
+        }
+        for field, value in checks.items():
+            if value < 0:
+                raise ValueError(f"{field} cannot be negative")
+        for field, value in {"baseBuyV": base_buy_v, "dipBuyV": dip_buy_v, "maxBuyV": max_buy_v, "maxProjectV": max_project_v}.items():
+            if value <= 0:
+                raise ValueError(f"{field} must be positive")
+        if dip_from_own_cost_pct > 100:
+            raise ValueError("dipFromOwnCostPct cannot exceed 100")
+        if flat_pause_pct > 100:
+            raise ValueError("flatPausePct cannot exceed 100")
+        if base_buy_v > max_buy_v:
+            raise ValueError("baseBuyV cannot exceed maxBuyV")
+        if dip_buy_v > max_buy_v:
+            raise ValueError("dipBuyV cannot exceed maxBuyV")
+
+        sent_project_v = self.sum_launch_execution_sent_buy_v(
+            project=str(project_row.get("name") or ""),
+            strategy=strategy,
+            rule_name=rule_name,
+        )
+        if max_project_v < sent_project_v:
+            raise ValueError("maxProjectV cannot be lower than already sent project V")
+
+        return {
+            "project_id": int(project_row["id"]),
+            "project": str(project_row.get("name") or "").strip(),
+            "strategy": strategy,
+            "rule_name": rule_name,
+            "enabled": 1 if enabled else 0,
+            "mode": mode,
+            "base_buy_v": decimal_to_str(base_buy_v, 6),
+            "dip_buy_v": decimal_to_str(dip_buy_v, 6),
+            "dip_from_own_cost_pct": decimal_to_str(dip_from_own_cost_pct, 6),
+            "flat_pause_pct": decimal_to_str(flat_pause_pct, 6),
+            "max_buy_v": decimal_to_str(max_buy_v, 6),
+            "max_project_v": decimal_to_str(max_project_v, 6),
+            "sent_project_v": decimal_to_str(sent_project_v, 6),
+        }
+
+    def upsert_launch_strategy_runtime_config(
+        self,
+        *,
+        project_row: Dict[str, Any],
+        payload: Dict[str, Any],
+        operator_user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        project_id = int(project_row["id"])
+        current = self.get_launch_strategy_runtime_config(project_id)
+        normalized = self.normalize_launch_strategy_runtime_config_payload(
+            payload,
+            project_row=project_row,
+            current=current,
+        )
+        updated_reason = str(
+            payload.get("updatedReason") or payload.get("updated_reason") or normalized.get("updated_reason") or ""
+        ).strip()
+        now = int(time.time())
+        version = int(current.get("version") or 0) + 1 if current else 1
+        before_json = self._json_field(current or {}, "{}") or "{}"
+
+        values = dict(normalized)
+        values.update(
+            {
+                "version": version,
+                "updated_by_user_id": int(operator_user_id) if operator_user_id else None,
+                "updated_reason": updated_reason,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO launch_strategy_runtime_configs(
+                    project_id, project, strategy, rule_name, enabled, mode,
+                    base_buy_v, dip_buy_v, dip_from_own_cost_pct, flat_pause_pct,
+                    max_buy_v, max_project_v, version, updated_by_user_id,
+                    updated_reason, created_at, updated_at
+                ) VALUES (
+                    :project_id, :project, :strategy, :rule_name, :enabled, :mode,
+                    :base_buy_v, :dip_buy_v, :dip_from_own_cost_pct, :flat_pause_pct,
+                    :max_buy_v, :max_project_v, :version, :updated_by_user_id,
+                    :updated_reason, :created_at, :updated_at
+                )
+                ON CONFLICT(project_id) DO UPDATE SET
+                    project = excluded.project,
+                    strategy = excluded.strategy,
+                    rule_name = excluded.rule_name,
+                    enabled = excluded.enabled,
+                    mode = excluded.mode,
+                    base_buy_v = excluded.base_buy_v,
+                    dip_buy_v = excluded.dip_buy_v,
+                    dip_from_own_cost_pct = excluded.dip_from_own_cost_pct,
+                    flat_pause_pct = excluded.flat_pause_pct,
+                    max_buy_v = excluded.max_buy_v,
+                    max_project_v = excluded.max_project_v,
+                    version = excluded.version,
+                    updated_by_user_id = excluded.updated_by_user_id,
+                    updated_reason = excluded.updated_reason,
+                    updated_at = excluded.updated_at
+                """,
+                values,
+            )
+            after_row = self.get_launch_strategy_runtime_config(project_id) or values
+            after_json = self._json_field(after_row, "{}") or "{}"
+            self.conn.execute(
+                """
+                INSERT INTO launch_strategy_runtime_config_audit(
+                    project_id, project, strategy, rule_name, version,
+                    before_json, after_json, updated_by_user_id, updated_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    str(after_row.get("project") or ""),
+                    str(after_row.get("strategy") or ""),
+                    str(after_row.get("rule_name") or ""),
+                    int(after_row.get("version") or version),
+                    before_json,
+                    after_json,
+                    int(operator_user_id) if operator_user_id else None,
+                    updated_reason,
+                    now,
+                ),
+            )
+        return self.get_launch_strategy_runtime_config(project_id) or values
+
+    def get_launch_sell_runtime_config(self, project_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_sell_runtime_configs
+            WHERE project_id = ?
+            """,
+            (int(project_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_launch_sell_runtime_config_by_project(self, project: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_sell_runtime_configs
+            WHERE lower(project) = lower(?)
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 1
+            """,
+            (str(project or "").strip(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_launch_sell_runtime_config_audit(
+        self,
+        project_id: int,
+        *,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 100))
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_sell_runtime_config_audit
+            WHERE project_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (int(project_id), bounded_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def default_launch_sell_runtime_config(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": None,
+            "project_id": int(project_row["id"]),
+            "project": str(project_row.get("name") or "").strip(),
+            "strategy": DEFAULT_LAUNCH_SELL_STRATEGY,
+            "rule_name": DEFAULT_LAUNCH_SELL_RULE,
+            "enabled": 0,
+            "mode": "simulate",
+            "max_tax_rate": decimal_to_str(DEFAULT_LAUNCH_SELL_MAX_TAX_RATE, 6),
+            "roi_low_pct": decimal_to_str(DEFAULT_LAUNCH_SELL_ROI_LOW_PCT, 6),
+            "roi_high_pct": decimal_to_str(DEFAULT_LAUNCH_SELL_ROI_HIGH_PCT, 6),
+            "large_buy_low_v": decimal_to_str(DEFAULT_LAUNCH_SELL_LARGE_BUY_LOW_V, 6),
+            "large_buy_high_v": decimal_to_str(DEFAULT_LAUNCH_SELL_LARGE_BUY_HIGH_V, 6),
+            "sell_low_pct": decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_LOW_PCT, 6),
+            "sell_high_pct": decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_HIGH_PCT, 6),
+            "cooldown_sec": DEFAULT_LAUNCH_SELL_COOLDOWN_SEC,
+            "catch_up_events_sec": DEFAULT_LAUNCH_SELL_CATCH_UP_EVENTS_SEC,
+            "version": 0,
+            "updated_by_user_id": None,
+            "updated_reason": "",
+            "created_at": None,
+            "updated_at": None,
+        }
+
+    def normalize_launch_sell_runtime_config_payload(
+        self,
+        payload: Dict[str, Any],
+        *,
+        project_row: Dict[str, Any],
+        current: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        baseline = current or self.default_launch_sell_runtime_config(project_row)
+        strategy = str(payload.get("strategy") or baseline.get("strategy") or DEFAULT_LAUNCH_SELL_STRATEGY).strip()
+        rule_name = str(payload.get("ruleName") or payload.get("rule_name") or baseline.get("rule_name") or DEFAULT_LAUNCH_SELL_RULE).strip()
+        if not strategy:
+            raise ValueError("strategy is required")
+        if not rule_name:
+            raise ValueError("ruleName is required")
+
+        mode = str(payload.get("mode") or baseline.get("mode") or "simulate").strip().lower()
+        if mode not in {"simulate", "broadcast"}:
+            raise ValueError("mode must be simulate or broadcast")
+
+        enabled = parse_named_bool(payload.get("enabled", bool(int(baseline.get("enabled") or 0))), "enabled")
+        max_tax_rate = parse_strategy_decimal(
+            payload.get("maxTaxRate", payload.get("max_tax_rate", baseline.get("max_tax_rate"))),
+            "maxTaxRate",
+            DEFAULT_LAUNCH_SELL_MAX_TAX_RATE,
+        )
+        roi_low_pct = parse_strategy_decimal(
+            payload.get("roiLowPct", payload.get("roi_low_pct", baseline.get("roi_low_pct"))),
+            "roiLowPct",
+            DEFAULT_LAUNCH_SELL_ROI_LOW_PCT,
+        )
+        roi_high_pct = parse_strategy_decimal(
+            payload.get("roiHighPct", payload.get("roi_high_pct", baseline.get("roi_high_pct"))),
+            "roiHighPct",
+            DEFAULT_LAUNCH_SELL_ROI_HIGH_PCT,
+        )
+        large_buy_low_v = parse_strategy_decimal(
+            payload.get("largeBuyLowV", payload.get("large_buy_low_v", baseline.get("large_buy_low_v"))),
+            "largeBuyLowV",
+            DEFAULT_LAUNCH_SELL_LARGE_BUY_LOW_V,
+        )
+        large_buy_high_v = parse_strategy_decimal(
+            payload.get("largeBuyHighV", payload.get("large_buy_high_v", baseline.get("large_buy_high_v"))),
+            "largeBuyHighV",
+            DEFAULT_LAUNCH_SELL_LARGE_BUY_HIGH_V,
+        )
+        sell_low_pct = parse_strategy_decimal(
+            payload.get("sellLowPct", payload.get("sell_low_pct", baseline.get("sell_low_pct"))),
+            "sellLowPct",
+            DEFAULT_LAUNCH_SELL_SELL_LOW_PCT,
+        )
+        sell_high_pct = parse_strategy_decimal(
+            payload.get("sellHighPct", payload.get("sell_high_pct", baseline.get("sell_high_pct"))),
+            "sellHighPct",
+            DEFAULT_LAUNCH_SELL_SELL_HIGH_PCT,
+        )
+        cooldown_sec = parse_required_int(
+            payload.get("cooldownSec", payload.get("cooldown_sec", baseline.get("cooldown_sec"))),
+            "cooldownSec",
+        )
+        catch_up_events_sec = parse_required_int(
+            payload.get("catchUpEventsSec", payload.get("catch_up_events_sec", baseline.get("catch_up_events_sec"))),
+            "catchUpEventsSec",
+        )
+
+        checks = {
+            "maxTaxRate": max_tax_rate,
+            "roiLowPct": roi_low_pct,
+            "roiHighPct": roi_high_pct,
+            "largeBuyLowV": large_buy_low_v,
+            "largeBuyHighV": large_buy_high_v,
+            "sellLowPct": sell_low_pct,
+            "sellHighPct": sell_high_pct,
+        }
+        for field, value in checks.items():
+            if value < 0:
+                raise ValueError(f"{field} cannot be negative")
+        if max_tax_rate > 100:
+            raise ValueError("maxTaxRate cannot exceed 100")
+        if sell_low_pct > 100 or sell_high_pct > 100:
+            raise ValueError("sell percentage cannot exceed 100")
+        if large_buy_low_v <= 0 or large_buy_high_v <= 0:
+            raise ValueError("large buy thresholds must be positive")
+        if roi_high_pct < roi_low_pct:
+            raise ValueError("roiHighPct cannot be lower than roiLowPct")
+        if large_buy_high_v < large_buy_low_v:
+            raise ValueError("largeBuyHighV cannot be lower than largeBuyLowV")
+        if sell_high_pct < sell_low_pct:
+            raise ValueError("sellHighPct cannot be lower than sellLowPct")
+        if cooldown_sec < 0:
+            raise ValueError("cooldownSec cannot be negative")
+        if catch_up_events_sec <= 0:
+            raise ValueError("catchUpEventsSec must be positive")
+
+        return {
+            "project_id": int(project_row["id"]),
+            "project": str(project_row.get("name") or "").strip(),
+            "strategy": strategy,
+            "rule_name": rule_name,
+            "enabled": 1 if enabled else 0,
+            "mode": mode,
+            "max_tax_rate": decimal_to_str(max_tax_rate, 6),
+            "roi_low_pct": decimal_to_str(roi_low_pct, 6),
+            "roi_high_pct": decimal_to_str(roi_high_pct, 6),
+            "large_buy_low_v": decimal_to_str(large_buy_low_v, 6),
+            "large_buy_high_v": decimal_to_str(large_buy_high_v, 6),
+            "sell_low_pct": decimal_to_str(sell_low_pct, 6),
+            "sell_high_pct": decimal_to_str(sell_high_pct, 6),
+            "cooldown_sec": cooldown_sec,
+            "catch_up_events_sec": catch_up_events_sec,
+        }
+
+    def upsert_launch_sell_runtime_config(
+        self,
+        *,
+        project_row: Dict[str, Any],
+        payload: Dict[str, Any],
+        operator_user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        project_id = int(project_row["id"])
+        current = self.get_launch_sell_runtime_config(project_id)
+        normalized = self.normalize_launch_sell_runtime_config_payload(
+            payload,
+            project_row=project_row,
+            current=current,
+        )
+        updated_reason = str(
+            payload.get("updatedReason") or payload.get("updated_reason") or normalized.get("updated_reason") or ""
+        ).strip()
+        now = int(time.time())
+        version = int(current.get("version") or 0) + 1 if current else 1
+        before_json = self._json_field(current or {}, "{}") or "{}"
+
+        values = dict(normalized)
+        values.update(
+            {
+                "version": version,
+                "updated_by_user_id": int(operator_user_id) if operator_user_id else None,
+                "updated_reason": updated_reason,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO launch_sell_runtime_configs(
+                    project_id, project, strategy, rule_name, enabled, mode,
+                    max_tax_rate, roi_low_pct, roi_high_pct, large_buy_low_v,
+                    large_buy_high_v, sell_low_pct, sell_high_pct, cooldown_sec,
+                    catch_up_events_sec, version, updated_by_user_id,
+                    updated_reason, created_at, updated_at
+                ) VALUES (
+                    :project_id, :project, :strategy, :rule_name, :enabled, :mode,
+                    :max_tax_rate, :roi_low_pct, :roi_high_pct, :large_buy_low_v,
+                    :large_buy_high_v, :sell_low_pct, :sell_high_pct, :cooldown_sec,
+                    :catch_up_events_sec, :version, :updated_by_user_id,
+                    :updated_reason, :created_at, :updated_at
+                )
+                ON CONFLICT(project_id) DO UPDATE SET
+                    project = excluded.project,
+                    strategy = excluded.strategy,
+                    rule_name = excluded.rule_name,
+                    enabled = excluded.enabled,
+                    mode = excluded.mode,
+                    max_tax_rate = excluded.max_tax_rate,
+                    roi_low_pct = excluded.roi_low_pct,
+                    roi_high_pct = excluded.roi_high_pct,
+                    large_buy_low_v = excluded.large_buy_low_v,
+                    large_buy_high_v = excluded.large_buy_high_v,
+                    sell_low_pct = excluded.sell_low_pct,
+                    sell_high_pct = excluded.sell_high_pct,
+                    cooldown_sec = excluded.cooldown_sec,
+                    catch_up_events_sec = excluded.catch_up_events_sec,
+                    version = excluded.version,
+                    updated_by_user_id = excluded.updated_by_user_id,
+                    updated_reason = excluded.updated_reason,
+                    updated_at = excluded.updated_at
+                """,
+                values,
+            )
+            after_row = self.get_launch_sell_runtime_config(project_id) or values
+            after_json = self._json_field(after_row, "{}") or "{}"
+            self.conn.execute(
+                """
+                INSERT INTO launch_sell_runtime_config_audit(
+                    project_id, project, strategy, rule_name, version,
+                    before_json, after_json, updated_by_user_id, updated_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    str(after_row.get("project") or ""),
+                    str(after_row.get("strategy") or ""),
+                    str(after_row.get("rule_name") or ""),
+                    int(after_row.get("version") or version),
+                    before_json,
+                    after_json,
+                    int(operator_user_id) if operator_user_id else None,
+                    updated_reason,
+                    now,
+                ),
+            )
+        return self.get_launch_sell_runtime_config(project_id) or values
+
+    def launch_sell_runtime_status(
+        self,
+        *,
+        project: str,
+        strategy: str = DEFAULT_LAUNCH_SELL_STRATEGY,
+        rule_name: str = DEFAULT_LAUNCH_SELL_RULE,
+    ) -> Dict[str, Any]:
+        rows = self.list_launch_execution_records(project=project, limit=500)
+        sell_count = 0
+        sold_pct = Decimal("0")
+        last_sell_at: Optional[int] = None
+        for row in rows:
+            if str(row.get("action") or "") != "sell":
+                continue
+            if str(row.get("strategy") or "") != str(strategy or ""):
+                continue
+            if str(row.get("rule_name") or "") != str(rule_name or ""):
+                continue
+            if int(row.get("trade_sent") or 0) != 1:
+                continue
+            if not str(row.get("status") or "").startswith("receipt_success"):
+                continue
+            sell_count += 1
+            with contextlib.suppress(Exception):
+                intent = json.loads(str(row.get("intent_json") or "{}"))
+                decision = intent.get("decision") if isinstance(intent, dict) else {}
+                if isinstance(decision, dict):
+                    sold_pct += Decimal(str(decision.get("totalSellPct") or "0"))
+            updated_at = int(row.get("updated_at") or 0)
+            if updated_at:
+                last_sell_at = max(last_sell_at or 0, updated_at)
+        return {
+            "sellCount": sell_count,
+            "soldPct": decimal_to_str(min(sold_pct, Decimal("100")), 6),
+            "lastSellAt": last_sell_at,
+        }
 
     def record_auth_attempt(
         self, event_type: str, subject: str, created_at: Optional[int] = None
@@ -8989,6 +9719,210 @@ class VirtualsBot:
             job["finishedAt"] = int(time.time())
         return web.json_response({"ok": True, "job": job})
 
+    def launch_strategy_runtime_config_payload(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
+        project_id = int(project_row["id"])
+        stored = self.storage.get_launch_strategy_runtime_config(project_id)
+        item = stored or self.storage.default_launch_strategy_runtime_config(project_row)
+        strategy = str(item.get("strategy") or DEFAULT_LAUNCH_BUY_STRATEGY)
+        rule_name = str(item.get("rule_name") or DEFAULT_LAUNCH_BUY_RULE)
+        sent_project_v = self.storage.sum_launch_execution_sent_buy_v(
+            project=str(project_row.get("name") or ""),
+            strategy=strategy,
+            rule_name=rule_name,
+        )
+        active_fuse = self.storage.get_active_launch_execution_fuse(
+            project=str(project_row.get("name") or ""),
+            strategy=strategy,
+            rule_name=rule_name,
+        )
+        audit_rows = self.storage.list_launch_strategy_runtime_config_audit(project_id, limit=10)
+        return {
+            "ok": True,
+            "project": {
+                "id": project_id,
+                "name": str(project_row.get("name") or ""),
+                "status": str(project_row.get("status") or ""),
+                "projectedStatus": self.derive_managed_project_status(project_row),
+                "startAt": int(project_row.get("start_at") or 0),
+                "resolvedEndAt": int(project_row.get("resolved_end_at") or 0),
+            },
+            "hasOverride": stored is not None,
+            "item": {
+                "id": item.get("id"),
+                "projectId": project_id,
+                "project": str(item.get("project") or project_row.get("name") or ""),
+                "strategy": strategy,
+                "ruleName": rule_name,
+                "enabled": bool(int(item.get("enabled") or 0)),
+                "mode": str(item.get("mode") or "simulate"),
+                "baseBuyV": str(item.get("base_buy_v") or decimal_to_str(DEFAULT_LAUNCH_BASE_BUY_V, 6)),
+                "dipBuyV": str(item.get("dip_buy_v") or decimal_to_str(DEFAULT_LAUNCH_DIP_BUY_V, 6)),
+                "dipFromOwnCostPct": str(
+                    item.get("dip_from_own_cost_pct")
+                    or decimal_to_str(DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT, 6)
+                ),
+                "flatPausePct": str(item.get("flat_pause_pct") or decimal_to_str(DEFAULT_LAUNCH_FLAT_PAUSE_PCT, 6)),
+                "maxBuyV": str(item.get("max_buy_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6)),
+                "maxProjectV": str(item.get("max_project_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)),
+                "version": int(item.get("version") or 0),
+                "updatedByUserId": item.get("updated_by_user_id"),
+                "updatedReason": str(item.get("updated_reason") or ""),
+                "createdAt": item.get("created_at"),
+                "updatedAt": item.get("updated_at"),
+            },
+            "runtime": {
+                "sentProjectV": decimal_to_str(sent_project_v, 6),
+                "activeFuse": compact_fuse(active_fuse) if "compact_fuse" in globals() else active_fuse,
+            },
+            "audit": [
+                {
+                    "id": int(row.get("id") or 0),
+                    "version": int(row.get("version") or 0),
+                    "updatedByUserId": row.get("updated_by_user_id"),
+                    "updatedReason": str(row.get("updated_reason") or ""),
+                    "createdAt": int(row.get("created_at") or 0),
+                }
+                for row in audit_rows
+            ],
+        }
+
+    async def launch_strategy_runtime_config_get_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(int(raw_project_id))
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            return web.json_response(self.launch_strategy_runtime_config_payload(project_row))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def launch_strategy_runtime_config_set_handler(self, request: web.Request) -> web.Response:
+        user = self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(int(raw_project_id))
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            self.storage.upsert_launch_strategy_runtime_config(
+                project_row=project_row,
+                payload=payload,
+                operator_user_id=int(user.get("id") or 0) or None,
+            )
+            return web.json_response(self.launch_strategy_runtime_config_payload(project_row))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    def launch_sell_runtime_config_payload(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
+        project_id = int(project_row["id"])
+        stored = self.storage.get_launch_sell_runtime_config(project_id)
+        item = stored or self.storage.default_launch_sell_runtime_config(project_row)
+        strategy = str(item.get("strategy") or DEFAULT_LAUNCH_SELL_STRATEGY)
+        rule_name = str(item.get("rule_name") or DEFAULT_LAUNCH_SELL_RULE)
+        active_fuse = self.storage.get_active_launch_execution_fuse(
+            project=str(project_row.get("name") or ""),
+            strategy=strategy,
+            rule_name=rule_name,
+        )
+        runtime_status = self.storage.launch_sell_runtime_status(
+            project=str(project_row.get("name") or ""),
+            strategy=strategy,
+            rule_name=rule_name,
+        )
+        audit_rows = self.storage.list_launch_sell_runtime_config_audit(project_id, limit=10)
+        return {
+            "ok": True,
+            "project": {
+                "id": project_id,
+                "name": str(project_row.get("name") or ""),
+                "status": str(project_row.get("status") or ""),
+                "projectedStatus": self.derive_managed_project_status(project_row),
+                "startAt": int(project_row.get("start_at") or 0),
+                "resolvedEndAt": int(project_row.get("resolved_end_at") or 0),
+            },
+            "hasOverride": stored is not None,
+            "item": {
+                "id": item.get("id"),
+                "projectId": project_id,
+                "project": str(item.get("project") or project_row.get("name") or ""),
+                "strategy": strategy,
+                "ruleName": rule_name,
+                "enabled": bool(int(item.get("enabled") or 0)),
+                "mode": str(item.get("mode") or "simulate"),
+                "maxTaxRate": str(item.get("max_tax_rate") or decimal_to_str(DEFAULT_LAUNCH_SELL_MAX_TAX_RATE, 6)),
+                "roiLowPct": str(item.get("roi_low_pct") or decimal_to_str(DEFAULT_LAUNCH_SELL_ROI_LOW_PCT, 6)),
+                "roiHighPct": str(item.get("roi_high_pct") or decimal_to_str(DEFAULT_LAUNCH_SELL_ROI_HIGH_PCT, 6)),
+                "largeBuyLowV": str(item.get("large_buy_low_v") or decimal_to_str(DEFAULT_LAUNCH_SELL_LARGE_BUY_LOW_V, 6)),
+                "largeBuyHighV": str(item.get("large_buy_high_v") or decimal_to_str(DEFAULT_LAUNCH_SELL_LARGE_BUY_HIGH_V, 6)),
+                "sellLowPct": str(item.get("sell_low_pct") or decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_LOW_PCT, 6)),
+                "sellHighPct": str(item.get("sell_high_pct") or decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_HIGH_PCT, 6)),
+                "cooldownSec": int(item.get("cooldown_sec") or DEFAULT_LAUNCH_SELL_COOLDOWN_SEC),
+                "catchUpEventsSec": int(item.get("catch_up_events_sec") or DEFAULT_LAUNCH_SELL_CATCH_UP_EVENTS_SEC),
+                "version": int(item.get("version") or 0),
+                "updatedByUserId": item.get("updated_by_user_id"),
+                "updatedReason": str(item.get("updated_reason") or ""),
+                "createdAt": item.get("created_at"),
+                "updatedAt": item.get("updated_at"),
+            },
+            "runtime": {
+                **runtime_status,
+                "activeFuse": compact_fuse(active_fuse) if "compact_fuse" in globals() else active_fuse,
+            },
+            "audit": [
+                {
+                    "id": int(row.get("id") or 0),
+                    "version": int(row.get("version") or 0),
+                    "updatedByUserId": row.get("updated_by_user_id"),
+                    "updatedReason": str(row.get("updated_reason") or ""),
+                    "createdAt": int(row.get("created_at") or 0),
+                }
+                for row in audit_rows
+            ],
+        }
+
+    async def launch_sell_runtime_config_get_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(int(raw_project_id))
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            return web.json_response(self.launch_sell_runtime_config_payload(project_row))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def launch_sell_runtime_config_set_handler(self, request: web.Request) -> web.Response:
+        user = self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(int(raw_project_id))
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            self.storage.upsert_launch_sell_runtime_config(
+                project_row=project_row,
+                payload=payload,
+                operator_user_id=int(user.get("id") or 0) or None,
+            )
+            return web.json_response(self.launch_sell_runtime_config_payload(project_row))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
     async def launch_configs_handler(self, request: web.Request) -> web.Response:
         rows = self.storage.list_launch_configs()
         return web.json_response({"count": len(rows), "items": rows})
@@ -11007,6 +11941,10 @@ class VirtualsBot:
         app.router.add_get("/api/admin/projects/{project_id}/market", admin_only(self.admin_project_market_handler))
         app.router.add_post("/api/admin/projects", admin_only(self.managed_project_upsert_handler))
         app.router.add_delete("/api/admin/projects/{project_id}", admin_only(self.managed_project_delete_handler))
+        app.router.add_get("/api/admin/projects/{project_id}/launch-strategy-config", admin_only(self.launch_strategy_runtime_config_get_handler))
+        app.router.add_post("/api/admin/projects/{project_id}/launch-strategy-config", admin_only(self.launch_strategy_runtime_config_set_handler))
+        app.router.add_get("/api/admin/projects/{project_id}/launch-sell-config", admin_only(self.launch_sell_runtime_config_get_handler))
+        app.router.add_post("/api/admin/projects/{project_id}/launch-sell-config", admin_only(self.launch_sell_runtime_config_set_handler))
         app.router.add_post("/api/admin/projects/{project_id}/team-address-overrides", admin_only(self.team_address_override_upsert_handler))
         app.router.add_delete("/api/admin/projects/{project_id}/team-address-overrides/{wallet}", admin_only(self.team_address_override_delete_handler))
         app.router.add_get("/api/admin/signalhub", admin_only(self.signalhub_upcoming_handler))

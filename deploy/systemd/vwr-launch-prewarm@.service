@@ -1,0 +1,21 @@
+[Unit]
+Description=Virtuals Whale Radar launch prewarm simulate for %i
+After=network-online.target vwr@writer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vwr
+Group=vwr
+WorkingDirectory=/opt/virtuals-whale-radar
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
+EnvironmentFile=-/etc/virtuals-whale-radar/execution-rpc.env
+ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/launch_prewarm_executor.py --config /opt/virtuals-whale-radar/config.json --project %i --from-address 0x4a371b9b1bf1e7bc0700dff666631f0fc5c96624 --rule gate_5k_tax95_fdv_one_per_tax --mode simulate --output-jsonl /opt/virtuals-whale-radar/data/execution/launch-prewarm-executor-%i.jsonl --exit-after-end-sec 300
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

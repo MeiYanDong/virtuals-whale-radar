@@ -17,9 +17,12 @@ if str(OPS_DIR) not in sys.path:
 
 from launch_sell_executor import (  # noqa: E402
     build_position_from_records,
+    compact_runtime_sell_config,
     current_roi_pct,
     dual_state_from_position,
     latest_unseen_buy_event,
+    runtime_effective_args,
+    runtime_sell_config,
 )
 
 
@@ -135,10 +138,44 @@ def test_latest_unseen_buy_event_only_skips_processed_txs() -> None:
     assert_eq(fallback["tx_hash"], "0x1", "processed largest event is skipped")
 
 
+def test_runtime_sell_config_helpers() -> None:
+    class Args:
+        mode = "broadcast"
+        catch_up_events_sec = 120
+
+    row = {
+        "version": 3,
+        "enabled": 1,
+        "mode": "broadcast",
+        "strategy": "custom_sell",
+        "rule_name": "custom_sell",
+        "max_tax_rate": "25",
+        "roi_low_pct": "35",
+        "roi_high_pct": "55",
+        "large_buy_low_v": "6000",
+        "large_buy_high_v": "9000",
+        "sell_low_pct": "25",
+        "sell_high_pct": "60",
+        "cooldown_sec": 90,
+        "catch_up_events_sec": 180,
+        "updated_at": 123,
+    }
+    config = runtime_sell_config(row, default_name="dual_roi_large_buy_sell")
+    assert_eq(config.name, "custom_sell", "runtime config name")
+    assert_eq(config.max_tax_rate, Decimal("25"), "runtime config tax")
+    assert_eq(config.sell_high_pct, Decimal("60"), "runtime config sell high")
+    effective = runtime_effective_args(Args(), row)
+    assert_eq(effective.catch_up_events_sec, 180, "runtime catch-up events")
+    compact = compact_runtime_sell_config(row, effective, config)
+    assert_eq(compact["version"], 3, "compact runtime version")
+    assert_eq(compact["sellHighPct"], "60", "compact sell high")
+
+
 def main() -> None:
     test_position_rebuild_from_buy_and_sell_receipts()
     test_roi_uses_auto_buy_units_and_spot_fdv()
     test_latest_unseen_buy_event_only_skips_processed_txs()
+    test_runtime_sell_config_helpers()
     print("launch_sell_executor tests ok")
 
 

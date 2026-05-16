@@ -463,6 +463,184 @@ def test_launch_execution_ledger_storage() -> None:
             storage.close()
 
 
+def test_launch_strategy_runtime_config_storage() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "strategy-config.db"))
+        try:
+            project = storage.upsert_managed_project(
+                project_id=None,
+                name="HOT",
+                signalhub_project_id="hot-1",
+                detail_url="https://app.virtuals.io/virtuals/1",
+                token_addr=None,
+                internal_pool_addr=None,
+                start_at=1000,
+                signalhub_end_at=None,
+                manual_end_at=2000,
+                resolved_end_at=2000,
+                is_watched=True,
+                collect_enabled=True,
+                backfill_enabled=True,
+                status="scheduled",
+                source="manual",
+            )
+            default_config = storage.default_launch_strategy_runtime_config(project)
+            assert_eq(default_config["enabled"], 0, "default runtime config disabled")
+            assert_eq(default_config["base_buy_v"], "25.000000", "default base buy")
+
+            config = storage.upsert_launch_strategy_runtime_config(
+                project_row=project,
+                payload={
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "baseBuyV": "100",
+                    "dipBuyV": "200",
+                    "maxBuyV": "200",
+                    "maxProjectV": "300",
+                    "updatedReason": "hot project",
+                },
+                operator_user_id=None,
+            )
+            assert_eq(config["version"], 1, "runtime config version")
+            assert_eq(config["enabled"], 1, "runtime config enabled")
+            assert_eq(config["mode"], "broadcast", "runtime config mode")
+            assert_eq(config["base_buy_v"], "100.000000", "runtime config base")
+            assert_eq(config["dip_buy_v"], "200.000000", "runtime config dip")
+            assert_eq(len(storage.list_launch_strategy_runtime_config_audit(int(project["id"]))), 1, "runtime config audit")
+
+            storage.upsert_launch_execution_record(
+                {
+                    "intent_id": "hot_buy_1",
+                    "project": "HOT",
+                    "strategy": "dynamic_25v_dip20_after1_flat10_no_cap",
+                    "rule_name": "gate_5k_tax95_fdv_one_per_tax",
+                    "mode": "prewarm_broadcast",
+                    "status": "receipt_success",
+                    "action": "would_buy",
+                    "decision_reason": "receipt_observed",
+                    "tax_rate": "95",
+                    "buy_size_v": "250",
+                    "entry_tax_fdv_wan_usd": "100",
+                    "trade_sent": True,
+                    "broadcast_enabled": True,
+                }
+            )
+            assert_eq(
+                storage.sum_launch_execution_sent_buy_v(project="HOT"),
+                Decimal("250"),
+                "runtime config sent project v",
+            )
+            try:
+                storage.upsert_launch_strategy_runtime_config(
+                    project_row=project,
+                    payload={
+                        "enabled": True,
+                        "mode": "broadcast",
+                        "baseBuyV": "100",
+                        "dipBuyV": "200",
+                        "maxBuyV": "200",
+                        "maxProjectV": "100",
+                    },
+                    operator_user_id=None,
+                )
+            except ValueError as exc:
+                if "already sent" not in str(exc):
+                    raise
+            else:
+                raise AssertionError("maxProjectV below sent V must be rejected")
+        finally:
+            storage.close()
+
+
+def test_launch_sell_runtime_config_storage() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "sell-config.db"))
+        try:
+            project = storage.upsert_managed_project(
+                project_id=None,
+                name="SELLHOT",
+                signalhub_project_id="sell-hot-1",
+                detail_url="https://app.virtuals.io/virtuals/2",
+                token_addr=None,
+                internal_pool_addr=None,
+                start_at=1000,
+                signalhub_end_at=None,
+                manual_end_at=2000,
+                resolved_end_at=2000,
+                is_watched=True,
+                collect_enabled=True,
+                backfill_enabled=True,
+                status="scheduled",
+                source="manual",
+            )
+            default_config = storage.default_launch_sell_runtime_config(project)
+            assert_eq(default_config["enabled"], 0, "default sell runtime config disabled")
+            assert_eq(default_config["max_tax_rate"], "30.000000", "default sell tax window")
+
+            config = storage.upsert_launch_sell_runtime_config(
+                project_row=project,
+                payload={
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "maxTaxRate": "25",
+                    "roiLowPct": "35",
+                    "roiHighPct": "55",
+                    "largeBuyLowV": "6000",
+                    "largeBuyHighV": "9000",
+                    "sellLowPct": "25",
+                    "sellHighPct": "60",
+                    "cooldownSec": 90,
+                    "catchUpEventsSec": 180,
+                    "updatedReason": "sell hot project",
+                },
+                operator_user_id=None,
+            )
+            assert_eq(config["version"], 1, "sell runtime config version")
+            assert_eq(config["enabled"], 1, "sell runtime config enabled")
+            assert_eq(config["mode"], "broadcast", "sell runtime config mode")
+            assert_eq(config["max_tax_rate"], "25.000000", "sell runtime tax")
+            assert_eq(config["large_buy_high_v"], "9000.000000", "sell runtime large buy high")
+            assert_eq(len(storage.list_launch_sell_runtime_config_audit(int(project["id"]))), 1, "sell runtime audit")
+
+            storage.upsert_launch_execution_record(
+                {
+                    "intent_id": "sellhot_sell_1",
+                    "project": "SELLHOT",
+                    "strategy": "dual_roi_large_buy_sell",
+                    "rule_name": "dual_roi_large_buy_sell",
+                    "mode": "autosell_broadcast",
+                    "status": "receipt_success",
+                    "action": "sell",
+                    "decision_reason": "receipt_observed",
+                    "intent": {"decision": {"totalSellPct": "30"}},
+                    "trade_sent": True,
+                    "broadcast_enabled": True,
+                }
+            )
+            status = storage.launch_sell_runtime_status(project="SELLHOT")
+            assert_eq(status["sellCount"], 1, "sell runtime status count")
+            assert_eq(status["soldPct"], "30.000000", "sell runtime status pct")
+
+            try:
+                storage.upsert_launch_sell_runtime_config(
+                    project_row=project,
+                    payload={
+                        "enabled": True,
+                        "mode": "broadcast",
+                        "roiLowPct": "50",
+                        "roiHighPct": "40",
+                    },
+                    operator_user_id=None,
+                )
+            except ValueError as exc:
+                if "roiHighPct" not in str(exc):
+                    raise
+            else:
+                raise AssertionError("roi high below low must be rejected")
+        finally:
+            storage.close()
+
+
 def test_route_metadata_storage_and_team_filter() -> None:
     wallet = "0x81f7ca6af86d1ca6335e44a2c28bc88807491415"
     route = transaction_route_metadata(
@@ -582,6 +760,8 @@ def main() -> None:
     asyncio.run(test_order_binder_quote_and_min_out())
     test_local_signer_signs_and_recovers_without_broadcast()
     test_launch_execution_ledger_storage()
+    test_launch_strategy_runtime_config_storage()
+    test_launch_sell_runtime_config_storage()
     test_route_metadata_storage_and_team_filter()
     asyncio.run(test_team_initialization_route_excludes_cost())
 

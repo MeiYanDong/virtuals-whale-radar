@@ -48,6 +48,7 @@ from launch_execution_pipeline import (  # noqa: E402
     DEFAULT_DEADLINE_OFFSET_SEC,
     DEFAULT_LAUNCH_SLIPPAGE_BPS,
     BURNER_PRIVATE_KEY_ENV,
+    DynamicExecutionConfig,
     DynamicAfter1StrategyEvaluator,
     LocalSigner,
     StrategyState,
@@ -129,6 +130,62 @@ def decimal_value(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     if not raw:
         return default
     return Decimal(raw)
+
+
+def runtime_dynamic_config(row: dict[str, Any] | None) -> DynamicExecutionConfig:
+    if not row:
+        return DynamicExecutionConfig()
+    return DynamicExecutionConfig(
+        name=str(row.get("strategy") or DynamicExecutionConfig().name),
+        base_buy_v=decimal_value(row.get("base_buy_v"), DynamicExecutionConfig().base_buy_v),
+        dip_buy_v=decimal_value(row.get("dip_buy_v"), DynamicExecutionConfig().dip_buy_v),
+        dip_from_own_cost_pct=decimal_value(
+            row.get("dip_from_own_cost_pct"),
+            DynamicExecutionConfig().dip_from_own_cost_pct,
+        ),
+        flat_pause_pct=decimal_value(row.get("flat_pause_pct"), DynamicExecutionConfig().flat_pause_pct),
+        pause_after_buy_count=DynamicExecutionConfig().pause_after_buy_count,
+        one_buy_per_tax_rate=DynamicExecutionConfig().one_buy_per_tax_rate,
+    )
+
+
+def runtime_effective_args(args: argparse.Namespace, row: dict[str, Any] | None) -> argparse.Namespace:
+    if not row:
+        return args
+    out = copy.copy(args)
+    out.max_buy_v = decimal_value(row.get("max_buy_v"), Decimal(str(args.max_buy_v or "0")))
+    out.max_project_v = decimal_value(row.get("max_project_v"), Decimal(str(args.max_project_v or "0")))
+    return out
+
+
+def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace) -> dict[str, Any]:
+    if not row:
+        return {
+            "hasOverride": False,
+            "version": 0,
+            "enabled": True,
+            "mode": args.mode,
+            "strategy": DynamicExecutionConfig().name,
+            "baseBuyV": str(DynamicExecutionConfig().base_buy_v),
+            "dipBuyV": str(DynamicExecutionConfig().dip_buy_v),
+            "maxBuyV": str(args.max_buy_v),
+            "maxProjectV": str(args.max_project_v),
+        }
+    return {
+        "hasOverride": True,
+        "version": int(row.get("version") or 0),
+        "enabled": bool(int(row.get("enabled") or 0)),
+        "mode": str(row.get("mode") or "simulate"),
+        "strategy": str(row.get("strategy") or ""),
+        "ruleName": str(row.get("rule_name") or ""),
+        "baseBuyV": str(row.get("base_buy_v") or ""),
+        "dipBuyV": str(row.get("dip_buy_v") or ""),
+        "dipFromOwnCostPct": str(row.get("dip_from_own_cost_pct") or ""),
+        "flatPausePct": str(row.get("flat_pause_pct") or ""),
+        "maxBuyV": str(row.get("max_buy_v") or ""),
+        "maxProjectV": str(row.get("max_project_v") or ""),
+        "updatedAt": int(row.get("updated_at") or 0),
+    }
 
 
 def normalized_tax_key(value: Any) -> str:
@@ -895,7 +952,14 @@ async def async_main() -> None:
     async with VirtualsBot(cfg, role="backfill") as bot:
         project_row = find_project(bot, str(args.project))
         project_name = str(project_row.get("name") or args.project).strip()
-        evaluator = DynamicAfter1StrategyEvaluator(project=project_name, rule=rule)
+        runtime_config_row = bot.storage.get_launch_strategy_runtime_config_by_project(project_name)
+        runtime_config_version = int(runtime_config_row.get("version") or 0) if runtime_config_row else 0
+        evaluator = DynamicAfter1StrategyEvaluator(
+            project=project_name,
+            rule=rule,
+            config=runtime_dynamic_config(runtime_config_row),
+        )
+        effective_args = runtime_effective_args(args, runtime_config_row)
         restored_state = restore_strategy_state_from_ledger(
             evaluator,
             bot,
@@ -921,8 +985,9 @@ async def async_main() -> None:
             "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
             "executionRpcSource": rpc_selection.source,
             "outputJsonl": str(output_jsonl),
-            "maxBuyV": str(args.max_buy_v),
-            "maxProjectV": str(args.max_project_v),
+            "maxBuyV": str(effective_args.max_buy_v),
+            "maxProjectV": str(effective_args.max_project_v),
+            "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
             "restoredStrategyState": compact_strategy_state(restored_state),
         }
         append_jsonl(output_jsonl, service_meta)
@@ -938,55 +1003,118 @@ async def async_main() -> None:
                     sample = await build_sample(bot, project_row, clock)
                     sample["triggerTypes"] = derive_trigger_types(previous_sample, sample)
                     current_fingerprint = fingerprint(sample)
-                    state_before_decision = copy.deepcopy(evaluator.state) if args.mode == "broadcast" else None
-                    decision = evaluator.evaluate(sample, index=sample_count - 1)
-                    counts[decision.action] = counts.get(decision.action, 0) + 1
+                    latest_runtime_config = bot.storage.get_launch_strategy_runtime_config_by_project(project_name)
+                    latest_runtime_version = int(latest_runtime_config.get("version") or 0) if latest_runtime_config else 0
+                    if latest_runtime_version != runtime_config_version:
+                        runtime_config_version = latest_runtime_version
+                        runtime_config_row = latest_runtime_config
+                        evaluator.config = runtime_dynamic_config(runtime_config_row)
+                        effective_args = runtime_effective_args(args, runtime_config_row)
+                        reload_payload = {
+                            "event": "strategy_config_reloaded",
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": rule.name,
+                            "strategy": evaluator.config.name,
+                            "mode": executor_mode(args),
+                            "readOnly": args.mode != "broadcast",
+                            "tradeSent": False,
+                            "broadcastEnabled": broadcast_enabled(args),
+                            "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
+                        }
+                        append_jsonl(output_jsonl, reload_payload)
+                        print(json.dumps(reload_payload, ensure_ascii=False), flush=True)
+                    else:
+                        runtime_config_row = latest_runtime_config
+                        effective_args = runtime_effective_args(args, runtime_config_row)
+
+                    runtime_block_reason = ""
+                    if runtime_config_row and not bool(int(runtime_config_row.get("enabled") or 0)):
+                        runtime_block_reason = "runtime_config_disabled"
+                    elif (
+                        runtime_config_row
+                        and args.mode == "broadcast"
+                        and str(runtime_config_row.get("mode") or "simulate") != "broadcast"
+                    ):
+                        runtime_block_reason = "runtime_config_mode_not_broadcast"
 
                     should_log = False
-                    payload: dict[str, Any] = {
-                        "event": decision.action,
-                        "reason": decision.reason,
-                        "at": utc_iso(),
-                        "atCst": cst_iso(),
-                        "project": project_name,
-                        "rule": rule.name,
-                        "strategy": evaluator.config.name,
-                        "mode": executor_mode(args),
-                        "sampleIndex": sample_count - 1,
-                        "readOnly": args.mode != "broadcast",
-                        "tradeSent": False,
-                        "broadcastEnabled": broadcast_enabled(args),
-                        "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
-                        "executionRpcSource": rpc_selection.source,
-                        "sample": compact_sample(sample),
-                    }
-                    if decision.intent is not None:
-                        counts["prewarm"] = counts.get("prewarm", 0) + 1
-                        payload = await prewarm_intent(
-                            args=args,
-                            cfg=cfg,
-                            bot=bot,
-                            rpc=rpc,
-                            project_row=project_row,
-                            project_name=project_name,
-                            rule_name=rule.name,
-                            strategy_name=evaluator.config.name,
-                            sample=sample,
-                            sample_index=sample_count - 1,
-                            intent=asdict(decision.intent),
+                    if runtime_block_reason:
+                        counts["skip"] = counts.get("skip", 0) + 1
+                        payload = {
+                            "event": "runtime_config_blocked",
+                            "reason": runtime_block_reason,
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": rule.name,
+                            "strategy": evaluator.config.name,
+                            "mode": executor_mode(args),
+                            "sampleIndex": sample_count - 1,
+                            "readOnly": True,
+                            "tradeSent": False,
+                            "broadcastEnabled": False,
+                            "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
+                            "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
+                            "executionRpcSource": rpc_selection.source,
+                            "sample": compact_sample(sample),
+                        }
+                        should_log = (
+                            current_fingerprint != previous_fingerprint
+                            or (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec)
                         )
-                        if args.mode == "broadcast" and not bool(payload.get("tradeSent")) and state_before_decision is not None:
-                            evaluator.state = state_before_decision
-                        should_log = True
-                    elif decision.pause is not None:
-                        payload["pause"] = decision.pause
-                        should_log = True
-                    elif current_fingerprint != previous_fingerprint:
-                        payload["event"] = "state_change"
-                        should_log = True
-                    elif (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec):
-                        payload["event"] = "heartbeat"
-                        should_log = True
+                    else:
+                        state_before_decision = copy.deepcopy(evaluator.state) if args.mode == "broadcast" else None
+                        decision = evaluator.evaluate(sample, index=sample_count - 1)
+                        counts[decision.action] = counts.get(decision.action, 0) + 1
+
+                        payload = {
+                            "event": decision.action,
+                            "reason": decision.reason,
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": rule.name,
+                            "strategy": evaluator.config.name,
+                            "mode": executor_mode(args),
+                            "sampleIndex": sample_count - 1,
+                            "readOnly": args.mode != "broadcast",
+                            "tradeSent": False,
+                            "broadcastEnabled": broadcast_enabled(args),
+                            "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
+                            "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
+                            "executionRpcSource": rpc_selection.source,
+                            "sample": compact_sample(sample),
+                        }
+                        if decision.intent is not None:
+                            counts["prewarm"] = counts.get("prewarm", 0) + 1
+                            payload = await prewarm_intent(
+                                args=effective_args,
+                                cfg=cfg,
+                                bot=bot,
+                                rpc=rpc,
+                                project_row=project_row,
+                                project_name=project_name,
+                                rule_name=rule.name,
+                                strategy_name=evaluator.config.name,
+                                sample=sample,
+                                sample_index=sample_count - 1,
+                                intent=asdict(decision.intent),
+                            )
+                            payload["runtimeStrategyConfig"] = compact_runtime_config(runtime_config_row, effective_args)
+                            if args.mode == "broadcast" and not bool(payload.get("tradeSent")) and state_before_decision is not None:
+                                evaluator.state = state_before_decision
+                            should_log = True
+                        elif decision.pause is not None:
+                            payload["pause"] = decision.pause
+                            should_log = True
+                        elif current_fingerprint != previous_fingerprint:
+                            payload["event"] = "state_change"
+                            should_log = True
+                        elif (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec):
+                            payload["event"] = "heartbeat"
+                            should_log = True
 
                     if should_log:
                         append_jsonl(output_jsonl, payload)
