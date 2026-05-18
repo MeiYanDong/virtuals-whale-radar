@@ -5,6 +5,7 @@ import type {
   AppMetaResponse,
   AppNotificationsResponse,
   AuthMeResponse,
+  BaseAuthChallengeResponse,
   AuthRegisterPendingResponse,
   AuthResendVerificationResponse,
   AuthSuccessResponse,
@@ -24,9 +25,13 @@ import type {
   ManagedProjectsResponse,
   MetaResponse,
   MinuteRow,
+  OnchainPaymentIntentResponse,
+  OnchainPaymentIntentsResponse,
+  OnchainPaymentVerifyResponse,
   OverviewActiveResponse,
   ProjectAccessResponse,
   ProjectMarketResponse,
+  PublicBaseEntryResponse,
   ProjectSchedulerStatusResponse,
   ProjectUnlockResponse,
   ReplayStatusResponse,
@@ -39,10 +44,17 @@ import type {
   UserWalletsResponse,
   WalletConfigItem,
   WalletConfigsResponse,
+  WalletAuthSource,
   WalletsResponse,
 } from "@/types/api";
 
 export const dashboardApi = {
+  public: {
+    getBaseEntry() {
+      return requestJson<PublicBaseEntryResponse>("/api/public/base-entry");
+    },
+  },
+
   auth: {
     me() {
       return requestJson<AuthMeResponse>("/api/auth/me");
@@ -51,6 +63,36 @@ export const dashboardApi = {
       return requestJson<AuthSuccessResponse>("/api/auth/login", {
         method: "POST",
         body: { email, password },
+      });
+    },
+    walletChallenge(wallet: string, source: WalletAuthSource) {
+      return requestJson<BaseAuthChallengeResponse>("/api/auth/wallet/challenge", {
+        method: "POST",
+        body: { wallet, source },
+      });
+    },
+    walletVerify(payload: {
+      wallet: string;
+      source: WalletAuthSource;
+      nonce: string;
+      message: string;
+      signature: string;
+    }) {
+      return requestJson<AuthSuccessResponse>("/api/auth/wallet/verify", {
+        method: "POST",
+        body: payload,
+      });
+    },
+    baseChallenge(wallet: string) {
+      return requestJson<BaseAuthChallengeResponse>("/api/auth/base/challenge", {
+        method: "POST",
+        body: { wallet },
+      });
+    },
+    baseVerify(payload: { wallet: string; nonce: string; message: string; signature: string }) {
+      return requestJson<AuthSuccessResponse>("/api/auth/base/verify", {
+        method: "POST",
+        body: payload,
       });
     },
     register(nickname: string, email: string, password: string) {
@@ -521,6 +563,11 @@ export const dashboardApi = {
     getBillingSummary() {
       return requestJson<BillingSummaryResponse>("/api/app/billing/summary");
     },
+    getOnchainPaymentIntents(limit = 10) {
+      return requestJson<OnchainPaymentIntentsResponse>("/api/app/billing/onchain-intents", {
+        params: { limit },
+      });
+    },
     getNotifications(limit = 12) {
       return requestJson<AppNotificationsResponse>("/api/app/notifications", {
         params: { limit },
@@ -555,6 +602,21 @@ export const dashboardApi = {
         {
           method: "POST",
           body: formData,
+        },
+      );
+    },
+    createOnchainPaymentIntent(payload: { plan_id: string; payer_wallet?: string }) {
+      return requestJson<OnchainPaymentIntentResponse>("/api/app/billing/onchain-intents", {
+        method: "POST",
+        body: payload,
+      });
+    },
+    verifyOnchainPaymentIntent(intentId: number, txHash: string, waitSec = 90) {
+      return requestJson<OnchainPaymentVerifyResponse>(
+        `/api/app/billing/onchain-intents/${intentId}/verify`,
+        {
+          method: "POST",
+          body: { tx_hash: txHash, wait_sec: waitSec },
         },
       );
     },

@@ -89,7 +89,7 @@ function deriveProjectStatus(currentStatus: string, hasPool: boolean) {
 
 function confirmProjectUnlock(item: ManagedProjectItem) {
   return window.confirm(
-    `解锁 ${item.name} 的项目详情将消耗 ${item.unlock_cost ?? 10} 积分，解锁后以后都能直接查看。确认继续吗？`,
+    `解锁 ${item.name} 的项目详情将消耗 ${item.unlock_cost ?? 20} 积分，解锁后以后都能直接查看。确认继续吗？`,
   );
 }
 
@@ -340,7 +340,7 @@ export function ProjectsPage() {
                       ? ended
                         ? "历史详情已解锁"
                         : "实时看板已解锁"
-                      : `待解锁 · ${item.unlock_cost ?? 10} 积分`}
+                      : `待解锁 · ${item.unlock_cost ?? 20} 积分`}
                   </Badge>
                 ) : null}
               </div>

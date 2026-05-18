@@ -1,4 +1,5 @@
 export const queryKeys = {
+  publicBaseEntry: ["public-base-entry"] as const,
   authMe: ["auth", "me"] as const,
   meta: ["meta"] as const,
   appMeta: ["app-meta"] as const,
@@ -6,6 +7,7 @@ export const queryKeys = {
   managedProjects: ["managed-projects"] as const,
   appProjects: ["app-projects"] as const,
   appBillingSummary: ["app-billing-summary"] as const,
+  appOnchainPaymentIntents: (limit: number) => ["app-onchain-payment-intents", limit] as const,
   appBillingRequests: (limit: number) => ["app-billing-requests", limit] as const,
   appNotifications: (limit: number) => ["app-notifications", limit] as const,
   appProjectAccess: (projectId: number) => ["app-project-access", projectId] as const,

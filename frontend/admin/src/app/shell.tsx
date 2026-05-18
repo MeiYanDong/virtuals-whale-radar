@@ -23,6 +23,7 @@ import { queryKeys } from "@/api/query-keys";
 import { ShellContext, type ShellContextValue, type WorkspaceViewer, useShell } from "@/app/shell-context";
 import { useTheme } from "@/app/use-theme";
 import { useAuth } from "@/auth/use-auth";
+import { BrandLogo } from "@/components/brand-logo";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -332,7 +333,7 @@ function BrandBlock({
   return (
     <div className={cn("flex items-center gap-4", compact && "justify-center")}>
       <div className="theme-brand-badge flex size-14 shrink-0 items-center justify-center rounded-[20px]">
-        <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-10 rounded-[12px] object-cover" />
+        <BrandLogo className="size-10 rounded-[12px]" />
       </div>
       {compact ? null : (
         <div className="min-w-0">
@@ -512,7 +513,7 @@ function TopBar({
             <Menu className="size-4" />
           </Button>
           <div className="theme-brand-badge flex size-11 shrink-0 items-center justify-center rounded-[18px]">
-            <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-7 rounded-[10px] object-cover" />
+            <BrandLogo className="size-7 rounded-[10px]" />
           </div>
           <div className="hidden min-w-0 sm:block">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary/80">

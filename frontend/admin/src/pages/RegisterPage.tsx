@@ -112,17 +112,17 @@ export function RegisterPage() {
 
   return (
     <AuthFrame
-      eyebrow="Register"
-      title="先完成邮箱验证，再开始看项目"
-      description="注册后我们会先发一封验证邮件。邮箱验证成功后，账号才会正式创建，你也会收到 20 积分去体验真正想看的盘面。"
+      eyebrow="Email Register"
+      title="用邮箱创建账号"
+      description="如果你不想用钱包登录，可以用邮箱注册。验证成功后，账号会收到 20 积分，刚好解锁 1 个真正想长期跟踪的项目。"
     >
       <div className="mx-auto flex h-full max-w-md flex-col justify-center">
         <div className="space-y-6">
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Create Account</div>
-            <div className="text-3xl font-semibold tracking-[-0.05em]">开始使用</div>
+            <div className="text-3xl font-semibold tracking-[-0.05em]">邮箱注册</div>
             <p className="text-sm leading-6 text-muted-foreground">
-              新账号在邮箱验证成功后会收到 20 积分，足够你先体验项目列表、加钱包，并解锁前两个真正想看的盘面。
+              新账号在邮箱验证成功后会收到 20 积分，足够你先体验项目列表、加钱包，并解锁 1 个真正想看的盘面。
             </p>
           </div>
 
@@ -182,6 +182,10 @@ export function RegisterPage() {
             已有账号？
             <Link className="ml-2 font-medium text-primary hover:underline" to={buildAuthSwitchHref("/auth/login", location.search)}>
               去登录
+            </Link>
+            <span className="mx-2">·</span>
+            <Link className="font-medium text-primary hover:underline" to={buildAuthSwitchHref("/auth/login", location.search)}>
+              用钱包继续
             </Link>
           </div>
         </div>

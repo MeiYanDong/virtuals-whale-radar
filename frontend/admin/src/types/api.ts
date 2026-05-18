@@ -20,6 +20,18 @@ export interface AuthSuccessResponse {
   home_path: string;
 }
 
+export type WalletAuthSource = "base_wallet" | "okx_wallet" | "injected_wallet";
+
+export interface BaseAuthChallengeResponse {
+  ok: boolean;
+  wallet: string;
+  source: WalletAuthSource;
+  chain_id: number;
+  nonce: string;
+  message: string;
+  expires_at: number;
+}
+
 export interface AuthRegisterPendingResponse {
   ok: boolean;
   requires_verification: boolean;
@@ -31,6 +43,47 @@ export interface AuthResendVerificationResponse {
   ok: boolean;
   email: string;
   expires_at: number;
+}
+
+export interface PublicBaseProjectItem {
+  id: number;
+  name: string;
+  status: string;
+  projectedStatus: string;
+  startAt: number;
+  resolvedEndAt: number;
+  detailUrl: string;
+  tokenAddr: string | null;
+  internalPoolAddr: string | null;
+  sumTaxV: string;
+  topSpentV: string;
+  topWalletSpentV: string;
+  totalSpentV: string;
+  peakMinuteSpentV: string;
+  peakMinuteBuyCount: number;
+  eventCount: number;
+  buyEventCount: number;
+  uniqueBuyerCount: number;
+  whaleRows: number;
+  whaleBoard: Array<{
+    wallet: string;
+    spentV: string;
+    tokenBought: string;
+    breakevenFdvUsd: string | null;
+    updatedAt: number;
+  }>;
+  source?: string;
+}
+
+export interface PublicBaseEntryResponse {
+  ok: boolean;
+  generatedAt: number;
+  chainId: number;
+  signalHubEnabled: boolean;
+  activeProjectCount: number;
+  managedProjectCount: number;
+  trackedWalletCount: number;
+  projects: PublicBaseProjectItem[];
 }
 
 export interface LaunchConfig {
@@ -660,7 +713,61 @@ export interface BillingPlan {
   id: string;
   credits: number;
   priceCny: number;
+  priceUsdc: string;
   label: string;
+  isTest?: boolean;
+}
+
+export interface OnchainPaymentConfig {
+  enabled: boolean;
+  chain_id: number;
+  chain_id_hex: string;
+  network: "base";
+  token_symbol: "USDC";
+  token_decimals: number;
+  token_addr: string;
+  receiver: string;
+}
+
+export interface OnchainCreditPaymentIntent {
+  id: number;
+  plan_id: string;
+  credits: number;
+  chain_id: number;
+  chain_id_hex: string;
+  network: "base";
+  token_symbol: "USDC";
+  token_decimals: number;
+  token_addr: string;
+  receiver: string;
+  payer_wallet: string;
+  amount_usdc: string;
+  amount_raw: string;
+  status: "pending" | "confirmed" | "expired";
+  tx_hash: string;
+  expires_at: number;
+  verified_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface OnchainPaymentIntentResponse {
+  ok: boolean;
+  item: OnchainCreditPaymentIntent;
+  payment: OnchainPaymentConfig;
+}
+
+export interface OnchainPaymentIntentsResponse {
+  ok: boolean;
+  count: number;
+  items: OnchainCreditPaymentIntent[];
+}
+
+export interface OnchainPaymentVerifyResponse {
+  ok: boolean;
+  alreadyConfirmed: boolean;
+  item: OnchainCreditPaymentIntent;
+  billing: BillingSummaryResponse;
 }
 
 export interface BillingSummaryResponse {
@@ -674,6 +781,7 @@ export interface BillingSummaryResponse {
   plans: BillingPlan[];
   contact_qr_url: string;
   contact_hint: string;
+  onchain_payment: OnchainPaymentConfig;
   notice: string;
   referral_url: string;
 }
@@ -802,7 +910,7 @@ export interface AdminUserSummary {
   email: string;
   role: "admin" | "user";
   status: "active" | "disabled" | "archived";
-  source: "self_signup" | "admin_created";
+  source: "self_signup" | "admin_created" | WalletAuthSource;
   wallet_count: number;
   credit_balance: number;
   credit_spent_total: number;

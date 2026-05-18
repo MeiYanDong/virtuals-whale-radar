@@ -10,8 +10,11 @@ import { ApiError } from "@/api/client";
 import { useTheme } from "@/app/use-theme";
 import { buildAuthSwitchHref, resolvePostAuthRedirect } from "@/auth/redirect";
 import { useAuth } from "@/auth/use-auth";
+import { BaseSignInButton } from "@/components/base-sign-in-button";
+import { BrandLogo } from "@/components/brand-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import type { AuthSuccessResponse } from "@/types/api";
 
 export function AuthFrame({
   eyebrow,
@@ -37,7 +40,7 @@ export function AuthFrame({
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-4">
                     <div className="theme-brand-badge flex size-16 items-center justify-center rounded-[22px]">
-                      <img src="/admin/brand/logo-mark.png" alt="Virtuals Whale Radar" className="size-11 rounded-[14px] object-cover" />
+                      <BrandLogo className="size-11 rounded-[14px]" />
                     </div>
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.24em] text-primary/80">
@@ -104,6 +107,21 @@ export function LoginPage() {
     expired: boolean;
   } | null>(null);
 
+  const redirectAfterAuth = (result: AuthSuccessResponse) => {
+    const redirectTo = new URLSearchParams(location.search).get("redirect");
+    const target = resolvePostAuthRedirect({
+      role: result.user.role,
+      homePath: result.home_path,
+      redirectTo,
+    });
+    navigate(target, { replace: true });
+    window.setTimeout(() => {
+      if (window.location.pathname.startsWith("/auth") || window.location.pathname === "/base") {
+        window.location.replace(target);
+      }
+    }, 500);
+  };
+
   useEffect(() => {
     if (!isAuthenticated || !auth?.home_path) return;
     const redirectTo = new URLSearchParams(location.search).get("redirect");
@@ -122,15 +140,7 @@ export function LoginPage() {
     onSuccess: (result) => {
       setVerificationState(null);
       toast.success("登录成功。");
-      const redirectTo = new URLSearchParams(location.search).get("redirect");
-      navigate(
-        resolvePostAuthRedirect({
-          role: result.user.role,
-          homePath: result.home_path,
-          redirectTo,
-        }),
-        { replace: true },
-      );
+      redirectAfterAuth(result);
     },
     onError: (error: Error) => {
       if (error instanceof ApiError && error.details && typeof error.details === "object") {
@@ -167,18 +177,45 @@ export function LoginPage() {
 
   return (
     <AuthFrame
-      eyebrow="Login"
-      title="继续盯你关心的项目"
-      description="登录后可以继续看项目列表、跟踪自己的钱包，并解锁真正想长期盯的实时盘面。"
+      eyebrow="Account"
+      title="选择一种方式继续"
+      description="Base Account、OKX Wallet 和邮箱账号都在这里进入。钱包签名只用于确认身份，不会提交交易或授权 token。"
     >
       <div className="mx-auto flex h-full max-w-md flex-col justify-center">
         <div className="space-y-6">
           <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Account Access</div>
-            <div className="text-3xl font-semibold tracking-[-0.05em]">欢迎回来</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Sign In</div>
+            <div className="text-3xl font-semibold tracking-[-0.05em]">登录或创建账号</div>
             <p className="text-sm leading-6 text-muted-foreground">
-              如果你已经加过钱包，登录后就能继续看自己关注的钱包有没有在项目里进场。
+              推荐 Base 用户直接用钱包继续；已有邮箱账号也可以用密码登录。
             </p>
+          </div>
+
+          <div className="rounded-[24px] border border-border/80 bg-[color:var(--surface-soft)] px-5 py-4">
+            <div className="text-sm font-semibold text-foreground">用钱包继续</div>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              适合从 Base 生态进入的新用户，签名成功后会自动进入你的项目看板。
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <BaseSignInButton
+                className="h-11 rounded-[16px]"
+                label="Base Account"
+                onSuccess={redirectAfterAuth}
+              />
+              <BaseSignInButton
+                className="h-11 rounded-[16px]"
+                source="okx_wallet"
+                label="OKX Wallet"
+                variant="outline"
+                onSuccess={redirectAfterAuth}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="h-px flex-1 bg-border" />
+            <span>或使用邮箱</span>
+            <div className="h-px flex-1 bg-border" />
           </div>
 
           <div className="space-y-4">
@@ -239,6 +276,10 @@ export function LoginPage() {
             没有账号？
             <Link className="ml-2 font-medium text-primary hover:underline" to={buildAuthSwitchHref("/auth/register", location.search)}>
               去注册
+            </Link>
+            <span className="mx-2">·</span>
+            <Link className="font-medium text-primary hover:underline" to="/base">
+              返回欢迎页
             </Link>
           </div>
         </div>

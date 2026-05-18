@@ -42,6 +42,15 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     bcrypt = None
 
+try:
+    from eth_account import Account as EthAccount
+    from eth_account.messages import encode_defunct
+    from eth_utils import keccak
+except Exception:  # pragma: no cover - optional dependency
+    EthAccount = None
+    encode_defunct = None
+    keccak = None
+
 getcontext().prec = 60
 
 TRANSFER_TOPIC0 = (
@@ -59,6 +68,84 @@ TAX_OBSERVED_FAST_WINDOW_FRESH_SEC = 8
 TAX_OBSERVED_FAST_WINDOW_STABLE_SEC = 30
 TAX_OBSERVED_MINUTE_WINDOW_FRESH_SEC = 90
 KNOWN_BONDING_V5_ANTI_SNIPER_TYPES = {"0", "1", "2"}
+PUBLIC_ENTRY_DEFAULT_PROJECT_NAME = "SR"
+PUBLIC_ENTRY_SHOWCASE_FALLBACKS: Dict[str, Dict[str, Any]] = {
+    "SR": {
+        "id": 6,
+        "name": "SR",
+        "signalhubProjectId": "70972",
+        "status": "ended",
+        "projectedStatus": "ended",
+        "startAt": 1776049200,
+        "resolvedEndAt": 1776055140,
+        "detailUrl": "https://app.virtuals.io/prototypes/0x10c56F005a379f8eAfc88ff5c3f40d30F0031AC9",
+        "tokenAddr": "0x10c56f005a379f8eafc88ff5c3f40d30f0031ac9",
+        "internalPoolAddr": "0x745c62e112435afcbd942504002d1ddd305ce0db",
+        "sumTaxV": "448339.638338892498857051",
+        "topSpentV": "332872.497499750000",
+        "topWalletSpentV": "30000.000000000000",
+        "totalSpentV": "617721.103735000000",
+        "peakMinuteSpentV": "96807.186168750000",
+        "peakMinuteBuyCount": 34,
+        "eventCount": 602,
+        "buyEventCount": 602,
+        "uniqueBuyerCount": 185,
+        "whaleRows": 185,
+        "whaleBoard": [
+            {
+                "wallet": "0x1fbf88e60ed97a817867d882dd97fa856f840b15",
+                "spentV": "29809.070937500000000000",
+                "tokenBought": "7120089.473422836781945905",
+                "breakevenFdvUsd": "2918945.204463",
+                "updatedAt": 1776050199,
+            },
+            {
+                "wallet": "0xd758e4edbf63c23957214282b13ca9bfb5b72676",
+                "spentV": "20000.000000000000000000",
+                "tokenBought": "6543736.056815813108846145",
+                "breakevenFdvUsd": "2130920.144417",
+                "updatedAt": 1776049589,
+            },
+            {
+                "wallet": "0xfea2e499ad75532c39c7ce3a7552b3d7514e8b81",
+                "spentV": "30000.000000000000000000",
+                "tokenBought": "5988926.901533022610571611",
+                "breakevenFdvUsd": "3492490.193773",
+                "updatedAt": 1776050447,
+            },
+            {
+                "wallet": "0xf5d75931b9bcd11e33e8c9cdb2ab4eda675e6acb",
+                "spentV": "29649.163720500000000000",
+                "tokenBought": "5631486.707825333862081516",
+                "breakevenFdvUsd": "3670729.125995",
+                "updatedAt": 1776052649,
+            },
+            {
+                "wallet": "0x7f9148c38aebf08d5f3b0b5db1be101ba1486dca",
+                "spentV": "25000.000000000000000000",
+                "tokenBought": "4666377.695823344181363061",
+                "breakevenFdvUsd": "3735279.239103",
+                "updatedAt": 1776050967,
+            },
+            {
+                "wallet": "0x340cfcc43da06e2d70784c99d2f105dfb2ef923f",
+                "spentV": "23569.627942500000000000",
+                "tokenBought": "4292108.112906085040159268",
+                "breakevenFdvUsd": "3828644.362543",
+                "updatedAt": 1776051627,
+            },
+            {
+                "wallet": "0xe648cff67562203ac1b4b77a50515e08d378dd51",
+                "spentV": "20000.000000000000000000",
+                "tokenBought": "3840448.278784232134397155",
+                "breakevenFdvUsd": "3630872.744791",
+                "updatedAt": 1776050739,
+            },
+        ],
+        "source": "production_snapshot",
+        "snapshotAt": 1779119300,
+    }
+}
 
 
 def normalize_address(addr: str) -> str:
@@ -325,10 +412,24 @@ PROJECT_SCHEDULER_INTERVAL_SEC = 30
 BACKFILL_CURSOR_STATE_KEY = "backfill_last_scanned_block"
 USER_STATUSES = {"active", "disabled", "archived"}
 USER_ROLES = {"admin", "user"}
-USER_SOURCES = {"self_signup", "admin_created"}
+USER_SOURCES = {"self_signup", "admin_created", "base_wallet", "okx_wallet", "injected_wallet"}
 DEFAULT_SESSION_COOKIE_NAME = "vwr_session"
 DEFAULT_SESSION_TTL_SEC = 14 * 24 * 60 * 60
 DEFAULT_SESSION_SECRET = "virtuals-whale-radar-dev-session-secret"
+BASE_CHAIN_ID = 8453
+BASE_WALLET_AUTH_TTL_SEC = 5 * 60
+BASE_USDC_TOKEN_ADDR = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+BASE_USDC_DECIMALS = 6
+USDC_TRANSFER_SELECTOR = "0xa9059cbb"
+ONCHAIN_CREDIT_PAYMENT_TTL_SEC = 15 * 60
+ONCHAIN_CREDIT_PAYMENT_RECEIPT_WAIT_SEC = 75
+ONCHAIN_CREDIT_PAYMENT_RECEIPT_POLL_SEC = 3
+ONCHAIN_CREDIT_PAYMENT_STATUSES = {"pending", "confirmed", "expired"}
+WALLET_SOURCE_LABELS = {
+    "base_wallet": "Base Account",
+    "okx_wallet": "OKX Wallet",
+    "injected_wallet": "Wallet",
+}
 DEFAULT_APP_PUBLIC_BASE_URL = ""
 DEFAULT_EMAIL_ENABLED = False
 DEFAULT_EMAIL_SMTP_PORT = 587
@@ -336,7 +437,7 @@ DEFAULT_EMAIL_SMTP_USE_TLS = True
 DEFAULT_EMAIL_FROM_NAME = "Virtuals Whale Radar"
 DEFAULT_EMAIL_VERIFY_TOKEN_TTL_SEC = 30 * 60
 DEFAULT_SIGNUP_BONUS_CREDITS = 20
-DEFAULT_PROJECT_UNLOCK_CREDITS = 10
+DEFAULT_PROJECT_UNLOCK_CREDITS = 20
 AUTH_REGISTER_IP_SHORT_WINDOW_SEC = 15 * 60
 AUTH_REGISTER_IP_SHORT_MAX_ATTEMPTS = 2
 AUTH_REGISTER_IP_LONG_WINDOW_SEC = 24 * 60 * 60
@@ -346,8 +447,8 @@ AUTH_RESEND_IP_MAX_ATTEMPTS = 5
 AUTH_LOGIN_FAIL_IP_WINDOW_SEC = 15 * 60
 AUTH_LOGIN_FAIL_IP_MAX_ATTEMPTS = 10
 DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
-DEFAULT_BILLING_CONTACT_HINT = "扫码添加运营联系方式，付款后联系管理员手动补积分。"
-DEFAULT_BILLING_REFERRAL_NOTICE = "Virtuals 新用户使用邀请码注册，后续付费一律五折"
+DEFAULT_BILLING_CONTACT_HINT = "钱包支付失败、重复付款或积分未到账时，扫码联系运营处理。"
+DEFAULT_BILLING_REFERRAL_NOTICE = "如果你还没有 Virtuals 账号，可以先用邀请码完成注册；这里的积分只用于解锁 Whale Radar 项目看板。"
 DEFAULT_BILLING_REFERRAL_URL = "https://app.virtuals.io/referral?code=LFfW5x"
 DEFAULT_PUBLIC_BASE_HTTP_RPC_URLS = [
     "https://base-rpc.publicnode.com",
@@ -380,7 +481,13 @@ RPC_TRANSIENT_ERROR_TOKENS = (
     "503",
     "504",
 )
-CREDIT_LEDGER_TYPES = {"signup_bonus", "manual_topup", "manual_adjustment", "project_unlock"}
+CREDIT_LEDGER_TYPES = {
+    "signup_bonus",
+    "manual_topup",
+    "manual_adjustment",
+    "project_unlock",
+    "onchain_usdc_topup",
+}
 BILLING_REQUEST_STATUSES = {"pending_review", "credited", "notified"}
 USER_NOTIFICATION_KINDS = {"success", "warning", "info", "accent"}
 MAX_BILLING_PROOF_BYTES = 8 * 1024 * 1024
@@ -409,9 +516,17 @@ DISPOSABLE_EMAIL_DOMAINS = {
     "yopmail.net",
 }
 BILLING_PLANS = [
-    {"id": "starter", "credits": 10, "priceCny": 10, "label": "10 积分 / 10 元"},
-    {"id": "value", "credits": 50, "priceCny": 40, "label": "50 积分 / 40 元"},
+    {"id": "starter", "credits": 20, "priceCny": 20, "priceUsdc": "2.00", "label": "20 积分 / 解锁 1 个项目"},
+    {"id": "value", "credits": 100, "priceCny": 80, "priceUsdc": "8.00", "label": "100 积分 / 解锁 5 个项目"},
 ]
+BILLING_TEST_PLAN = {
+    "id": "test",
+    "credits": 1,
+    "priceCny": 0,
+    "priceUsdc": "0.01",
+    "label": "1 积分 / 0.01 USDC 测试",
+    "isTest": True,
+}
 ARGON2_HASHER = (
     PasswordHasher(time_cost=2, memory_cost=102400, parallelism=8)
     if PasswordHasher is not None
@@ -524,6 +639,110 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 def hash_session_token(token: str, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), token.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def format_siwe_issued_at(ts: int) -> str:
+    return datetime.utcfromtimestamp(int(ts)).replace(microsecond=0).isoformat() + "Z"
+
+
+def synthetic_base_wallet_email(wallet: str) -> str:
+    normalized = normalize_address(wallet)
+    return f"{normalized[2:]}@base-wallet.virtuals.local"
+
+
+def normalize_wallet_auth_source(source: Any) -> str:
+    value = str(source or "base_wallet").strip().lower()
+    aliases = {
+        "base": "base_wallet",
+        "base_account": "base_wallet",
+        "coinbase": "base_wallet",
+        "coinbase_wallet": "base_wallet",
+        "okx": "okx_wallet",
+        "okxwallet": "okx_wallet",
+        "injected": "injected_wallet",
+    }
+    value = aliases.get(value, value)
+    if value not in {"base_wallet", "okx_wallet", "injected_wallet"}:
+        raise ValueError(f"invalid wallet source: {value}")
+    return value
+
+
+def synthetic_wallet_email(wallet: str, source: str) -> str:
+    normalized = normalize_address(wallet)
+    source_value = normalize_wallet_auth_source(source)
+    domain = {
+        "base_wallet": "base-wallet.virtuals.local",
+        "okx_wallet": "okx-wallet.virtuals.local",
+        "injected_wallet": "wallet.virtuals.local",
+    }[source_value]
+    return f"{normalized[2:]}@{domain}"
+
+
+def display_base_wallet_name(wallet: str) -> str:
+    normalized = normalize_address(wallet)
+    return f"Base {normalized[:6]}...{normalized[-4:]}"
+
+
+def display_wallet_name(wallet: str, source: str) -> str:
+    normalized = normalize_address(wallet)
+    label = WALLET_SOURCE_LABELS.get(normalize_wallet_auth_source(source), "Wallet")
+    return f"{label} {normalized[:6]}...{normalized[-4:]}"
+
+
+def decimal_to_atomic_units(value: Decimal, decimals: int) -> int:
+    scale = Decimal(10) ** int(decimals)
+    raw = (Decimal(value) * scale).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return int(raw)
+
+
+def atomic_units_to_decimal_text(value: int, decimals: int) -> str:
+    amount = Decimal(int(value)) / (Decimal(10) ** int(decimals))
+    return format(amount.normalize(), "f")
+
+
+def tx_hash_or_raise(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw.startswith("0x") or len(raw) != 66:
+        raise ValueError("invalid tx_hash")
+    int(raw[2:], 16)
+    return raw
+
+
+def address_from_topic(topic: Any) -> str:
+    raw = str(topic or "").strip().lower()
+    if raw.startswith("0x"):
+        raw = raw[2:]
+    if len(raw) < 40:
+        raise ValueError("invalid address topic")
+    return normalize_address("0x" + raw[-40:])
+
+
+def ethereum_personal_message_hash(message: str) -> str:
+    if keccak is None:
+        raise RuntimeError("eth-utils is required for smart wallet signature verification")
+    payload = str(message or "").encode("utf-8")
+    prefix = f"\x19Ethereum Signed Message:\n{len(payload)}".encode("ascii")
+    return "0x" + keccak(prefix + payload).hex()
+
+
+def encode_eip1271_is_valid_signature_calldata(message: str, signature: str) -> str:
+    digest = ethereum_personal_message_hash(message)
+    sig_hex = str(signature or "").strip().lower()
+    if sig_hex.startswith("0x"):
+        sig_hex = sig_hex[2:]
+    if len(sig_hex) % 2 != 0:
+        raise ValueError("invalid signature hex")
+    int(sig_hex or "0", 16)
+    sig_len = len(sig_hex) // 2
+    padded_sig_len = ((sig_len + 31) // 32) * 32
+    sig_padded = sig_hex.ljust(padded_sig_len * 2, "0")
+    return (
+        "0x1626ba7e"
+        + digest[2:].rjust(64, "0")
+        + hex(64)[2:].rjust(64, "0")
+        + hex(sig_len)[2:].rjust(64, "0")
+        + sig_padded
+    )
 
 
 def deserialize_event_from_bus(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -675,6 +894,9 @@ class AppConfig:
     email_verify_token_ttl_sec: int
     billing_contact_qr_url: str
     billing_contact_hint: str
+    billing_usdc_receiver: Optional[str]
+    billing_usdc_token_addr: str
+    billing_test_plan_enabled: bool
     backfill_http_rpc_urls: List[str] = field(default_factory=list)
     backfill_public_http_rpc_urls: List[str] = field(default_factory=list)
     backfill_rpc_quota_cooldown_sec: int = 3600
@@ -751,7 +973,7 @@ def load_config(path: str) -> AppConfig:
 
     my_wallets = {normalize_address(x) for x in raw.get("MY_WALLETS", [])}
 
-    price_mode = str(raw.get("PRICE_MODE", "onchain_pool"))
+    price_mode = str(os.getenv("PRICE_MODE") or raw.get("PRICE_MODE", "onchain_pool"))
     pair = raw.get("VIRTUAL_USDC_PAIR_ADDR")
     virtual_usdc_pair_addr = normalize_address(pair) if pair else None
 
@@ -892,6 +1114,24 @@ def load_config(path: str) -> AppConfig:
         or os.getenv("BILLING_CONTACT_HINT")
         or DEFAULT_BILLING_CONTACT_HINT
     ).strip() or DEFAULT_BILLING_CONTACT_HINT
+    billing_usdc_receiver_raw = str(
+        raw.get("BILLING_USDC_RECEIVER")
+        or os.getenv("BILLING_USDC_RECEIVER")
+        or ""
+    ).strip()
+    billing_usdc_receiver = normalize_address(billing_usdc_receiver_raw) if billing_usdc_receiver_raw else None
+    billing_usdc_token_addr = normalize_address(
+        str(
+            raw.get("BILLING_USDC_TOKEN_ADDR")
+            or os.getenv("BILLING_USDC_TOKEN_ADDR")
+            or BASE_USDC_TOKEN_ADDR
+        ).strip()
+    )
+    billing_test_plan_enabled = parse_bool_like(
+        raw.get("BILLING_TEST_PLAN_ENABLED")
+        or os.getenv("BILLING_TEST_PLAN_ENABLED")
+        or False
+    )
 
     return AppConfig(
         chain_id=chain_id,
@@ -947,6 +1187,9 @@ def load_config(path: str) -> AppConfig:
         email_verify_token_ttl_sec=email_verify_token_ttl_sec,
         billing_contact_qr_url=billing_contact_qr_url,
         billing_contact_hint=billing_contact_hint,
+        billing_usdc_receiver=billing_usdc_receiver,
+        billing_usdc_token_addr=billing_usdc_token_addr,
+        billing_test_plan_enabled=billing_test_plan_enabled,
         backfill_http_rpc_urls=backfill_http_rpc_urls,
         backfill_public_http_rpc_urls=backfill_public_http_rpc_urls,
         backfill_rpc_quota_cooldown_sec=max(
@@ -1360,6 +1603,40 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at
                 ON user_sessions(expires_at);
 
+            CREATE TABLE IF NOT EXISTS wallet_auth_challenges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wallet TEXT NOT NULL,
+                nonce_hash TEXT NOT NULL UNIQUE,
+                message TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'base_wallet',
+                domain TEXT NOT NULL DEFAULT '',
+                uri TEXT NOT NULL DEFAULT '',
+                chain_id INTEGER NOT NULL DEFAULT 8453,
+                issued_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_wallet_auth_challenges_wallet
+                ON wallet_auth_challenges(wallet);
+
+            CREATE INDEX IF NOT EXISTS idx_wallet_auth_challenges_expires_at
+                ON wallet_auth_challenges(expires_at);
+
+            CREATE TABLE IF NOT EXISTS wallet_auth_identities (
+                wallet TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                source TEXT NOT NULL DEFAULT 'base_wallet',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_wallet_auth_identities_user_id
+                ON wallet_auth_identities(user_id);
+
             CREATE TABLE IF NOT EXISTS user_wallets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -1405,7 +1682,7 @@ class Storage:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 project_id INTEGER NOT NULL,
-                unlock_cost INTEGER NOT NULL DEFAULT 10,
+                unlock_cost INTEGER NOT NULL DEFAULT 20,
                 source TEXT NOT NULL DEFAULT 'credit_unlock',
                 unlocked_at INTEGER NOT NULL,
                 expires_at INTEGER,
@@ -1449,6 +1726,34 @@ class Storage:
 
             CREATE INDEX IF NOT EXISTS idx_billing_requests_status
                 ON billing_requests(status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS onchain_credit_payment_intents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                plan_id TEXT NOT NULL,
+                credits INTEGER NOT NULL,
+                chain_id INTEGER NOT NULL DEFAULT 8453,
+                token_addr TEXT NOT NULL,
+                receiver TEXT NOT NULL,
+                payer_wallet TEXT NOT NULL DEFAULT '',
+                amount_usdc TEXT NOT NULL,
+                amount_raw TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                tx_hash TEXT NOT NULL DEFAULT '',
+                credited_credit_ledger_id INTEGER,
+                expires_at INTEGER NOT NULL,
+                verified_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_onchain_credit_payment_intents_user_status
+                ON onchain_credit_payment_intents(user_id, status, created_at DESC);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_onchain_credit_payment_intents_tx_hash
+                ON onchain_credit_payment_intents(tx_hash)
+                WHERE tx_hash != '';
 
             CREATE TABLE IF NOT EXISTS user_notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1666,6 +1971,7 @@ class Storage:
         self._ensure_column("users", "signup_ip", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("users", "signup_device_fingerprint", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("users", "signup_bonus_granted_at", "INTEGER")
+        self._ensure_column("wallet_auth_challenges", "source", "TEXT NOT NULL DEFAULT 'base_wallet'")
         self._ensure_column("credit_ledger", "payment_amount", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("credit_ledger", "payment_proof_ref", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("launch_configs", "token_addr", "TEXT")
@@ -3235,6 +3541,65 @@ class Storage:
         ).fetchone()
         return dict(row) if row else None
 
+    def get_user_by_wallet(self, wallet: str) -> Optional[Dict[str, Any]]:
+        normalized_wallet = normalize_address(wallet)
+        row = self.conn.execute(
+            """
+            SELECT users.*
+            FROM users
+            JOIN user_wallets ON user_wallets.user_id = users.id
+            WHERE user_wallets.wallet = ?
+            ORDER BY
+                CASE users.status WHEN 'active' THEN 0 ELSE 1 END,
+                users.created_at ASC,
+                users.id ASC
+            LIMIT 1
+            """,
+            (normalized_wallet,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_user_by_auth_wallet(self, wallet: str) -> Optional[Dict[str, Any]]:
+        normalized_wallet = normalize_address(wallet)
+        row = self.conn.execute(
+            """
+            SELECT users.*
+            FROM users
+            JOIN wallet_auth_identities ON wallet_auth_identities.user_id = users.id
+            WHERE wallet_auth_identities.wallet = ?
+            LIMIT 1
+            """,
+            (normalized_wallet,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_wallet_auth_identity(
+        self,
+        *,
+        user_id: int,
+        wallet: str,
+        source: str,
+    ) -> None:
+        now = int(time.time())
+        self.conn.execute(
+            """
+            INSERT INTO wallet_auth_identities(wallet, user_id, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(wallet) DO UPDATE SET
+                user_id = excluded.user_id,
+                source = excluded.source,
+                updated_at = excluded.updated_at
+            """,
+            (
+                normalize_address(wallet),
+                int(user_id),
+                normalize_wallet_auth_source(source),
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+
     def _normalize_pending_registration_row(
         self, row: Optional[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
@@ -3939,6 +4304,16 @@ class Storage:
                 "body": " ".join(details),
                 "action_url": "/app/billing",
             }
+        if entry == "onchain_usdc_topup":
+            details = [f"Base USDC 支付已确认，已入账 {max(delta_value, 0)} 积分。"]
+            if payment_amount_value:
+                details.append(f"实付 {payment_amount_value}")
+            return {
+                "kind": "success",
+                "title": "链上充值积分已到账",
+                "body": " ".join(details),
+                "action_url": "/app/billing",
+            }
         if entry == "manual_adjustment":
             return {
                 "kind": "warning" if delta_value < 0 else "info",
@@ -4181,6 +4556,259 @@ class Storage:
         params.append(max(1, int(limit)))
         rows = self.conn.execute(sql, tuple(params)).fetchall()
         return [dict(row) for row in rows]
+
+    def create_onchain_credit_payment_intent(
+        self,
+        *,
+        user_id: int,
+        plan_id: str,
+        credits: int,
+        chain_id: int,
+        token_addr: str,
+        receiver: str,
+        payer_wallet: str = "",
+        amount_usdc: str,
+        amount_raw: int,
+        expires_at: int,
+    ) -> Dict[str, Any]:
+        now = int(time.time())
+        normalized_payer = normalize_optional_address(payer_wallet) or ""
+        cur = self.conn.execute(
+            """
+            INSERT INTO onchain_credit_payment_intents(
+                user_id, plan_id, credits, chain_id, token_addr, receiver,
+                payer_wallet, amount_usdc, amount_raw, status, tx_hash,
+                credited_credit_ledger_id, expires_at, verified_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', NULL, ?, NULL, ?, ?)
+            """,
+            (
+                int(user_id),
+                require_nonempty_text(plan_id, "plan_id"),
+                max(1, int(credits)),
+                int(chain_id),
+                normalize_address(token_addr),
+                normalize_address(receiver),
+                normalized_payer,
+                str(amount_usdc or "").strip(),
+                str(int(amount_raw)),
+                int(expires_at),
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        row = self.get_onchain_credit_payment_intent(int(cur.lastrowid))
+        if not row:
+            raise ValueError("failed to create onchain payment intent")
+        return row
+
+    def get_onchain_credit_payment_intent(self, intent_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM onchain_credit_payment_intents
+            WHERE id = ?
+            """,
+            (int(intent_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_onchain_credit_payment_intent_for_user(
+        self,
+        user_id: int,
+        intent_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM onchain_credit_payment_intents
+            WHERE id = ? AND user_id = ?
+            """,
+            (int(intent_id), int(user_id)),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_onchain_credit_payment_intents_for_user(
+        self,
+        user_id: int,
+        *,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE onchain_credit_payment_intents
+                SET status = 'expired',
+                    updated_at = ?
+                WHERE user_id = ?
+                  AND status = 'pending'
+                  AND tx_hash = ''
+                  AND expires_at <= ?
+                """,
+                (now, int(user_id), now),
+            )
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM onchain_credit_payment_intents
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (int(user_id), max(1, min(50, int(limit)))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def record_onchain_credit_payment_tx(
+        self,
+        intent_id: int,
+        *,
+        tx_hash: str,
+        payer_wallet: str = "",
+    ) -> Dict[str, Any]:
+        tx_hash_value = tx_hash_or_raise(tx_hash)
+        intent = self.get_onchain_credit_payment_intent(int(intent_id))
+        if not intent:
+            raise ValueError(f"onchain payment intent not found: {intent_id}")
+        if str(intent.get("status") or "").lower() == "confirmed":
+            return intent
+        current_tx = str(intent.get("tx_hash") or "").strip().lower()
+        if current_tx and current_tx != tx_hash_value:
+            raise ValueError("payment intent already has a different tx_hash")
+        existing = self.conn.execute(
+            """
+            SELECT id
+            FROM onchain_credit_payment_intents
+            WHERE tx_hash = ? AND id != ?
+            LIMIT 1
+            """,
+            (tx_hash_value, int(intent_id)),
+        ).fetchone()
+        if existing:
+            raise ValueError("tx_hash is already attached to another payment intent")
+        now = int(time.time())
+        normalized_payer = normalize_optional_address(payer_wallet) or str(intent.get("payer_wallet") or "")
+        self.conn.execute(
+            """
+            UPDATE onchain_credit_payment_intents
+            SET tx_hash = ?,
+                payer_wallet = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                tx_hash_value,
+                normalized_payer,
+                now,
+                int(intent_id),
+            ),
+        )
+        self.conn.commit()
+        row = self.get_onchain_credit_payment_intent(int(intent_id))
+        if not row:
+            raise ValueError(f"onchain payment intent not found: {intent_id}")
+        return row
+
+    def tx_hash_has_confirmed_onchain_credit_payment(self, tx_hash: str, *, excluding_id: int = 0) -> bool:
+        row = self.conn.execute(
+            """
+            SELECT id
+            FROM onchain_credit_payment_intents
+            WHERE tx_hash = ?
+              AND status = 'confirmed'
+              AND id != ?
+            LIMIT 1
+            """,
+            (tx_hash_or_raise(tx_hash), int(excluding_id)),
+        ).fetchone()
+        return bool(row)
+
+    def confirm_onchain_credit_payment_intent(
+        self,
+        intent_id: int,
+        *,
+        tx_hash: str,
+        payer_wallet: str,
+    ) -> Dict[str, Any]:
+        intent = self.get_onchain_credit_payment_intent(int(intent_id))
+        if not intent:
+            raise ValueError(f"onchain payment intent not found: {intent_id}")
+        if str(intent.get("status") or "").lower() == "confirmed":
+            return intent
+        if self.tx_hash_has_confirmed_onchain_credit_payment(tx_hash, excluding_id=int(intent_id)):
+            raise ValueError("tx_hash has already been credited")
+        now = int(time.time())
+        amount_label = f"{str(intent.get('amount_usdc') or '').strip()} USDC".strip()
+        with self.conn:
+            updated_user = self._apply_credit_delta_in_tx(
+                self.conn,
+                user_id=int(intent["user_id"]),
+                delta=int(intent["credits"]),
+                entry_type="onchain_usdc_topup",
+                source="billing.usdc_transfer",
+                payment_amount=amount_label,
+                payment_proof_ref=tx_hash_or_raise(tx_hash),
+                note=f"Base USDC topup intent:{intent_id}",
+                now_ts=now,
+            )
+            self.conn.execute(
+                """
+                UPDATE onchain_credit_payment_intents
+                SET status = 'confirmed',
+                    tx_hash = ?,
+                    payer_wallet = ?,
+                    credited_credit_ledger_id = ?,
+                    verified_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    tx_hash_or_raise(tx_hash),
+                    normalize_address(payer_wallet),
+                    int(updated_user.get("credit_ledger_id") or 0) or None,
+                    now,
+                    now,
+                    int(intent_id),
+                ),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO user_wallets(user_id, wallet, name, is_enabled, created_at, updated_at)
+                VALUES (?, ?, 'USDC payer', 1, ?, ?)
+                ON CONFLICT(user_id, wallet) DO UPDATE SET
+                    is_enabled = 1,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    int(intent["user_id"]),
+                    normalize_address(payer_wallet),
+                    now,
+                    now,
+                ),
+            )
+            notification_content = self.build_credit_notification_content(
+                entry_type="onchain_usdc_topup",
+                delta=int(intent["credits"]),
+                payment_amount=amount_label,
+                note="Base USDC 已确认",
+            )
+            self._create_user_notification_in_tx(
+                self.conn,
+                user_id=int(intent["user_id"]),
+                kind=notification_content["kind"],
+                title=notification_content["title"],
+                body=notification_content["body"],
+                action_url=notification_content["action_url"],
+                source_type="credit:onchain_usdc_topup",
+                source_id=int(updated_user.get("credit_ledger_id") or 0) or None,
+                delta=int(intent["credits"]),
+                created_at=now,
+            )
+        row = self.get_onchain_credit_payment_intent(int(intent_id))
+        if not row:
+            raise ValueError(f"onchain payment intent not found: {intent_id}")
+        return row
 
     def credit_billing_request(
         self,
@@ -4448,6 +5076,88 @@ class Storage:
         if not row:
             raise ValueError("failed to create project access")
         return row
+
+    def create_wallet_auth_challenge(
+        self,
+        *,
+        wallet: str,
+        nonce_hash: str,
+        message: str,
+        domain: str,
+        uri: str,
+        chain_id: int,
+        issued_at: int,
+        expires_at: int,
+        source: str = "base_wallet",
+    ) -> Dict[str, Any]:
+        now = int(time.time())
+        self.prune_wallet_auth_challenges(now - 3600)
+        cur = self.conn.execute(
+            """
+            INSERT INTO wallet_auth_challenges(
+                wallet, source, nonce_hash, message, domain, uri, chain_id,
+                issued_at, expires_at, consumed_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                normalize_address(wallet),
+                normalize_wallet_auth_source(source),
+                require_nonempty_text(nonce_hash, "nonce_hash"),
+                require_nonempty_text(message, "message"),
+                str(domain or "").strip(),
+                str(uri or "").strip(),
+                int(chain_id),
+                int(issued_at),
+                int(expires_at),
+                now,
+                now,
+            ),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM wallet_auth_challenges
+            WHERE id = ?
+            """,
+            (int(cur.lastrowid),),
+        ).fetchone()
+        if not row:
+            raise ValueError("failed to create wallet auth challenge")
+        return dict(row)
+
+    def get_wallet_auth_challenge(self, nonce_hash: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM wallet_auth_challenges
+            WHERE nonce_hash = ?
+            """,
+            (require_nonempty_text(nonce_hash, "nonce_hash"),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def consume_wallet_auth_challenge(self, challenge_id: int) -> None:
+        now = int(time.time())
+        self.conn.execute(
+            """
+            UPDATE wallet_auth_challenges
+            SET consumed_at = ?, updated_at = ?
+            WHERE id = ? AND consumed_at IS NULL
+            """,
+            (now, now, int(challenge_id)),
+        )
+        self.conn.commit()
+
+    def prune_wallet_auth_challenges(self, before_ts: int) -> None:
+        self.conn.execute(
+            """
+            DELETE FROM wallet_auth_challenges
+            WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)
+            """,
+            (int(before_ts), int(before_ts)),
+        )
+        self.conn.commit()
 
     def create_session(
         self,
@@ -5559,6 +6269,117 @@ class Storage:
         self.conn.commit()
         return {"project": project, "sum_tax_v": total_tax_str, "updated_at": now_ts}
 
+    def query_public_project_metrics(self, project: str) -> Dict[str, Any]:
+        project = str(project).strip()
+        if not project:
+            return {}
+
+        def to_decimal(value: Any) -> Decimal:
+            with contextlib.suppress(Exception):
+                parsed = Decimal(str(value or "0"))
+                if parsed.is_finite():
+                    return parsed
+            return Decimal(0)
+
+        events = self.conn.execute(
+            """
+            SELECT buyer, spent_v_est, tax_v
+            FROM events
+            WHERE project = ?
+            """,
+            (project,),
+        ).fetchall()
+        total_spent_v = Decimal(0)
+        total_tax_v = Decimal(0)
+        unique_buyers: Set[str] = set()
+        buy_event_count = 0
+        for row in events:
+            spent = to_decimal(row["spent_v_est"])
+            tax = to_decimal(row["tax_v"])
+            total_spent_v += spent
+            total_tax_v += tax
+            if spent > 0:
+                buy_event_count += 1
+            buyer = str(row["buyer"] or "").strip().lower()
+            if buyer:
+                unique_buyers.add(buyer)
+
+        leaderboard = self.conn.execute(
+            """
+            SELECT buyer, sum_spent_v_est, sum_token_bought, last_tx_time, updated_at
+            FROM leaderboard
+            WHERE project = ?
+            ORDER BY CAST(sum_token_bought AS REAL) DESC, CAST(sum_spent_v_est AS REAL) DESC
+            """,
+            (project,),
+        ).fetchall()
+        launch_cfg = self.get_launch_config_by_name(project)
+        total_supply = launch_cfg.token_total_supply if launch_cfg is not None else Decimal("1000000000")
+        price_row = self.conn.execute(
+            """
+            SELECT virtual_price_usd
+            FROM events
+            WHERE project = ? AND virtual_price_usd IS NOT NULL
+            ORDER BY block_timestamp DESC
+            LIMIT 1
+            """,
+            (project,),
+        ).fetchone()
+        virtual_price_usd = to_decimal(price_row["virtual_price_usd"]) if price_row else Decimal(0)
+        leaderboard_spend = [to_decimal(row["sum_spent_v_est"]) for row in leaderboard]
+        top_wallet_spent_v = leaderboard_spend[0] if leaderboard_spend else Decimal(0)
+        top20_spent_v = sum(leaderboard_spend[:20], Decimal(0))
+        public_whale_board: List[Dict[str, Any]] = []
+        for row in leaderboard:
+            spent = to_decimal(row["sum_spent_v_est"])
+            token = to_decimal(row["sum_token_bought"])
+            avg_cost_v = (spent / token) if token > 0 else Decimal(0)
+            fdv_v = avg_cost_v * total_supply if total_supply > 0 else Decimal(0)
+            fdv_usd = fdv_v * virtual_price_usd if virtual_price_usd > 0 else None
+            token_share = (token / total_supply) if total_supply > 0 else Decimal(0)
+            if token_share >= Decimal("0.20"):
+                continue
+            public_whale_board.append(
+                {
+                    "wallet": normalize_address(str(row["buyer"] or "")),
+                    "spentV": str(row["sum_spent_v_est"] or "0"),
+                    "tokenBought": str(row["sum_token_bought"] or "0"),
+                    "breakevenFdvUsd": decimal_to_str(fdv_usd, 6) if fdv_usd is not None else None,
+                    "updatedAt": int(row["last_tx_time"] or row["updated_at"] or 0),
+                }
+            )
+            if len(public_whale_board) >= 7:
+                break
+
+        peak_minute = self.conn.execute(
+            """
+            SELECT minute_spent_v, minute_buy_count, minute_key
+            FROM minute_agg
+            WHERE project = ?
+            ORDER BY CAST(minute_spent_v AS REAL) DESC
+            LIMIT 1
+            """,
+            (project,),
+        ).fetchone()
+        peak_minute_spent_v = to_decimal(peak_minute["minute_spent_v"]) if peak_minute else Decimal(0)
+        peak_minute_buy_count = int(peak_minute["minute_buy_count"] or 0) if peak_minute else 0
+        peak_minute_at = int(peak_minute["minute_key"] or 0) if peak_minute else 0
+
+        return {
+            "eventCount": len(events),
+            "buyEventCount": buy_event_count,
+            "uniqueBuyerCount": len(unique_buyers),
+            "totalSpentV": decimal_to_str(total_spent_v, 6),
+            "totalTaxV": decimal_to_str(total_tax_v, 6),
+            "topSpentV": decimal_to_str(top20_spent_v, 6),
+            "topWalletSpentV": decimal_to_str(top_wallet_spent_v, 6),
+            "peakMinuteSpentV": decimal_to_str(peak_minute_spent_v, 6),
+            "peakMinuteBuyCount": peak_minute_buy_count,
+            "peakMinuteAt": peak_minute_at,
+            "whaleRows": len(leaderboard),
+            "whaleBoard": public_whale_board,
+        }
+
     def query_recent_tax_observations(
         self,
         project: str,
@@ -6505,8 +7326,179 @@ class VirtualsBot:
     def user_home_path(self, user_row: Dict[str, Any]) -> str:
         return "/admin" if str(user_row.get("role") or "").lower() == "admin" else "/app"
 
+    def billing_plans(self) -> List[Dict[str, Any]]:
+        plans = [dict(plan) for plan in BILLING_PLANS]
+        if bool(self.cfg.billing_test_plan_enabled):
+            plans.insert(0, dict(BILLING_TEST_PLAN))
+        return plans
+
     def build_billing_plans_payload(self) -> List[Dict[str, Any]]:
-        return [dict(plan) for plan in BILLING_PLANS]
+        return self.billing_plans()
+
+    def find_billing_plan(self, plan_id: str) -> Dict[str, Any]:
+        plan_id_value = require_nonempty_text(plan_id, "plan_id")
+        for plan in self.billing_plans():
+            if str(plan.get("id") or "").strip() == plan_id_value:
+                return dict(plan)
+        raise ValueError(f"billing plan not found: {plan_id_value}")
+
+    def build_onchain_payment_config_payload(self) -> Dict[str, Any]:
+        receiver = normalize_optional_address(self.cfg.billing_usdc_receiver)
+        token_addr = normalize_address(self.cfg.billing_usdc_token_addr)
+        return {
+            "enabled": bool(receiver),
+            "chain_id": BASE_CHAIN_ID,
+            "chain_id_hex": hex(BASE_CHAIN_ID),
+            "network": "base",
+            "token_symbol": "USDC",
+            "token_decimals": BASE_USDC_DECIMALS,
+            "token_addr": token_addr,
+            "receiver": receiver or "",
+        }
+
+    def build_onchain_credit_payment_intent_payload(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": int(row.get("id") or 0),
+            "plan_id": str(row.get("plan_id") or ""),
+            "credits": int(row.get("credits") or 0),
+            "chain_id": int(row.get("chain_id") or BASE_CHAIN_ID),
+            "chain_id_hex": hex(int(row.get("chain_id") or BASE_CHAIN_ID)),
+            "network": "base",
+            "token_symbol": "USDC",
+            "token_decimals": BASE_USDC_DECIMALS,
+            "token_addr": normalize_address(str(row.get("token_addr") or self.cfg.billing_usdc_token_addr)),
+            "receiver": normalize_address(str(row.get("receiver") or "")),
+            "payer_wallet": normalize_optional_address(row.get("payer_wallet")) or "",
+            "amount_usdc": str(row.get("amount_usdc") or ""),
+            "amount_raw": str(row.get("amount_raw") or "0"),
+            "status": str(row.get("status") or "pending"),
+            "tx_hash": str(row.get("tx_hash") or ""),
+            "expires_at": int(row.get("expires_at") or 0),
+            "verified_at": int(row.get("verified_at") or 0) or None,
+            "created_at": int(row.get("created_at") or 0),
+            "updated_at": int(row.get("updated_at") or 0),
+        }
+
+    def build_x402_payment_requirements_payload(self, request: web.Request) -> Dict[str, Any]:
+        payment = self.build_onchain_payment_config_payload()
+        resource = f"{self.public_app_base_url(request)}/api/x402/base-signal"
+        return {
+            "x402Version": 1,
+            "accepts": [
+                {
+                    "scheme": "exact",
+                    "network": "eip155:8453",
+                    "maxAmountRequired": str(decimal_to_atomic_units(Decimal("0.01"), BASE_USDC_DECIMALS)),
+                    "resource": resource,
+                    "description": "Virtuals Whale Radar Base signal snapshot",
+                    "mimeType": "application/json",
+                    "payTo": payment["receiver"],
+                    "asset": payment["token_addr"],
+                    "extra": {
+                        "name": "USDC",
+                        "version": "2",
+                        "chainId": BASE_CHAIN_ID,
+                        "networkAlias": "base",
+                    },
+                }
+            ],
+            "error": "PAYMENT-SIGNATURE or X-PAYMENT header is required",
+        }
+
+    async def verify_onchain_credit_payment_receipt(
+        self,
+        intent: Dict[str, Any],
+        tx_hash: str,
+        *,
+        wait_sec: int = 0,
+    ) -> Dict[str, Any]:
+        deadline = time.monotonic() + max(0, int(wait_sec))
+        last_error: Optional[Exception] = None
+        while True:
+            try:
+                return await self._verify_onchain_credit_payment_receipt_once(intent, tx_hash)
+            except ValueError as e:
+                last_error = e
+                message = str(e).lower()
+                retryable = (
+                    "receipt not found" in message
+                    or "confirmation" in message
+                )
+                if not retryable or time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(
+                    min(
+                        ONCHAIN_CREDIT_PAYMENT_RECEIPT_POLL_SEC,
+                        max(0.1, deadline - time.monotonic()),
+                    )
+                )
+        if last_error:
+            raise last_error
+        raise ValueError("transaction receipt verification failed")
+
+    async def _verify_onchain_credit_payment_receipt_once(
+        self,
+        intent: Dict[str, Any],
+        tx_hash: str,
+    ) -> Dict[str, Any]:
+        tx_hash_value = tx_hash_or_raise(tx_hash)
+        receipt = await self.http_rpc.get_receipt(tx_hash_value)
+        if not receipt:
+            raise ValueError("transaction receipt not found yet")
+        if parse_hex_int(str(receipt.get("status") or "0x0")) != 1:
+            raise ValueError("transaction failed on-chain")
+
+        block_number = parse_hex_int(str(receipt.get("blockNumber") or "0x0"))
+        if block_number <= 0:
+            raise ValueError("transaction receipt has no block number")
+        required_confirmations = max(0, min(2, int(self.cfg.confirmations)))
+        if required_confirmations > 0:
+            latest_block = await self.http_rpc.get_latest_block_number()
+            confirmations = max(0, latest_block - block_number + 1)
+            if confirmations < required_confirmations:
+                raise ValueError(
+                    f"transaction needs {required_confirmations} confirmation(s), currently {confirmations}"
+                )
+
+        token_addr = normalize_address(str(intent.get("token_addr") or ""))
+        receiver = normalize_address(str(intent.get("receiver") or ""))
+        payer_hint = normalize_optional_address(intent.get("payer_wallet"))
+        amount_required = int(str(intent.get("amount_raw") or "0"))
+        if amount_required <= 0:
+            raise ValueError("payment intent amount is invalid")
+
+        for log in list(receipt.get("logs") or []):
+            if not isinstance(log, dict):
+                continue
+            try:
+                log_addr = normalize_address(str(log.get("address") or ""))
+            except Exception:
+                continue
+            if log_addr != token_addr:
+                continue
+            topics = list(log.get("topics") or [])
+            if len(topics) < 3 or str(topics[0] or "").lower() != TRANSFER_TOPIC0:
+                continue
+            try:
+                payer = address_from_topic(topics[1])
+                to_addr = address_from_topic(topics[2])
+                amount_raw = parse_hex_int(str(log.get("data") or "0x0"))
+            except Exception:
+                continue
+            if to_addr != receiver:
+                continue
+            if payer_hint and payer != payer_hint:
+                continue
+            if amount_raw < amount_required:
+                continue
+            return {
+                "tx_hash": tx_hash_value,
+                "payer_wallet": payer,
+                "amount_raw": amount_raw,
+                "block_number": block_number,
+            }
+
+        raise ValueError("matching Base USDC transfer was not found in transaction receipt")
 
     def billing_request_status_label(self, status: str) -> str:
         status_value = normalize_billing_request_status(status)
@@ -6687,6 +7679,7 @@ class VirtualsBot:
             "plans": self.build_billing_plans_payload(),
             "contact_qr_url": self.billing_contact_qr_url,
             "contact_hint": self.billing_contact_hint,
+            "onchain_payment": self.build_onchain_payment_config_payload(),
             "notice": DEFAULT_BILLING_REFERRAL_NOTICE,
             "referral_url": DEFAULT_BILLING_REFERRAL_URL,
         }
@@ -7005,6 +7998,144 @@ class VirtualsBot:
         )
         self.apply_session_cookie(response, token)
         return response
+
+    def build_wallet_auth_message(
+        self,
+        *,
+        wallet: str,
+        source: str,
+        domain: str,
+        uri: str,
+        nonce: str,
+        issued_at: int,
+    ) -> str:
+        normalized_wallet = normalize_address(wallet)
+        source_value = normalize_wallet_auth_source(source)
+        source_label = WALLET_SOURCE_LABELS.get(source_value, "Wallet")
+        return (
+            f"{domain} wants you to sign in with your Ethereum account:\n"
+            f"{normalized_wallet}\n\n"
+            f"Sign in to Virtuals Whale Radar with {source_label}. "
+            "This does not submit a transaction or grant token approvals.\n\n"
+            f"URI: {uri}\n"
+            "Version: 1\n"
+            f"Chain ID: {BASE_CHAIN_ID}\n"
+            f"Nonce: {nonce}\n"
+            f"Issued At: {format_siwe_issued_at(issued_at)}"
+        )
+
+    def build_base_wallet_auth_message(
+        self,
+        *,
+        wallet: str,
+        domain: str,
+        uri: str,
+        nonce: str,
+        issued_at: int,
+    ) -> str:
+        return self.build_wallet_auth_message(
+            wallet=wallet,
+            source="base_wallet",
+            domain=domain,
+            uri=uri,
+            nonce=nonce,
+            issued_at=issued_at,
+        )
+
+    async def verify_wallet_signature(
+        self,
+        *,
+        wallet: str,
+        message: str,
+        signature: str,
+    ) -> bool:
+        normalized_wallet = normalize_address(wallet)
+        signature_value = require_nonempty_text(signature, "signature")
+        recovered = ""
+        if EthAccount is not None and encode_defunct is not None:
+            with contextlib.suppress(Exception):
+                recovered = normalize_address(
+                    str(
+                        EthAccount.recover_message(
+                            encode_defunct(text=str(message or "")),
+                            signature=signature_value,
+                        )
+                    )
+                )
+        if recovered == normalized_wallet:
+            return True
+
+        code = ""
+        with contextlib.suppress(Exception):
+            code = str(await self.http_rpc.call("eth_getCode", [normalized_wallet, "latest"]) or "")
+        if not code or code.lower() == "0x":
+            return False
+
+        calldata = encode_eip1271_is_valid_signature_calldata(str(message or ""), signature_value)
+        result = str(await self.http_rpc.eth_call(normalized_wallet, calldata) or "").lower()
+        return result.startswith("0x1626ba7e")
+
+    async def verify_base_wallet_signature(
+        self,
+        *,
+        wallet: str,
+        message: str,
+        signature: str,
+    ) -> bool:
+        return await self.verify_wallet_signature(
+            wallet=wallet,
+            message=message,
+            signature=signature,
+        )
+
+    def get_or_create_wallet_user(
+        self,
+        wallet: str,
+        source: str,
+        request: web.Request,
+    ) -> Dict[str, Any]:
+        normalized_wallet = normalize_address(wallet)
+        source_value = normalize_wallet_auth_source(source)
+        user = self.storage.get_user_by_auth_wallet(normalized_wallet)
+        if not user:
+            for candidate_source in ("base_wallet", "okx_wallet", "injected_wallet"):
+                user = self.storage.get_user_by_email(synthetic_wallet_email(normalized_wallet, candidate_source))
+                if user:
+                    break
+        if not user:
+            now = int(time.time())
+            user = self.storage.create_user(
+                nickname=display_wallet_name(normalized_wallet, source_value),
+                email=synthetic_wallet_email(normalized_wallet, source_value),
+                password_hash=hash_password(secrets.token_urlsafe(32)),
+                role="user",
+                status="active",
+                source=source_value,
+                signup_bonus_credits=0,
+                email_verified_at=now,
+                signup_ip=self.request_client_ip(request),
+                signup_device_fingerprint=source_value.replace("_", "-"),
+            )
+        self.storage.upsert_wallet_auth_identity(
+            user_id=int(user["id"]),
+            wallet=normalized_wallet,
+            source=source_value,
+        )
+        wallet_rows = self.storage.list_user_wallet_rows(int(user["id"]))
+        if not any(str(row.get("wallet") or "").lower() == normalized_wallet for row in wallet_rows):
+            self.storage.add_user_wallet(
+                int(user["id"]),
+                wallet=normalized_wallet,
+                name=WALLET_SOURCE_LABELS.get(source_value, "Wallet"),
+                is_enabled=True,
+            )
+            refreshed = self.storage.get_user_by_id(int(user["id"]))
+            if refreshed:
+                user = refreshed
+        return user
+
+    def get_or_create_base_wallet_user(self, wallet: str, request: web.Request) -> Dict[str, Any]:
+        return self.get_or_create_wallet_user(wallet, "base_wallet", request)
 
     def build_launch_config_from_managed_project(
         self, project_row: Optional[Dict[str, Any]]
@@ -8520,6 +9651,106 @@ class VirtualsBot:
             "projects": public_projects,
         }
 
+    def build_public_base_entry_payload(self) -> Dict[str, Any]:
+        scheduler = self.build_project_scheduler_status()
+        scheduler_items = list(scheduler.get("items") or [])
+        rows_by_id = {
+            int(row.get("id") or 0): row
+            for row in self.storage.list_managed_projects()
+            if int(row.get("id") or 0) > 0
+        }
+        visible_items = [
+            item
+            for item in scheduler_items
+            if str(item.get("status") or "").strip().lower() in {"scheduled", "prelaunch", "live", "ended"}
+        ]
+
+        def sort_key(item: Dict[str, Any]) -> Tuple[int, int, str]:
+            projected = str(item.get("projectedStatus") or "").strip().lower()
+            priority = {"live": 0, "prelaunch": 1, "scheduled": 2, "ended": 3}.get(projected, 4)
+            start_at = int(item.get("startAt") or 0)
+            if priority == 3:
+                start_at = -start_at
+            return (priority, start_at, str(item.get("name") or ""))
+
+        visible_items.sort(key=sort_key)
+        preferred_name = str(os.getenv("PUBLIC_ENTRY_PROJECT_NAME") or PUBLIC_ENTRY_DEFAULT_PROJECT_NAME).strip()
+        preferred_key = preferred_name.upper()
+        selected_items = [
+            item
+            for item in visible_items
+            if str(item.get("name") or "").strip().upper() == preferred_key
+        ]
+        selected_from_snapshot = False
+        if not selected_items and preferred_key in PUBLIC_ENTRY_SHOWCASE_FALLBACKS:
+            selected_items = [PUBLIC_ENTRY_SHOWCASE_FALLBACKS[preferred_key]]
+            selected_from_snapshot = True
+        if not selected_items:
+            selected_items = visible_items[:1]
+
+        projects: List[Dict[str, Any]] = []
+        for item in selected_items[:1]:
+            project_id = int(item.get("id") or 0)
+            project_name = str(item.get("name") or "").strip()
+            row = rows_by_id.get(project_id) or {}
+            tax_v = "0"
+            metrics: Dict[str, Any] = {}
+            with contextlib.suppress(Exception):
+                tax_v = str(self.storage.query_project_tax(project_name).get("sum_tax_v") or "0")
+            with contextlib.suppress(Exception):
+                metrics = self.storage.query_public_project_metrics(project_name)
+            if selected_from_snapshot:
+                tax_v = str(item.get("sumTaxV") or tax_v)
+                metrics = {
+                    "topSpentV": str(item.get("topSpentV") or "0"),
+                    "topWalletSpentV": str(item.get("topWalletSpentV") or "0"),
+                    "totalSpentV": str(item.get("totalSpentV") or "0"),
+                    "peakMinuteSpentV": str(item.get("peakMinuteSpentV") or "0"),
+                    "peakMinuteBuyCount": int(item.get("peakMinuteBuyCount") or 0),
+                    "eventCount": int(item.get("eventCount") or 0),
+                    "buyEventCount": int(item.get("buyEventCount") or 0),
+                    "uniqueBuyerCount": int(item.get("uniqueBuyerCount") or 0),
+                    "whaleRows": int(item.get("whaleRows") or 0),
+                    "whaleBoard": list(item.get("whaleBoard") or []),
+                }
+            projects.append(
+                {
+                    "id": project_id,
+                    "name": project_name,
+                    "status": str(item.get("status") or ""),
+                    "projectedStatus": str(item.get("projectedStatus") or ""),
+                    "startAt": int(item.get("startAt") or 0),
+                    "resolvedEndAt": int(item.get("resolvedEndAt") or 0),
+                    "detailUrl": str(row.get("detail_url") or item.get("detailUrl") or ""),
+                    "tokenAddr": normalize_optional_address(row.get("token_addr") or item.get("tokenAddr")),
+                    "internalPoolAddr": normalize_optional_address(
+                        row.get("internal_pool_addr") or item.get("internalPoolAddr")
+                    ),
+                    "sumTaxV": tax_v,
+                    "topSpentV": str(metrics.get("topSpentV") or "0"),
+                    "topWalletSpentV": str(metrics.get("topWalletSpentV") or "0"),
+                    "totalSpentV": str(metrics.get("totalSpentV") or "0"),
+                    "peakMinuteSpentV": str(metrics.get("peakMinuteSpentV") or "0"),
+                    "peakMinuteBuyCount": int(metrics.get("peakMinuteBuyCount") or 0),
+                    "eventCount": int(metrics.get("eventCount") or 0),
+                    "buyEventCount": int(metrics.get("buyEventCount") or 0),
+                    "uniqueBuyerCount": int(metrics.get("uniqueBuyerCount") or 0),
+                    "whaleRows": int(metrics.get("whaleRows") or 0),
+                    "whaleBoard": list(metrics.get("whaleBoard") or []),
+                    "source": str(item.get("source") or ("local_db" if not selected_from_snapshot else "production_snapshot")),
+                }
+            )
+        return {
+            "ok": True,
+            "generatedAt": int(time.time()),
+            "chainId": BASE_CHAIN_ID,
+            "signalHubEnabled": bool(self.signalhub_client),
+            "activeProjectCount": int(scheduler.get("activeCount") or 0),
+            "managedProjectCount": len(visible_items),
+            "trackedWalletCount": len(self.storage.list_monitored_wallet_rows()),
+            "projects": projects,
+        }
+
     def reconcile_managed_projects_schedule(self, force_launch_sync: bool = False) -> Dict[str, int]:
         now = int(time.time())
         changed = 0
@@ -8808,9 +10039,18 @@ class VirtualsBot:
     async def __aenter__(self) -> "VirtualsBot":
         for client in self.rpc_clients_by_url.values():
             await client.__aenter__()
-        for client in self.backfill_http_rpcs:
-            with contextlib.suppress(Exception):
-                await self.probe_backfill_rpc(client, force=True)
+        skip_backfill_probe = parse_bool_like(os.getenv("SKIP_BACKFILL_RPC_PROBE"))
+        backfill_probe_timeout = max(
+            1,
+            int(os.getenv("BACKFILL_RPC_PROBE_TIMEOUT_SEC") or "8"),
+        )
+        if not skip_backfill_probe:
+            for client in self.backfill_http_rpcs:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        self.probe_backfill_rpc(client, force=True),
+                        timeout=backfill_probe_timeout,
+                    )
         if self.enable_api and self.signalhub_client:
             await self.signalhub_client.__aenter__()
         return self
@@ -10280,6 +11520,9 @@ class VirtualsBot:
             }
         )
 
+    async def public_base_entry_handler(self, request: web.Request) -> web.Response:
+        return web.json_response(self.build_public_base_entry_payload())
+
     async def auth_register_handler(self, request: web.Request) -> web.Response:
         try:
             payload = await request.json()
@@ -10485,6 +11728,123 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    async def auth_base_challenge_handler(self, request: web.Request) -> web.Response:
+        return await self.auth_wallet_challenge_handler(request, default_source="base_wallet")
+
+    async def auth_wallet_challenge_handler(
+        self,
+        request: web.Request,
+        *,
+        default_source: str = "base_wallet",
+    ) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            wallet = normalize_address(require_nonempty_text(payload.get("wallet"), "wallet"))
+            source = normalize_wallet_auth_source(payload.get("source") or default_source)
+            nonce = secrets.token_hex(16)
+            now = int(time.time())
+            expires_at = now + BASE_WALLET_AUTH_TTL_SEC
+            base_url = self.public_app_base_url(request)
+            parsed = urllib.parse.urlparse(base_url)
+            domain = parsed.netloc or str(request.host or "").strip()
+            message = self.build_wallet_auth_message(
+                wallet=wallet,
+                source=source,
+                domain=domain,
+                uri=base_url,
+                nonce=nonce,
+                issued_at=now,
+            )
+            self.storage.create_wallet_auth_challenge(
+                wallet=wallet,
+                nonce_hash=hash_session_token(nonce, self.session_secret),
+                message=message,
+                domain=domain,
+                uri=base_url,
+                chain_id=BASE_CHAIN_ID,
+                issued_at=now,
+                expires_at=expires_at,
+                source=source,
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "wallet": wallet,
+                    "source": source,
+                    "chain_id": BASE_CHAIN_ID,
+                    "nonce": nonce,
+                    "message": message,
+                    "expires_at": expires_at,
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def auth_base_verify_handler(self, request: web.Request) -> web.Response:
+        return await self.auth_wallet_verify_handler(request, default_source="base_wallet")
+
+    async def auth_wallet_verify_handler(
+        self,
+        request: web.Request,
+        *,
+        default_source: str = "base_wallet",
+    ) -> web.Response:
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        client_ip = self.request_client_ip(request)
+        try:
+            self.ensure_login_fail_ip_allowed(client_ip)
+            wallet = normalize_address(require_nonempty_text(payload.get("wallet"), "wallet"))
+            nonce = require_nonempty_text(payload.get("nonce"), "nonce")
+            message = require_nonempty_text(payload.get("message"), "message")
+            signature = require_nonempty_text(payload.get("signature"), "signature")
+            challenge = self.storage.get_wallet_auth_challenge(
+                hash_session_token(nonce, self.session_secret)
+            )
+            now = int(time.time())
+            if not challenge:
+                self.record_auth_attempt("login_fail_ip", client_ip)
+                return web.json_response({"error": "wallet challenge is invalid or expired"}, status=400)
+            if int(challenge.get("consumed_at") or 0) > 0 or int(challenge.get("expires_at") or 0) <= now:
+                self.record_auth_attempt("login_fail_ip", client_ip)
+                return web.json_response({"error": "wallet challenge is invalid or expired"}, status=400)
+            if normalize_address(str(challenge.get("wallet") or "")) != wallet:
+                self.record_auth_attempt("login_fail_ip", client_ip)
+                return web.json_response({"error": "wallet does not match challenge"}, status=400)
+            if str(challenge.get("message") or "") != message:
+                self.record_auth_attempt("login_fail_ip", client_ip)
+                return web.json_response({"error": "signed message does not match challenge"}, status=400)
+            if int(challenge.get("chain_id") or 0) != BASE_CHAIN_ID:
+                self.record_auth_attempt("login_fail_ip", client_ip)
+                return web.json_response({"error": "wallet challenge has invalid chain"}, status=400)
+            source = normalize_wallet_auth_source(challenge.get("source") or payload.get("source") or default_source)
+
+            if not await self.verify_wallet_signature(
+                wallet=wallet,
+                message=message,
+                signature=signature,
+            ):
+                self.record_auth_attempt("login_fail_ip", client_ip)
+                return web.json_response({"error": "wallet signature verification failed"}, status=401)
+
+            self.storage.consume_wallet_auth_challenge(int(challenge["id"]))
+            user = self.get_or_create_wallet_user(wallet, source, request)
+            if str(user.get("status") or "").lower() != "active":
+                return web.json_response({"error": "user is disabled"}, status=403)
+            return self.build_auth_success_response(user, request)
+        except RateLimitExceeded as e:
+            return web.json_response(
+                {"error": e.message, "code": e.code, "retry_after_sec": e.retry_after_sec},
+                status=429,
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
     async def auth_logout_handler(self, request: web.Request) -> web.Response:
         cookie_token = str(request.cookies.get(self.session_cookie_name) or "").strip()
         if cookie_token:
@@ -10500,6 +11860,22 @@ class VirtualsBot:
     async def app_billing_summary_handler(self, request: web.Request) -> web.Response:
         user = self.require_auth(request)
         return web.json_response(self.build_billing_summary_payload(user))
+
+    async def app_billing_onchain_intents_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        limit_raw = str(request.query.get("limit", "")).strip()
+        limit = 10
+        if limit_raw:
+            try:
+                limit = max(1, min(50, int(limit_raw)))
+            except ValueError:
+                return web.json_response({"error": "limit must be integer"}, status=400)
+        rows = self.storage.list_onchain_credit_payment_intents_for_user(
+            int(user["id"]),
+            limit=limit,
+        )
+        items = [self.build_onchain_credit_payment_intent_payload(row) for row in rows]
+        return web.json_response({"ok": True, "count": len(items), "items": items})
 
     async def app_notifications_handler(self, request: web.Request) -> web.Response:
         user = self.require_auth(request)
@@ -10595,7 +11971,7 @@ class VirtualsBot:
                 raise ValueError("requested_credits must be positive")
             if plan_id:
                 matched_plan = next(
-                    (plan for plan in BILLING_PLANS if str(plan.get("id") or "").strip() == plan_id),
+                    (plan for plan in self.billing_plans() if str(plan.get("id") or "").strip() == plan_id),
                     None,
                 )
                 if matched_plan and int(matched_plan.get("credits") or 0) != requested_credits:
@@ -10660,6 +12036,144 @@ class VirtualsBot:
             f"inline; filename=\"{str(row.get('proof_original_name') or path.name)}\""
         )
         return response
+
+    async def app_billing_onchain_intent_create_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("invalid json body")
+            payment = self.build_onchain_payment_config_payload()
+            if not bool(payment.get("enabled")):
+                return web.json_response({"error": "Base USDC payment receiver is not configured"}, status=503)
+            plan = self.find_billing_plan(str(payload.get("plan_id") or ""))
+            amount_usdc = Decimal(str(plan.get("priceUsdc") or "0"))
+            amount_raw = decimal_to_atomic_units(amount_usdc, BASE_USDC_DECIMALS)
+            if amount_raw <= 0:
+                raise ValueError("billing plan has invalid USDC price")
+            payer_wallet = normalize_optional_address(payload.get("payer_wallet")) or ""
+            expires_at = int(time.time()) + ONCHAIN_CREDIT_PAYMENT_TTL_SEC
+            item = self.storage.create_onchain_credit_payment_intent(
+                user_id=int(user["id"]),
+                plan_id=str(plan["id"]),
+                credits=int(plan["credits"]),
+                chain_id=BASE_CHAIN_ID,
+                token_addr=str(payment["token_addr"]),
+                receiver=str(payment["receiver"]),
+                payer_wallet=payer_wallet,
+                amount_usdc=format(amount_usdc.normalize(), "f"),
+                amount_raw=amount_raw,
+                expires_at=expires_at,
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "item": self.build_onchain_credit_payment_intent_payload(item),
+                    "payment": payment,
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def app_billing_onchain_intent_verify_handler(self, request: web.Request) -> web.Response:
+        user = self.require_auth(request)
+        intent_id_raw = str(request.match_info.get("intent_id", "")).strip()
+        if not intent_id_raw:
+            return web.json_response({"error": "intent_id is required"}, status=400)
+        try:
+            intent_id = int(intent_id_raw)
+        except ValueError:
+            return web.json_response({"error": "intent_id must be integer"}, status=400)
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("invalid json body")
+            intent = self.storage.get_onchain_credit_payment_intent_for_user(int(user["id"]), intent_id)
+            if not intent:
+                return web.json_response({"error": f"onchain payment intent not found: {intent_id}"}, status=404)
+            if str(intent.get("status") or "").lower() == "confirmed":
+                refreshed_user = self.storage.get_user_by_id(int(user["id"])) or user
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "alreadyConfirmed": True,
+                        "item": self.build_onchain_credit_payment_intent_payload(intent),
+                        "billing": self.build_billing_summary_payload(refreshed_user),
+                    }
+                )
+            tx_hash = tx_hash_or_raise(payload.get("tx_hash"))
+            current_tx = str(intent.get("tx_hash") or "").strip().lower()
+            if int(intent.get("expires_at") or 0) <= int(time.time()) and current_tx != tx_hash:
+                return web.json_response({"error": "onchain payment intent has expired"}, status=400)
+            intent = self.storage.record_onchain_credit_payment_tx(
+                intent_id,
+                tx_hash=tx_hash,
+                payer_wallet=str(intent.get("payer_wallet") or ""),
+            )
+            wait_sec = ONCHAIN_CREDIT_PAYMENT_RECEIPT_WAIT_SEC
+            if payload.get("wait_sec") is not None:
+                wait_sec = max(0, min(180, int(payload.get("wait_sec") or 0)))
+            receipt_match = await self.verify_onchain_credit_payment_receipt(
+                intent,
+                tx_hash,
+                wait_sec=wait_sec,
+            )
+            confirmed = self.storage.confirm_onchain_credit_payment_intent(
+                intent_id,
+                tx_hash=tx_hash,
+                payer_wallet=str(receipt_match["payer_wallet"]),
+            )
+            refreshed_user = self.storage.get_user_by_id(int(user["id"])) or user
+            return web.json_response(
+                {
+                    "ok": True,
+                    "alreadyConfirmed": False,
+                    "item": self.build_onchain_credit_payment_intent_payload(confirmed),
+                    "billing": self.build_billing_summary_payload(refreshed_user),
+                }
+            )
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def x402_skill_handler(self, request: web.Request) -> web.Response:
+        payment = self.build_onchain_payment_config_payload()
+        base_url = self.public_app_base_url(request)
+        text = "\n".join(
+            [
+                "# Virtuals Whale Radar",
+                "",
+                "Virtuals Whale Radar exposes Base ecosystem signal snapshots for wallet and agent clients.",
+                "",
+                "## Paid API",
+                "",
+                f"- Endpoint: `{base_url}/api/x402/base-signal`",
+                "- Network: `base`",
+                f"- Asset: USDC `{payment['token_addr']}`",
+                f"- Pay to: `{payment['receiver'] or 'not-configured'}`",
+                "- Current local pilot returns an HTTP 402 x402 payment requirement. Facilitator settlement is a follow-up step.",
+                "",
+            ]
+        )
+        return web.Response(text=text, content_type="text/markdown")
+
+    async def x402_base_signal_handler(self, request: web.Request) -> web.Response:
+        payment = self.build_onchain_payment_config_payload()
+        if not bool(payment.get("enabled")):
+            return web.json_response({"error": "x402 payment receiver is not configured"}, status=503)
+        requirements = self.build_x402_payment_requirements_payload(request)
+        payment_header = str(
+            request.headers.get("PAYMENT-SIGNATURE") or request.headers.get("X-PAYMENT") or ""
+        ).strip()
+        if payment_header:
+            requirements["error"] = "x402 facilitator settlement is not configured in this local build"
+        encoded_requirements = base64.b64encode(
+            json.dumps(requirements, separators=(",", ":")).encode()
+        ).decode()
+        return web.json_response(
+            requirements,
+            status=402,
+            headers={"PAYMENT-REQUIRED": encoded_requirements},
+        )
 
     async def app_project_access_handler(self, request: web.Request) -> web.Response:
         user = self.require_auth(request)
@@ -12122,13 +13636,23 @@ class VirtualsBot:
         app.router.add_get("/app", self.admin_handler)
         app.router.add_get("/app/", self.admin_handler)
         app.router.add_get("/app/{tail:.*}", self.admin_handler)
+        app.router.add_get("/base", self.admin_handler)
+        app.router.add_get("/base/", self.admin_handler)
+        app.router.add_get("/base/{tail:.*}", self.admin_handler)
         app.router.add_get("/auth", self.admin_handler)
         app.router.add_get("/auth/", self.admin_handler)
         app.router.add_get("/auth/{tail:.*}", self.admin_handler)
+        app.router.add_get("/api/public/base-entry", self.public_base_entry_handler)
+        app.router.add_get("/.well-known/SKILL.md", self.x402_skill_handler)
+        app.router.add_get("/api/x402/base-signal", self.x402_base_signal_handler)
         app.router.add_post("/api/auth/register", self.auth_register_handler)
         app.router.add_post("/api/auth/resend-verification", self.auth_resend_verification_handler)
         app.router.add_get("/api/auth/verify-email", self.auth_verify_email_handler)
         app.router.add_post("/api/auth/login", self.auth_login_handler)
+        app.router.add_post("/api/auth/base/challenge", self.auth_base_challenge_handler)
+        app.router.add_post("/api/auth/base/verify", self.auth_base_verify_handler)
+        app.router.add_post("/api/auth/wallet/challenge", self.auth_wallet_challenge_handler)
+        app.router.add_post("/api/auth/wallet/verify", self.auth_wallet_verify_handler)
         app.router.add_post("/api/auth/logout", self.auth_logout_handler)
         app.router.add_get("/api/auth/me", self.auth_me_handler)
         app.router.add_get("/api/app/meta", self.app_meta_handler)
@@ -12136,6 +13660,12 @@ class VirtualsBot:
         app.router.add_get("/api/app/billing/requests", self.app_billing_requests_handler)
         app.router.add_post("/api/app/billing/requests", self.app_billing_request_create_handler)
         app.router.add_get("/api/app/billing/requests/{request_id}/proof", self.app_billing_request_proof_handler)
+        app.router.add_get("/api/app/billing/onchain-intents", self.app_billing_onchain_intents_handler)
+        app.router.add_post("/api/app/billing/onchain-intents", self.app_billing_onchain_intent_create_handler)
+        app.router.add_post(
+            "/api/app/billing/onchain-intents/{intent_id}/verify",
+            self.app_billing_onchain_intent_verify_handler,
+        )
         app.router.add_get("/api/app/notifications", self.app_notifications_handler)
         app.router.add_post("/api/app/notifications/read-all", self.app_notifications_read_all_handler)
         app.router.add_post("/api/app/notifications/{notification_id}/read", self.app_notification_read_handler)

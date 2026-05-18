@@ -83,6 +83,15 @@ function userStatusLabel(status: string) {
 }
 
 function userSourceLabel(source: string) {
+  if (source === "base_wallet") {
+    return "Base 钱包";
+  }
+  if (source === "okx_wallet") {
+    return "OKX 钱包";
+  }
+  if (source === "injected_wallet") {
+    return "浏览器钱包";
+  }
   return source === "admin_created" ? "管理员创建" : "用户注册";
 }
 
@@ -499,6 +508,9 @@ export function UsersPage() {
               <option value="">全部来源</option>
               <option value="self_signup">用户注册</option>
               <option value="admin_created">管理员创建</option>
+              <option value="base_wallet">Base 钱包</option>
+              <option value="okx_wallet">OKX 钱包</option>
+              <option value="injected_wallet">浏览器钱包</option>
             </Select>
             <Button variant="secondary" onClick={() => setCreateDialogOpen(true)}>
               <UserPlus className="size-4" />

@@ -12,6 +12,7 @@ import { resolvePostAuthRedirect } from "@/auth/redirect";
 import { useAuth } from "@/auth/use-auth";
 import { LoadingState } from "@/components/app-primitives";
 import { Button } from "@/components/ui/button";
+import { BaseEntryPage } from "@/pages/BaseEntryPage";
 import { InboxPage } from "@/pages/InboxPage";
 import { BillingPage } from "@/pages/BillingPage";
 import { LoginPage } from "@/pages/LoginPage";
@@ -78,7 +79,7 @@ function RootRedirect() {
   if (auth?.authenticated && auth.home_path) {
     return <Navigate to={auth.home_path} replace />;
   }
-  return <Navigate to="/auth/login" replace />;
+  return <Navigate to="/base" replace />;
 }
 
 function AdminDefaultRoute() {
@@ -136,7 +137,7 @@ function ProtectedRoute({ role }: { role: "admin" | "user" }) {
   }
   if (!auth?.authenticated || !auth.user) {
     const redirect = encodeURIComponent(`${location.pathname}${location.search}`);
-    return <Navigate to={`/auth/login?redirect=${redirect}`} replace />;
+    return <Navigate to={`/base?redirect=${redirect}`} replace />;
   }
   if (role === "admin" && auth.user.role !== "admin") {
     return <Navigate to="/app" replace />;
@@ -156,6 +157,7 @@ export function App() {
             <AppErrorBoundary>
               <Routes>
                 <Route path="/" element={<RootRedirect />} />
+                <Route path="/base" element={<BaseEntryPage />} />
 
                 <Route element={<AuthRoute />}>
                   <Route path="/auth/login" element={<LoginPage />} />

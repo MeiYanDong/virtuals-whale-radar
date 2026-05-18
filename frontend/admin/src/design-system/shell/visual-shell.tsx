@@ -16,6 +16,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useDesignTheme } from "@/design-system/theme/use-theme";
+import { BRAND_LOGO_SRC } from "@/lib/brand-assets";
 import { cn } from "@/lib/utils";
 
 export type VisualSidebarMode = "expanded" | "rail" | "hidden";
@@ -277,7 +278,7 @@ export function VisualShell({
   title,
   brandTitle = "Virtuals Whale Radar",
   brandSubtitle = "Design System",
-  brandLogoSrc = "/admin/brand/logo-mark.png",
+  brandLogoSrc = BRAND_LOGO_SRC,
   navItems,
   children,
   sidebarMode,

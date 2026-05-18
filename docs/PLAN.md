@@ -16,8 +16,8 @@
 - 新增用户端 `/app`，提供 `Overview / Projects / SignalHub / Wallets / Billing` 五页。
 - 新增管理员 `Users` 页面，用于查看、禁用、重置用户并查看所有用户钱包。
 - 将钱包数据拆成“管理员全局钱包”和“用户私有钱包”两套模型。
-- 新增“积分解锁 + Billing + 管理员手动加减积分”的轻量商业闭环。
-- 保留用户通知中心，但当前充值处理走“微信付款 + 管理员在 Users 内手动入账”的轻流程。
+- 新增“积分解锁 + Billing + Base USDC 自动充值 + 管理员手动加减积分”的轻量商业闭环。
+- 保留用户通知中心，当前充值处理优先走 Base USDC 自动入账，微信/管理员手动入账作为备用。
 - 保留 `Projects` 里的 `ended` 项目，并允许用户回看历史项目详情。
 
 ## 2. 已确认决策
@@ -48,7 +48,7 @@
   - `从 Projects 移除`
   - `停止调度`
   - `保留历史数据`
-- 未登录访问业务页时，统一跳转到 `/auth/login`。
+- 未登录访问业务页时，统一跳转到 `/base?redirect=...`，把 Base 欢迎页作为公开入口。
 - 注册字段固定为：`昵称 / 邮箱 / 密码`。
 - 注册成功后默认直接登录，并进入角色对应首页。
 - 用户端一级导航固定为：
@@ -66,21 +66,21 @@
   - `Settings`
 - 用户端 `Wallets` 可编辑，但数据只属于当前登录用户，互不可见。
 - 用户端 `Overview / Projects / SignalHub` 全部只读，不提供任何编辑、删除、勾选、采集、回扫入口。
-- 用户查看某个项目的 `Overview` 详细数据时，按“每用户、每项目首次解锁”扣 `10` 积分。
+- 用户查看某个项目的 `Overview` 详细数据时，按“每用户、每项目首次解锁”扣 `20` 积分。
 - 同一用户对同一项目解锁后永久可看，不重复扣分。
 - 新用户注册赠送 `20` 积分。
 - 充值方案固定为：
-  - `10 积分 = 10 元`
-- `50 积分 = 40 元`
+  - `20 积分 = 20 元 / 2.00 USDC`
+  - `100 积分 = 80 元 / 8.00 USDC`
 - 用户端 `Projects` 与 `SignalHub` 列表免费可看，但未解锁项目的 `Overview` 详细数据不可看。
 - 用户积分不足时，点击未解锁项目应引导到 `Billing`。
-- `Billing` 页面展示联系方式二维码，不接入在线支付。
+- `Billing` 页面以 Base USDC 自动支付为主，联系方式二维码作为支付失败/未到账时的帮助入口。
 - 用户通知支持 `未读 / 已读 / 全部已读`，并在顶栏显示未读提醒。
-- 当前不单独设置充值申请流程；用户微信付款后，管理员直接在 `Users` 页面手动补积分。
+- 当前不单独设置充值申请流程；用户优先走 Base USDC 自动入账，异常时再联系运营手动处理。
 - `billing_requests` / 付款凭证附件能力保留为备用后端能力，但不是当前产品主流程。
 - 链上 RPC 使用策略升级为：`实时采集 / 历史回扫 / SignalHub 识别` 分池使用；2026-05-07 按用户要求切为 Chainstack 优先，当前生产顺序为 `Chainstack -> Ankr -> Alchemy -> Base public -> PublicNode`。
-- `Billing` 顶部固定展示邀请文案与注册链接：
-  - 文案：`Virtuals 新用户使用邀请码注册，后续付费一律五折`
+- `Billing` 顶部固定展示 Virtuals 注册福利与注册链接：
+  - 文案：`如果你还没有 Virtuals 账号，可以先用邀请码完成注册；这里的积分只用于解锁 Whale Radar 项目看板。`
   - 链接：`https://app.virtuals.io/referral?code=LFfW5x`
 - 管理员调整积分时只允许“加积分 / 扣积分 + 备注”，不直接裸改余额。
 - 管理员可以查看所有用户的钱包，但用户之间互不可见。
@@ -91,7 +91,7 @@
 
 ```mermaid
 flowchart LR
-  A["Auth Shell<br/>/auth/login /auth/register"] --> B["Session + Role Guard"]
+  A["Base Welcome + Auth Shell<br/>/base /auth/login /auth/register"] --> B["Session + Role Guard"]
 
   B --> C["Admin Shell<br/>Overview / Projects / SignalHub / Wallets / Users / Settings"]
   B --> D["User Shell<br/>Overview / Projects / SignalHub / Wallets / Billing"]
@@ -420,20 +420,21 @@ Whale Board
 
 ## 5.5 Billing
 
-`Billing` 是用户端一级页面，用于展示积分状态、充值方案、联系方式二维码和邀请信息。
+`Billing` 是用户端一级页面，用于展示积分状态、Base USDC 充值方案、联系方式二维码备用通道和邀请信息。
 
 ### 页面目标
 
 - 展示当前用户积分余额
 - 展示累计消耗积分
 - 展示已解锁项目数
-- 展示固定充值方案
-- 展示联系方式二维码
-- 提供邀请注册链接说明
+- 展示按 `20` 积分/项目对齐的充值方案
+- 展示 Base USDC 自动支付按钮和验链确认边界
+- 展示联系方式二维码作为支付失败、重复付款或积分未到账时的帮助入口
+- 提供 Virtuals 邀请注册链接说明，但不在用户界面承诺未落地的自动五折
 
 ### 顶部公告条
 
-- 文案：`Virtuals 新用户使用邀请码注册，后续付费一律五折`
+- 文案：`如果你还没有 Virtuals 账号，可以先用邀请码完成注册；这里的积分只用于解锁 Whale Radar 项目看板。`
 - 链接：`https://app.virtuals.io/referral?code=LFfW5x`
 
 ### 页面内容
@@ -443,15 +444,15 @@ Whale Board
   - 累计消耗积分
   - 已解锁项目数
 - 套餐卡：
-  - `10 积分 / 10 元`
-- `50 积分 / 40 元`
+  - `20 积分 / 20 元 / 2.00 USDC`
+  - `100 积分 / 80 元 / 8.00 USDC`
 - 最近通知区：
   - 展示未读 / 已读状态
   - 支持单条已读
   - 支持全部已读
 - 联系方式二维码：
-  - 点击购买只展示二维码与联系说明
-  - 管理员线下确认后手动加积分
+  - 二维码只作为支付失败、重复付款或积分未到账时的帮助入口
+  - 运营核对后手动处理积分
 
 ### 非目标
 
@@ -814,7 +815,7 @@ sequenceDiagram
 ### 12.2 数据与逻辑
 
 - 项目能从 `SignalHub` 进入关注列表并自动出现在 `Projects`
-- 未登录访问业务路由会跳转到登录页
+- 未登录访问业务路由会跳转到 `/base` 欢迎页，并保留原目标作为登录后的返回地址
 - 用户登录后只能访问 `/app`
 - 管理员登录后只能访问 `/admin`
 - 结束时间解析严格遵循：
@@ -945,7 +946,7 @@ CREATE TABLE IF NOT EXISTS user_project_access (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     project_id INTEGER NOT NULL,
-    unlock_cost INTEGER NOT NULL DEFAULT 10,
+    unlock_cost INTEGER NOT NULL DEFAULT 20,
     source TEXT NOT NULL DEFAULT 'credit_unlock',
     unlocked_at INTEGER NOT NULL,
     expires_at INTEGER,
@@ -1011,7 +1012,7 @@ CREATE INDEX IF NOT EXISTS idx_user_project_access_project_id
 ```mermaid
 flowchart TD
   A["访问任意页面"] --> B{"是否已登录"}
-  B -- "否" --> C["重定向 /auth/login"]
+  B -- "否" --> C["重定向 /base?redirect=..."]
   B -- "是" --> D{"当前角色"}
 
   D -- "user" --> E{"访问路径"}
@@ -1089,7 +1090,7 @@ Whale Board
 我的钱包持仓
 交易录入延迟（折叠）
 未解锁时显示：
-项目已锁定 / 解锁需 10 积分 / 当前积分 / [解锁项目] [去 Billing]
+项目已锁定 / 解锁需 20 积分 / 当前积分 / [解锁项目] [去 Billing]
 ```
 
 ```text
@@ -1118,13 +1119,13 @@ User Wallets
 
 ```text
 User Billing
-公告条：Virtuals 新用户使用邀请码注册，后续付费一律五折
+公告条：如果你还没有 Virtuals 账号，可以先用邀请码完成注册；这里的积分只用于解锁 Whale Radar 项目看板。
 [打开注册链接]
 当前积分 / 累计消耗积分 / 已解锁项目数
-10 积分 / 10 元 [联系付款]
-50 积分 / 40 元 [联系付款]
-联系方式二维码
-付款后联系管理员手动加积分
+20 积分 / 20 元 / 2.00 USDC [Base Account 支付] [OKX Wallet 支付]
+100 积分 / 80 元 / 8.00 USDC [Base Account 支付] [OKX Wallet 支付]
+联系方式二维码备用
+链上支付异常时联系管理员手动加积分
 ```
 
 ### 17.3 管理员端
@@ -1206,12 +1207,14 @@ CREATE TABLE IF NOT EXISTS user_notifications (
 说明：
 
 - 这组接口和表结构当前保留为备用能力，不作为默认产品流程暴露给用户。
-- 当前默认流程是：用户微信付款 -> 管理员在 `Users` 页面执行手动入账 -> 用户收到到账提醒。
+- 当前默认流程是：用户在 `Billing` 选择套餐 -> 钱包发起 Base USDC transfer -> 后端验 receipt 后自动入账并通知用户。
+- 备用流程是：用户微信付款 -> 管理员在 `Users` 页面执行手动入账 -> 用户收到到账提醒。
 
 ### 18.3 验收链路
 
-- 当前主流程：用户微信付款后，管理员在 `Users` 页面手动入账，用户收到“充值积分已到账”提醒
-- 备用流程：若未来确实需要工单化，再启用 `billing_requests` / proof / notify 这组隐藏能力
+- 当前主流程：用户用 Base Account / OKX Wallet 支付 USDC，后端验链后自动入账，用户收到“充值积分已到账”提醒
+- 备用流程：用户微信付款后，管理员在 `Users` 页面手动入账，用户收到“充值积分已到账”提醒
+- 隐藏工单流程：若未来确实需要工单化，再启用 `billing_requests` / proof / notify 这组隐藏能力
 
 ## 19. 邮箱验证注册方案
 
@@ -2582,3 +2585,162 @@ Phase 052 执行结果：
 - 当前边界：
   - ROO 专用 `vwr-launch-roo-start.timer` 仍是历史产物；后续新项目应使用通用 `schedule_launch_services.py` 创建项目级 timer。
   - 通用启动脚本只负责 systemd 编排，不修改买入/卖出策略配置，也不保存私钥。
+
+## 47. Base 生态钱包与链上积分支付（Phase 057，2026-05-18）
+
+本阶段目标是把现有 Web2 产品推进到 Base 生态可用形态：用户可以用 Base Account 或 OKX Wallet 登录，可以用 Base USDC 购买积分，同时保留当前积分/解锁/用户钱包体系。
+
+### 47.1 边界
+
+- 本阶段只改用户入口、钱包身份、充值支付和 agent 付费 API 试点。
+- 不改自动买入、自动卖出、execution RPC、runtime control、fuse、launch scheduler 和生产广播链路。
+- 用户钱包交互只用于登录签名和 USDC 充值付款，不请求 token 授权，不代用户执行 Virtuals 项目买卖。
+
+### 47.2 多钱包登录
+
+- Base Account 继续作为 `/base` 默认入口，面向 Base App / Coinbase Wallet 用户。
+- OKX Wallet 作为第二钱包入口，检测 EVM provider 后执行：
+  - 获取地址。
+  - 切换或添加 Base Mainnet。
+  - 签名 SIWE 消息。
+  - 后端验签后创建 session。
+- 后端钱包认证来源扩展为：
+  - `base_wallet`
+  - `okx_wallet`
+  - `injected_wallet`
+- 同一钱包地址优先复用钱包认证身份或历史 synthetic wallet email，避免用户在不同钱包入口重复创建账号。
+
+### 47.3 Base USDC 购买积分
+
+新增链上充值 intent，不复用交易执行账本，避免把“用户充值”与“项目自动交易”混在一起。
+
+已实现表结构：
+
+```sql
+CREATE TABLE IF NOT EXISTS onchain_credit_payment_intents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    plan_id TEXT NOT NULL,
+    credits INTEGER NOT NULL,
+    chain_id INTEGER NOT NULL DEFAULT 8453,
+    token_addr TEXT NOT NULL,
+    receiver TEXT NOT NULL,
+    payer_wallet TEXT NOT NULL DEFAULT '',
+    amount_usdc TEXT NOT NULL,
+    amount_raw TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    tx_hash TEXT NOT NULL DEFAULT '',
+    credited_credit_ledger_id INTEGER,
+    expires_at INTEGER NOT NULL,
+    verified_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+用户流程：
+
+1. 用户在 `Billing` 选择积分套餐。
+2. 后端创建 `payment intent`，返回 Base USDC 合约、收款地址、金额、过期时间。
+3. 前端通过当前钱包发起 USDC `transfer(receiver, amountRaw)`。
+4. 后端读取 transaction receipt，验证：
+   - receipt 成功。
+   - token 为 Base 原生 USDC。
+   - `Transfer` 事件收款地址为配置收款地址。
+   - 转账金额不低于 intent 金额。
+   - 付款钱包与 intent 绑定地址一致。
+   - tx hash 未被其他 intent 入账。
+   - 钱包刚返回 tx hash 时，Base RPC 可能还没有 receipt；后端会轮询等待 receipt，避免把“尚未索引”误报为付款失败。
+5. 验证通过后写入 `credit_ledger(type=onchain_usdc_topup)`，并创建“充值积分已到账”通知。
+
+默认套餐新增 Base USDC 口径：
+
+- 本地实测套餐：`1` 积分 / `0.01 USDC`，仅在 `BILLING_TEST_PLAN_ENABLED=true` 时展示。
+- `starter`: `20` 积分 / `2.00 USDC`，可解锁 `1` 个项目。
+- `value`: `100` 积分 / `8.00 USDC`，可解锁 `5` 个项目。
+
+微信付款 + 管理员手动入账继续保留为备用运营路径。
+
+收款边界：
+
+- USDC 不会进入 Base 官方、Base App 或 Virtuals 平台账户。
+- 用户钱包会直接向项目配置的 `BILLING_USDC_RECEIVER` 发起 Base USDC `transfer`。
+- 如果没有显式配置 `BILLING_USDC_RECEIVER`，链上支付入口保持禁用，避免误用监控钱包或策略钱包作为收款地址。
+- 钱包返回 tx hash 后，后端会先把 tx hash 记录到 payment intent，再等待 receipt；即使 RPC 暂时查不到 receipt，也能通过该 intent 回溯这笔付款。
+- Virtuals 邀请码只作为 Virtuals 官方注册入口保留，不在本产品内自动触发积分充值五折；如果后续要兑现推荐优惠，需要单独设计 coupon/referral 绑定和结算规则。
+
+### 47.4 x402 试点
+
+x402 适合 agent/API 按次购买数据，不作为普通用户购买积分的第一路径。
+
+本阶段先开放可发现的试点面：
+
+- `GET /.well-known/SKILL.md`
+  - 描述可购买的数据端点、价格、输出和支付方式。
+- `GET /api/x402/base-signal`
+  - 未带有效支付时返回 HTTP `402 Payment Required`、`PAYMENT-REQUIRED` header 和 JSON payment requirements。
+  - Base 主网使用 x402 CAIP-2 网络标识 `eip155:8453`。
+  - 后续接入 facilitator 后，再完成 `PAYMENT-SIGNATURE` / `X-PAYMENT` 验证与 settlement。
+
+本地已落地为 pilot：接口可发现且会返回 x402-style `402` payment requirements；当前还不执行 facilitator settlement。
+
+定位：
+
+- 面向 agent：按次购买 Base / Virtuals launch intelligence。
+- 面向 Base 生态展示：证明产品不仅有钱包登录，也有稳定币支付和 agentic payment 扩展面。
+
+### 47.5 Billing 版式与当前定价
+
+- `Billing` 当前采用两栏用户支付布局：
+  - 左侧：账户积分、解锁成本、套餐选择、Base Account / OKX Wallet 支付按钮、最近账户动态。
+  - 右侧：支付说明、网络/资产提示、未到账帮助二维码。
+- 每个项目首次解锁消耗 `20` 积分，新用户注册赠送 `20` 积分，默认刚好可解锁 `1` 个项目。
+- 套餐按项目成本对齐：
+  - `starter`: `20` 积分 / `2.00 USDC`。
+  - `value`: `100` 积分 / `8.00 USDC`。
+- 联系二维码使用 `frontend/admin/public/brand/contact-qr-wechat.png` 的真实图片；前端增加固定白底容器和 placeholder 兜底，避免资源加载失败时显示空白。
+- Virtuals 邀请码只作为官方注册入口保留，不在本产品内自动触发充值五折。
+
+### 47.6 公开入口、统一登录与品牌图标
+
+- `/base` 作为公开欢迎页，文案重心固定为 `Virtuals`：
+  - Base 只作为上架、钱包登录和 USDC 积分支付通道出现，不把产品定位改成“Base 项目”。
+  - 只承载 Virtuals 产品定位、公开项目快照和单一“开始使用”入口。
+  - 不再重复展示多组钱包登录按钮，避免欢迎页看起来像钱包专属登录页。
+  - 未登录访问 `/app/*` 或 `/admin/*` 时跳转 `/base?redirect=...`，登录成功后回到原目标。
+- 欢迎页公开样本优先展示 `SR`：
+  - 生产库存在 `SR` 时直接读取真实 `managed_projects / events / minute_agg / leaderboard / project_stats` 聚合。
+  - 本地开发库没有 `SR` 时，使用从远端生产库核对过的 `SR` 快照兜底，避免 localhost 展示成不相关的本地 TDS 样本。
+  - 当前远端核对值：`602` 个买入事件、`185` 个参与钱包、峰值分钟消耗约 `96.8k V`、累计税收约 `448.3k V`、Top 20 钱包消耗约 `332.9k V`。
+  - 欢迎页案例优先展示核心能力“大户榜单”，字段为钱包地址、累计花费 `V`、累计代币数量（万）和含税成本 `FDV`（万 USD）；分钟级消耗只作为辅助指标，不作为主案例表。
+  - 欢迎页指标文案使用中文优先：`SR 买入事件 / 参与钱包 / 峰值分钟消耗 / 累计税收`。`Virtuals / SignalHub / Base / USDC` 等专有名词保留英文。
+- `/auth/login` 收敛为统一登录入口：
+  - Base Account / OKX Wallet 位于登录页的“用钱包继续”模块。
+  - 邮箱/密码作为同页备用方式。
+  - `/auth/register` 明确为邮箱注册页，钱包新用户仍从 `/auth/login` 的钱包入口继续。
+- 品牌图标同时兼容本地 Vite dev 与生产路径：
+  - 本地 dev 使用 `/brand/logo-mark.png`。
+  - 生产使用 `/admin/brand/logo-mark.png`。
+  - 前端 `BrandLogo` 组件提供 fallback，避免 SPA fallback HTML 被当作图片导致图标破裂。
+
+### 47.7 生产收口：支付找回、钱包身份与上架资料
+
+- Billing 增加链上支付记录，读取 `GET /api/app/billing/onchain-intents`：
+  - 用户可以看到最近 Base USDC payment intents 的状态、金额、创建时间和 BaseScan 交易入口。
+  - 钱包已广播但 receipt 暂未返回时，用户刷新页面后仍可对同一笔 tx hash 重新确认。
+  - 没有记录 tx hash 的待付款 intent 可以手动粘贴交易哈希找回。
+  - 已记录 tx hash 的 intent 即使超过普通 intent TTL，也允许继续验证同一笔 tx，避免 Base receipt 延迟导致已付款无法入账。
+- 钱包登录身份从用户追踪钱包中拆出：
+  - `user_wallets` 继续表示用户想跟踪的钱包地址，不代表该用户拥有这些地址。
+  - 新增 `wallet_auth_identities` 表记录签名验证后的登录身份。
+  - 钱包登录只信任 `wallet_auth_identities` 或历史 synthetic wallet email，不再把任意 `user_wallets` 行当作账号归属。
+  - 现阶段邮箱用户添加追踪钱包不会自动绑定为登录钱包；后续如需邮箱账号绑定钱包，应新增“签名后绑定”的专用流程。
+- OKX Wallet / Base Account 登录成功后的跳转策略：
+  - 钱包验签成功后，前端先把 `authMe` 写入本地 query cache，再立即执行登录后跳转。
+  - `auth/me`、`appMeta`、`meta` 和用户钱包配置刷新改为后台执行，避免等待刷新接口时停留在登录页。
+  - 登录页保留浏览器级 `window.location.replace` 兜底；若 React Router 跳转被钱包内置浏览器打断，仍会进入目标页。
+- Base 生态上架资料整理到 `docs/base-ecosystem-listing.md`：
+  - 对外材料可以使用英文专有名词和英文一句话介绍。
+  - 产品内用户文案保持中文优先。
+  - 产品定位仍是 Virtuals Whale Radar，Base 只作为生态入口、钱包登录、USDC 支付和 x402 试点面。

@@ -564,7 +564,7 @@ export function InboxPage() {
                           <Badge variant={watchStateVariant(managed)}>{watchStateLabel(managed)}</Badge>
                           {!isAdmin && item.managedProjectId ? (
                             <Badge variant={item.isUnlocked ? "success" : "warning"}>
-                              {item.isUnlocked ? "实时看板已解锁" : `待解锁 · ${item.unlockCost ?? 10} 积分`}
+                              {item.isUnlocked ? "实时看板已解锁" : `待解锁 · ${item.unlockCost ?? 20} 积分`}
                             </Badge>
                           ) : null}
                         </div>

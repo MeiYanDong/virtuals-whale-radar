@@ -17,25 +17,25 @@
 - [x] `+99` 的单位确认为 `99 分钟`。
 - [x] `SpentV` 柱状图放在 `Overview` 项目头下方，作为实时主图。
 - [x] 删除项目的语义固定为：`取消关注 + 从 Projects 移除 + 停止调度 + 保留历史数据`。
-- [x] 未登录访问业务页时统一跳转 `/auth/login`。
+- [x] 未登录访问业务页时统一跳转 `/base?redirect=...`，Base 欢迎页作为公开入口。
 - [x] 用户端固定为 `Overview / Projects / SignalHub / Wallets / Billing` 五页。
 - [x] 管理员端新增 `Users` 页面。
 - [x] 用户端只有 `Wallets` 可编辑，其余页面只读。
 - [x] 用户钱包数据彼此隔离，管理员可查看全部用户钱包。
 - [x] 管理员默认不直接查看完整密码哈希，只提供密码状态和重置能力。
 - [x] 初始管理员账号通过配置或环境变量 bootstrap 创建。
-- [x] 用户查看某个项目 `Overview` 详细数据时，按“每用户、每项目首次解锁”扣 `10` 积分，解锁后永久可看。
+- [x] 用户查看某个项目 `Overview` 详细数据时，按“每用户、每项目首次解锁”扣 `20` 积分，解锁后永久可看。
 - [x] 新用户注册赠送 `20` 积分。
-- [x] 充值方案固定为：`10 积分 = 10 元`、`50 积分 = 40 元`。
+- [x] 充值方案固定为：`20 积分 = 20 元 / 2.00 USDC`、`100 积分 = 80 元 / 8.00 USDC`。
 - [x] 用户端 `Projects / SignalHub` 免费可看，未解锁项目的 `Overview` 详细数据不可看。
 - [x] 用户积分不足时，点击未解锁项目应引导到 `Billing`。
-- [x] `Billing` 页面展示联系方式二维码，不接入在线支付。
-- [x] `Billing` 顶部固定展示邀请文案与注册链接。
+- [x] `Billing` 页面以 Base USDC 自动支付为主，联系方式二维码作为支付失败/未到账时的帮助入口。
+- [x] `Billing` 顶部固定展示 Virtuals 邀请码边界与注册链接。
 - [x] 管理员调整积分时只允许“加积分 / 扣积分 + 备注”，不直接裸改余额。
 - [x] 管理员端补充 `Operations` 一级页面，用于处理充值申请和通知流转。
 - [x] 用户提交充值申请时必须上传图片凭证，后端按附件归档保存。
 - [x] 用户通知支持 `未读 / 已读 / 全部已读`，并在顶栏显示未读提醒。
-- [x] 当前默认充值流程改为：微信付款后管理员直接手动入账，不要求用户在 App 内提单。
+- [x] 当前默认充值流程改为：Base USDC 自动入账；微信付款后管理员手动入账保留为备用。
 
 ## 当前有效基线
 
@@ -296,7 +296,7 @@
 - [x] 增加 session middleware。
 - [x] 增加 `require_auth` 守卫。
 - [x] 增加 `require_admin` 守卫。
-- [x] 完成未登录跳转 `/auth/login`。
+- [x] 完成未登录跳转 `/base?redirect=...`。
 - [x] 完成用户访问 `/admin/*` 跳转 `/app`。
 - [x] 完成管理员访问 `/app/*` 跳转 `/admin`。
 
@@ -383,17 +383,17 @@
 
 - [x] 在用户端 Sidebar 增加 `Billing` 一级入口。
 - [x] 新增 `Billing` 页面顶部公告条：
-  - `Virtuals 新用户使用邀请码注册，后续付费一律五折`
+  - `如果你还没有 Virtuals 账号，可以先用邀请码完成注册；这里的积分只用于解锁 Whale Radar 项目看板。`
   - `https://app.virtuals.io/referral?code=LFfW5x`
 - [x] 在 `Billing` 页面展示：
   - 当前积分
   - 累计消耗积分
   - 已解锁项目数
 - [x] 在 `Billing` 页面展示固定套餐：
-  - `10 积分 / 10 元`
-- `50 积分 / 40 元`
+  - `20 积分 / 20 元 / 2.00 USDC`
+  - `100 积分 / 80 元 / 8.00 USDC`
 - [x] 在 `Billing` 页面展示联系方式二维码与联系说明。
-- [x] 用户点击购买时只弹出联系方式二维码，不接入在线支付。
+- [x] 用户点击购买时优先走 Base USDC 自动入账，二维码只作为支付失败/未到账时的帮助入口。
 - [x] 用户点击未解锁项目时：
   - 积分足够则弹确认框解锁
   - 积分不足则引导去 `Billing`
@@ -527,7 +527,7 @@
 ## Phase 18：双角色联调与验收
 
 - [x] 验证注册 -> 邮箱验证 -> 自动登录 -> 进入 `/app`。
-- [x] 验证未登录访问 `/app/*` 与 `/admin/*` 会跳到 `/auth/login`。
+- [x] 验证未登录访问 `/app/*` 与 `/admin/*` 会跳到 `/base?redirect=...`。
 - [x] 验证普通用户无法访问管理员写接口。
 - [x] 验证普通用户无法看到其它用户钱包。
 - [x] 验证用户端 `Overview / Projects / SignalHub` 全只读。
@@ -553,7 +553,7 @@
 - [x] 积分与项目解锁机制可用。
 - [x] `Billing` 页面与管理员积分管理可用。
 - [x] 图片凭证上传、通知中心与管理员充值处理流可用。
-- [x] 充值链路已收敛为“微信付款 + 管理员手动入账”的轻模式。
+- [x] 充值链路已升级为“Base USDC 自动入账 + 微信/管理员手动入账备用”的模式。
 - [x] 用户可以从 `Projects` 回看 `ended` 项目的历史详情。
 - [x] 公开注册改为“邮箱验证成功后再创建用户并发放注册积分”。
 
@@ -1174,6 +1174,55 @@
 - [x] 本地验证：Python `py_compile`、`test_launch_execution_pipeline.py`、`test_launch_sell_strategy.py`、`test_launch_sell_executor.py`。
 - [x] 前端验证：`npm run build`、`npm run lint`。
 - [x] 本地执行器热加载探针：保存探针配置后，`launch_sell_executor.py` 记录 `sell_config_reloaded`，随后恢复 disabled 默认配置。
+
+## Phase 57：Base 生态钱包与链上积分支付
+
+- [x] 将当前 Base 登录从单一 Base Account SDK 抽象为多钱包入口，保留 Base Account 作为默认 Base App 入口。
+- [x] 新增 OKX Wallet 登录入口：检测 EVM provider、切换 Base Mainnet、签名 SIWE 消息，复用后端钱包验签与 session 创建。
+- [x] 后端钱包认证支持 `base_wallet / okx_wallet / injected_wallet` 来源；同一钱包地址优先复用已有用户，避免同一地址在不同钱包入口重复建号。
+- [x] 钱包登录成功后自动写入 `user_wallets`，继续复用用户端钱包持仓追踪链路。
+- [x] 新增 Base USDC 链上充值 intent 表，记录用户、套餐、积分、USDC 金额、收款地址、付款钱包、过期时间、tx hash 和入账流水。
+- [x] 用户端 `Billing` 增加“Base USDC 支付”路径：用户选择套餐后从钱包发起 USDC transfer，后端验 receipt 后自动写入 `credit_ledger`。
+- [x] USDC 入账只验证 Base chain `8453`、Base 原生 USDC、收款地址、金额、付款钱包和 tx 去重；不做 `approve + transferFrom`。
+- [x] 后端验证 tx hash 时轮询等待 Base RPC receipt，避免钱包刚返回 tx hash 就误报 `transaction receipt not found yet`。
+- [x] 钱包返回 tx hash 后先记录到 payment intent，便于 receipt 暂未索引时回溯；本地开启 `0.01 USDC` 小额实测套餐。
+- [x] 没有显式配置 `BILLING_USDC_RECEIVER` 时禁用链上支付，避免默认转入监控钱包或策略钱包。
+- [x] 保留微信/管理员手动入账作为备用运营路径。
+- [x] 新增 x402 试点面：为 agent 提供可发现的付费数据 API 描述，第一步返回 HTTP `402 Payment Required`、`PAYMENT-REQUIRED` header 与 `eip155:8453` payment requirements；完整 facilitator settlement 作为后续增强。
+- [x] 本轮不改自动买入、自动卖出、execution RPC、fuse、launch scheduler 和生产广播链路。
+
+## Phase 58：Billing 20 积分与 Base 支付口径整理
+
+- [x] 每个项目首次解锁成本从 `10` 积分调整为 `20` 积分。
+- [x] 充值套餐按项目成本重排：`starter=20 积分 / 2.00 USDC`，`value=100 积分 / 8.00 USDC`。
+- [x] `Billing` 页面改为账户状态、套餐选择、支付说明、未到账帮助二维码的两栏布局。
+- [x] Virtuals 邀请码继续保留为官方注册链接，但不在本产品内展示“后续付费一律五折”的自动优惠承诺。
+- [x] 联系二维码使用真实图片资源，并在前端增加固定白底展示区域和 placeholder 兜底，避免图片加载失败时显示空白。
+
+## Phase 59：Base 欢迎页与品牌图标路径整理
+
+- [x] 修复本地 Vite dev 下 `/admin/brand/logo-mark.png` 返回 HTML 导致品牌图标破裂的问题。
+- [x] 新增 `BrandLogo` 组件，自动在 `/brand/logo-mark.png` 与 `/admin/brand/logo-mark.png` 之间兜底。
+- [x] Base Account SDK 的 `appLogoUrl` 改用当前环境的正确品牌图标 URL。
+- [x] `/base` 收敛为公开欢迎页，只保留一个“开始使用”入口，不再重复展示钱包登录按钮，文案重心保持在 Virtuals。
+- [x] `/auth/login` 收敛为统一登录入口，同页支持 Base Account、OKX Wallet 和邮箱密码。
+- [x] 未登录访问业务页统一跳转 `/base?redirect=...`，登录后回到原目标。
+- [x] `/auth/register` 明确为邮箱注册页，注册文案按 20 积分解锁 1 个项目更新。
+- [x] 欢迎页数据优先展示远端生产库核对过的 `SR` 真实样本：`602` 买入事件、`185` 参与钱包、峰值分钟约 `96.8k V`、累计税收约 `448.3k V`。
+- [x] 欢迎页案例表改为 `SR 大户榜单`，展示钱包地址、累计花费、累计代币数量和含税成本 FDV，突出产品核心能力。
+- [x] 欢迎页指标文案统一为中文：`SR 买入事件 / 参与钱包 / 峰值分钟消耗 / 累计税收`。
+
+## Phase 60：Base 生态入口生产收口
+
+- [x] Billing 增加链上支付记录：展示当前用户最近 Base USDC payment intents、状态、金额、创建时间和 BaseScan 交易入口。
+- [x] 用户刷新页面或 receipt 暂未返回后，可以在 Billing 对同一笔 tx hash 重新确认入账；无 tx hash 的待付款 intent 可粘贴交易哈希找回。
+- [x] 后端新增 `GET /api/app/billing/onchain-intents`，用于读取当前用户最近链上支付记录。
+- [x] 已记录 tx hash 的 intent 即使超过普通 intent TTL，也允许继续验证同一笔 tx，避免 receipt 延迟导致用户已付款但无法入账。
+- [x] 钱包登录身份与用户追踪钱包拆分：新增 `wallet_auth_identities`，钱包登录只信任签名验证后的认证身份，不再把 `user_wallets` 里的任意追踪地址当作登录归属。
+- [x] 同一钱包地址通过 Base Account / OKX Wallet / injected wallet 登录时，优先复用已有钱包认证身份；历史钱包用户通过 synthetic wallet email 兼容回收。
+- [x] 修复 OKX Wallet 登录成功后停留在登录页的问题：钱包登录成功后先写入本地 auth cache 并立即执行跳转，接口刷新改为后台执行，同时保留浏览器级跳转兜底。
+- [x] 整理 Base 生态上架资料包：`docs/base-ecosystem-listing.md`。
+- [x] 本地验证：`py_compile`、钱包认证身份临时库探针、`npm run lint`、`npm run build`、浏览器验证 `/base` 与 `/app/billing`。
 
 ## Phase 52：双策略自动卖出回测
 
