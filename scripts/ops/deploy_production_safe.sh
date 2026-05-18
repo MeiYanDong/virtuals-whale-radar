@@ -25,19 +25,34 @@ FILES=(
   signalhub_client.py
   SignalHub-main/signalhub/app/api/routes.py
   SignalHub-main/signalhub/app/database/db.py
+  frontend/admin/package.json
+  frontend/admin/package-lock.json
   frontend/admin/src/api/dashboard-api.ts
   frontend/admin/src/api/query-keys.ts
   frontend/admin/src/app/App.tsx
   frontend/admin/src/app/shell.tsx
+  frontend/admin/src/components/base-sign-in-button.tsx
+  frontend/admin/src/components/brand-logo.tsx
   frontend/admin/src/components/project-overview-sections.tsx
+  frontend/admin/src/design-system/shell/visual-shell.tsx
+  frontend/admin/src/lib/base-wallet.ts
+  frontend/admin/src/lib/brand-assets.ts
+  frontend/admin/src/pages/BaseEntryPage.tsx
+  frontend/admin/src/pages/BillingPage.tsx
   frontend/admin/src/pages/InboxPage.tsx
+  frontend/admin/src/pages/LoginPage.tsx
   frontend/admin/src/pages/OverviewPage.tsx
+  frontend/admin/src/pages/ProjectsPage.tsx
+  frontend/admin/src/pages/RegisterPage.tsx
   frontend/admin/src/pages/SettingsPage.tsx
+  frontend/admin/src/pages/UsersPage.tsx
   frontend/admin/src/pages/WalletsPage.tsx
   frontend/admin/src/styles/globals.css
   frontend/admin/src/types/api.ts
   frontend/admin/dist/
   docs/PLAN.md
+  docs/base-ecosystem-listing.md
+  docs/roadmap.md
   docs/todo.md
   docs/源码导读图.md
   docs/requirements-outline.md
