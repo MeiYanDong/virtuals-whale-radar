@@ -60,10 +60,17 @@ from launch_execution_pipeline import (  # noqa: E402
 )
 from launch_prewarm_executor import compact_fuse  # noqa: E402
 from launch_sell_strategy import (  # noqa: E402
+    CustomSellCondition,
+    CustomSellConfig,
+    CustomSellRule,
     DualSellConfig,
     DualSellInput,
     DualSellState,
+    LargeBuySignal,
+    MultiSellInput,
+    MultiSellState,
     apply_successful_sell,
+    evaluate_custom_sell,
     evaluate_dual_sell,
 )
 from live_strategy_dry_run import (  # noqa: E402
@@ -180,6 +187,101 @@ def runtime_sell_config(row: dict[str, Any] | None, *, default_name: str) -> Dua
     )
 
 
+def custom_rules_from_row(row: dict[str, Any] | None) -> tuple[CustomSellRule, ...]:
+    if not row:
+        return ()
+    raw = row.get("custom_rules_json")
+    try:
+        parsed = json.loads(str(raw or "[]"))
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return ()
+    rules: list[CustomSellRule] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        rule_id = str(item.get("id") or item.get("type") or "").strip()
+        raw_conditions = item.get("conditions")
+        rule_type = str(item.get("type") or ("condition_group" if isinstance(raw_conditions, list) else "")).strip()
+        if not rule_id or rule_type not in {"condition_group", "limit_price", "large_buy", "high_roi", "roi_and_large_buy"}:
+            continue
+        enabled_raw = item.get("enabled")
+        if isinstance(enabled_raw, str):
+            enabled = enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            enabled = bool(enabled_raw)
+        try:
+            conditions: list[CustomSellCondition] = []
+            if isinstance(raw_conditions, list):
+                for raw_condition in raw_conditions:
+                    if not isinstance(raw_condition, dict):
+                        continue
+                    condition_type = str(raw_condition.get("type") or "").strip()
+                    if condition_type == "limit_price":
+                        condition_type = "price"
+                    if condition_type == "high_roi":
+                        condition_type = "roi"
+                    if condition_type not in {"price", "large_buy", "roi"}:
+                        continue
+                    conditions.append(
+                        CustomSellCondition(
+                            type=condition_type,
+                            price_threshold=decimal_or_none(raw_condition.get("priceThreshold")),
+                            price_unit=str(raw_condition.get("priceUnit") or "usd").strip().lower(),
+                            large_buy_threshold=decimal_or_none(raw_condition.get("largeBuyThreshold")),
+                            large_buy_unit=str(raw_condition.get("largeBuyUnit") or "v").strip().lower(),
+                            roi_threshold_pct=decimal_or_none(raw_condition.get("roiPct")),
+                        )
+                    )
+            rules.append(
+                CustomSellRule(
+                    id=rule_id,
+                    type=rule_type,
+                    enabled=enabled,
+                    sell_pct=decimal_value(item.get("sellPct"), Decimal("0")),
+                    operator=str(item.get("operator") or "and").strip().lower(),
+                    conditions=tuple(conditions),
+                    price_threshold=decimal_or_none(item.get("priceThreshold")),
+                    price_unit=str(item.get("priceUnit") or "usd").strip().lower(),
+                    large_buy_threshold=decimal_or_none(item.get("largeBuyThreshold")),
+                    large_buy_unit=str(item.get("largeBuyUnit") or "v").strip().lower(),
+                    roi_threshold_pct=decimal_or_none(item.get("roiPct")),
+                    label=str(item.get("label") or rule_id).strip(),
+                )
+            )
+        except Exception:
+            continue
+    return tuple(rules)
+
+
+def custom_rules_payload_from_row(row: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not row:
+        return []
+    try:
+        parsed = json.loads(str(row.get("custom_rules_json") or "[]"))
+    except Exception:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def use_custom_sell_config(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    strategy = str(row.get("strategy") or "").strip()
+    return strategy == "custom_multi_sell" or bool(custom_rules_from_row(row))
+
+
+def runtime_custom_sell_config(row: dict[str, Any] | None, *, default_name: str) -> CustomSellConfig:
+    dual = runtime_sell_config(row, default_name=default_name)
+    return CustomSellConfig(
+        name=str(row.get("strategy") or "custom_multi_sell") if row else "custom_multi_sell",
+        max_tax_rate=dual.max_tax_rate,
+        cooldown_sec=dual.cooldown_sec,
+        rules=custom_rules_from_row(row),
+    )
+
+
 def runtime_effective_args(args: argparse.Namespace, row: dict[str, Any] | None) -> argparse.Namespace:
     if not row:
         return args
@@ -191,25 +293,27 @@ def runtime_effective_args(args: argparse.Namespace, row: dict[str, Any] | None)
 def compact_runtime_sell_config(
     row: dict[str, Any] | None,
     args: argparse.Namespace,
-    config: DualSellConfig,
+    config: Any,
 ) -> dict[str, Any]:
+    legacy_config = config if isinstance(config, DualSellConfig) else runtime_sell_config(row, default_name=getattr(config, "name", "custom_multi_sell"))
     if not row:
         return {
             "hasOverride": False,
             "version": 0,
             "enabled": False,
             "mode": "simulate",
-            "strategy": config.name,
-            "ruleName": config.name,
-            "maxTaxRate": str(config.max_tax_rate),
-            "roiLowPct": str(config.roi_low_pct),
-            "roiHighPct": str(config.roi_high_pct),
-            "largeBuyLowV": str(config.large_buy_low_v),
-            "largeBuyHighV": str(config.large_buy_high_v),
-            "sellLowPct": str(config.sell_low_pct),
-            "sellHighPct": str(config.sell_high_pct),
-            "cooldownSec": int(config.cooldown_sec),
+            "strategy": getattr(config, "name", legacy_config.name),
+            "ruleName": getattr(config, "name", legacy_config.name),
+            "maxTaxRate": str(legacy_config.max_tax_rate),
+            "roiLowPct": str(legacy_config.roi_low_pct),
+            "roiHighPct": str(legacy_config.roi_high_pct),
+            "largeBuyLowV": str(legacy_config.large_buy_low_v),
+            "largeBuyHighV": str(legacy_config.large_buy_high_v),
+            "sellLowPct": str(legacy_config.sell_low_pct),
+            "sellHighPct": str(legacy_config.sell_high_pct),
+            "cooldownSec": int(legacy_config.cooldown_sec),
             "catchUpEventsSec": int(args.catch_up_events_sec),
+            "customRules": [],
         }
     return {
         "hasOverride": True,
@@ -227,6 +331,7 @@ def compact_runtime_sell_config(
         "sellHighPct": str(row.get("sell_high_pct") or ""),
         "cooldownSec": int(row.get("cooldown_sec") or config.cooldown_sec),
         "catchUpEventsSec": int(row.get("catch_up_events_sec") or args.catch_up_events_sec),
+        "customRules": custom_rules_payload_from_row(row),
         "updatedAt": int(row.get("updated_at") or 0),
     }
 
@@ -414,8 +519,10 @@ def build_position_from_records(
     spent_v = Decimal("0")
     roi_sold_raw = Decimal("0")
     large_sold_raw = Decimal("0")
+    rule_sold_raw: dict[str, Decimal] = {}
     sold_raw_total = 0
     processed_large_buy_txs: set[str] = set()
+    processed_rule_buy_txs: set[str] = set()
     cooldown_until = 0
 
     for row in reversed(rows):
@@ -442,9 +549,23 @@ def build_position_from_records(
             total_pct = decimal_or_none(intent_body.get("totalSellPct")) or Decimal("0")
             roi_pct = decimal_or_none(intent_body.get("roiDeltaPct")) or Decimal("0")
             large_pct = decimal_or_none(intent_body.get("largeBuyDeltaPct")) or Decimal("0")
+            rule_deltas = intent_body.get("ruleDeltas")
             if receipt_sold_raw > 0 and total_pct > 0:
                 roi_sold_raw += Decimal(receipt_sold_raw) * roi_pct / total_pct
                 large_sold_raw += Decimal(receipt_sold_raw) * large_pct / total_pct
+                if isinstance(rule_deltas, list):
+                    for delta in rule_deltas:
+                        if not isinstance(delta, dict):
+                            continue
+                        rule_id = str(delta.get("ruleId") or "").strip()
+                        pct = decimal_or_none(delta.get("sellPct")) or Decimal("0")
+                        if rule_id and pct > 0:
+                            rule_sold_raw[rule_id] = rule_sold_raw.get(rule_id, Decimal("0")) + (
+                                Decimal(receipt_sold_raw) * pct / total_pct
+                            )
+                            tx_hash = str(delta.get("largeBuyTxHash") or "").strip().lower()
+                            if tx_hash:
+                                processed_rule_buy_txs.add(f"{rule_id}:{tx_hash}")
                 sold_raw_total += receipt_sold_raw
             tx_hash = str(intent_body.get("largeBuyTxHash") or "").strip()
             if tx_hash:
@@ -457,9 +578,15 @@ def build_position_from_records(
     if total_position_raw > 0:
         roi_sold_pct = Decimal(roi_sold_raw) * Decimal("100") / Decimal(total_position_raw)
         large_sold_pct = Decimal(large_sold_raw) * Decimal("100") / Decimal(total_position_raw)
+        rule_sold_pct = {
+            key: Decimal(value) * Decimal("100") / Decimal(total_position_raw)
+            for key, value in rule_sold_raw.items()
+        }
     else:
         roi_sold_pct = Decimal("0")
         large_sold_pct = Decimal("0")
+        rule_sold_pct = {}
+    total_sold_pct = Decimal(sold_raw_total) * Decimal("100") / Decimal(total_position_raw) if total_position_raw > 0 else Decimal("0")
 
     return {
         "totalPositionRaw": int(total_position_raw),
@@ -470,8 +597,11 @@ def build_position_from_records(
         "buyUnits": buy_units,
         "roiSoldPct": roi_sold_pct,
         "largeBuySoldPct": large_sold_pct,
+        "ruleSoldPct": rule_sold_pct,
+        "totalSoldPct": total_sold_pct,
         "cooldownUntil": cooldown_until,
         "processedLargeBuyTxs": processed_large_buy_txs,
+        "processedRuleBuyTxs": processed_rule_buy_txs,
     }
 
 
@@ -482,6 +612,17 @@ def dual_state_from_position(position: dict[str, Any]) -> DualSellState:
         large_buy_sold_pct=Decimal(str(position.get("largeBuySoldPct") or "0")),
         cooldown_until=int(position.get("cooldownUntil") or 0),
         processed_large_buy_txs=set(position.get("processedLargeBuyTxs") or set()),
+    )
+
+
+def multi_state_from_position(position: dict[str, Any]) -> MultiSellState:
+    return MultiSellState(
+        total_position_raw=int(position.get("totalPositionRaw") or 0),
+        current_balance_raw=int(position.get("currentBalanceRaw") or 0),
+        total_sold_pct=Decimal(str(position.get("totalSoldPct") or "0")),
+        rule_sold_pct=dict(position.get("ruleSoldPct") or {}),
+        cooldown_until=int(position.get("cooldownUntil") or 0),
+        processed_rule_buy_txs=set(position.get("processedRuleBuyTxs") or set()),
     )
 
 
@@ -505,6 +646,11 @@ def compact_position(position: dict[str, Any]) -> dict[str, Any]:
         "buyUnits": fmt_decimal(Decimal(str(position.get("buyUnits") or "0")), 18),
         "roiSoldPct": fmt_decimal(Decimal(str(position.get("roiSoldPct") or "0")), 6),
         "largeBuySoldPct": fmt_decimal(Decimal(str(position.get("largeBuySoldPct") or "0")), 6),
+        "totalSoldPct": fmt_decimal(Decimal(str(position.get("totalSoldPct") or "0")), 6),
+        "ruleSoldPct": {
+            str(key): fmt_decimal(Decimal(str(value)), 6)
+            for key, value in dict(position.get("ruleSoldPct") or {}).items()
+        },
         "cooldownUntil": int(position.get("cooldownUntil") or 0),
     }
 
@@ -536,6 +682,41 @@ def latest_unseen_buy_event(
     if not candidates:
         return None
     return max(candidates, key=lambda item: decimal_or_none(item.get("spent_v_est")) or Decimal("0"))
+
+
+def recent_large_buy_events(
+    bot: VirtualsBot,
+    *,
+    project_name: str,
+    since_ts: int,
+) -> tuple[LargeBuySignal, ...]:
+    rows = bot.storage.conn.execute(
+        """
+        SELECT tx_hash, block_timestamp, spent_v_est, virtual_price_usd
+        FROM events
+        WHERE project = ? AND block_timestamp >= ?
+        ORDER BY block_timestamp DESC, block_number DESC, id DESC
+        LIMIT 500
+        """,
+        (project_name, int(since_ts)),
+    ).fetchall()
+    out: list[LargeBuySignal] = []
+    for row in rows:
+        item = dict(row)
+        tx_hash = str(item.get("tx_hash") or "").strip().lower()
+        spent_v = decimal_or_none(item.get("spent_v_est"))
+        virtual_price = decimal_or_none(item.get("virtual_price_usd"))
+        spent_usd = spent_v * virtual_price if spent_v is not None and virtual_price is not None else None
+        if tx_hash:
+            out.append(
+                LargeBuySignal(
+                    tx_hash=tx_hash,
+                    timestamp=int(item.get("block_timestamp") or 0),
+                    spent_v=spent_v,
+                    spent_usd=spent_usd,
+                )
+            )
+    return tuple(out)
 
 
 def receipt_summary(receipt: dict[str, Any] | None, receipt_deltas: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -646,7 +827,7 @@ async def execute_sell_decision(
     sample_index: int,
     decision: Any,
     position: dict[str, Any],
-    sell_config: DualSellConfig,
+    sell_config: Any,
     owner: str,
     token: str,
     pool: str,
@@ -986,7 +1167,7 @@ async def execute_sell_decision(
             trade_sent=True,
             broadcast_enabled_value=True,
         )
-        if receipt_ok:
+        if receipt_ok and isinstance(sell_config, DualSellConfig):
             state = dual_state_from_position(position)
             apply_successful_sell(
                 state=state,
@@ -1086,7 +1267,11 @@ async def async_main() -> None:
         pool = normalize_hex_address(str(project_row.get("internal_pool_addr") or ""))
         runtime_config_row = bot.storage.get_launch_sell_runtime_config_by_project(project_name)
         runtime_config_version = int(runtime_config_row.get("version") or 0) if runtime_config_row else 0
-        sell_config = runtime_sell_config(runtime_config_row, default_name=str(args.rule))
+        sell_config = (
+            runtime_custom_sell_config(runtime_config_row, default_name=str(args.rule))
+            if use_custom_sell_config(runtime_config_row)
+            else runtime_sell_config(runtime_config_row, default_name=str(args.rule))
+        )
         effective_args = runtime_effective_args(args, runtime_config_row)
 
         service_meta = {
@@ -1139,7 +1324,11 @@ async def async_main() -> None:
                     if latest_runtime_version != runtime_config_version:
                         runtime_config_version = latest_runtime_version
                         runtime_config_row = latest_runtime_config
-                        sell_config = runtime_sell_config(runtime_config_row, default_name=str(args.rule))
+                        sell_config = (
+                            runtime_custom_sell_config(runtime_config_row, default_name=str(args.rule))
+                            if use_custom_sell_config(runtime_config_row)
+                            else runtime_sell_config(runtime_config_row, default_name=str(args.rule))
+                        )
                         effective_args = runtime_effective_args(args, runtime_config_row)
                         reload_payload = {
                             "event": "sell_config_reloaded",
@@ -1189,21 +1378,40 @@ async def async_main() -> None:
                         since_ts=event_since_ts,
                         processed_txs=state.processed_large_buy_txs,
                     )
+                    recent_buys = recent_large_buy_events(
+                        bot,
+                        project_name=project_name,
+                        since_ts=event_since_ts,
+                    )
                     roi_pct = current_roi_pct(position, sample)
                     latest_buy_v = decimal_or_none(latest_buy.get("spent_v_est")) if latest_buy else None
                     latest_buy_tx = str(latest_buy.get("tx_hash") or "").lower() if latest_buy else None
-                    decision = evaluate_dual_sell(
-                        state=state,
-                        signal=DualSellInput(
-                            timestamp=int(sample.get("simTimestamp") or now_ts),
-                            tax_rate=decimal_or_none(sample.get("buyTaxRate")),
-                            current_roi_pct=roi_pct,
-                            current_balance_raw=current_balance_raw,
-                            latest_buy_v=latest_buy_v,
-                            latest_buy_tx_hash=latest_buy_tx or None,
-                        ),
-                        config=sell_config,
-                    )
+                    if isinstance(sell_config, CustomSellConfig):
+                        decision = evaluate_custom_sell(
+                            state=multi_state_from_position(position),
+                            signal=MultiSellInput(
+                                timestamp=int(sample.get("simTimestamp") or now_ts),
+                                tax_rate=decimal_or_none(sample.get("buyTaxRate")),
+                                current_roi_pct=roi_pct,
+                                token_price_usd=decimal_or_none(sample.get("tokenPriceUsd")),
+                                token_price_v=decimal_or_none(sample.get("tokenPriceV")),
+                                recent_large_buys=recent_buys,
+                            ),
+                            config=sell_config,
+                        )
+                    else:
+                        decision = evaluate_dual_sell(
+                            state=state,
+                            signal=DualSellInput(
+                                timestamp=int(sample.get("simTimestamp") or now_ts),
+                                tax_rate=decimal_or_none(sample.get("buyTaxRate")),
+                                current_roi_pct=roi_pct,
+                                current_balance_raw=current_balance_raw,
+                                latest_buy_v=latest_buy_v,
+                                latest_buy_tx_hash=latest_buy_tx or None,
+                            ),
+                            config=sell_config,
+                        )
                     payload: dict[str, Any] = {
                         "event": decision.action,
                         "reason": decision.reason,

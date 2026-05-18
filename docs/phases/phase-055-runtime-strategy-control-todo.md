@@ -51,3 +51,8 @@
 - [x] 2026-05-16 生产网页真实保存探针：`/admin/projects/15?project=ROO` 输入 `0.002/0.003` 后 POST 成功，API 回读 `enabled=true / mode=broadcast`，随后页面停用。
 - [x] 2026-05-16 生产 DB 探针：保存后 `launch_strategy_runtime_configs` 立即写入对应值；测试后已清理 ROO 探针配置行。
 - [x] 2026-05-16 执行器热读取探针：临时写入 `0.004/0.005` 后，`launch_prewarm_executor.py --once --mode simulate` 记录 `hasOverride=true / version=1`；ROO 已 ended，因此正确输出 `not_live` 且 `tradeSent=false`。
+- [x] 新增 `scripts/ops/runtime_control_launch_simulator.py`，用于本地 paper replay 验证前端运行时参数在后续发射 tick 中被执行器热读。
+- [x] 2026-05-18 本地网页保存 TDS 小额参数 `0.1/0.2/0.2/0.6` 后，后端回读 `enabled=true / mode=broadcast / version=22`。
+- [x] 2026-05-18 TDS 100x 完整窗口模拟通过：99 个 tick 约 1 分钟跑完，产生 `0.1/0.2/0.1/0.2 VIRTUAL` 四次 paper buy intent，项目预算 `0.6 VIRTUAL` 生效后阻断后续意图。
+- [x] 2026-05-18 模拟完成后停用本地 TDS 自动买入，回读 `enabled=false / mode=simulate / version=23`。
+- [x] 2026-05-18 历史样本驱动真实 canary 通过：sample `30` 运行中改买入参数后记录 `strategy_config_reloaded`，sample `55` / tax `95%` 自动买入使用更新后的 `0.01 VIRTUAL`，tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，receipt `0x1`。

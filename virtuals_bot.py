@@ -1622,6 +1622,7 @@ class Storage:
                 large_buy_high_v TEXT NOT NULL DEFAULT '8000',
                 sell_low_pct TEXT NOT NULL DEFAULT '30',
                 sell_high_pct TEXT NOT NULL DEFAULT '50',
+                custom_rules_json TEXT NOT NULL DEFAULT '[]',
                 cooldown_sec INTEGER NOT NULL DEFAULT 60,
                 catch_up_events_sec INTEGER NOT NULL DEFAULT 120,
                 version INTEGER NOT NULL DEFAULT 1,
@@ -1671,6 +1672,7 @@ class Storage:
         self._ensure_column("events", "tx_to", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("events", "tx_selector", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("events", "calldata_bytes", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("launch_sell_runtime_configs", "custom_rules_json", "TEXT NOT NULL DEFAULT '[]'")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("billing_requests", "credited_credit_ledger_id", "INTEGER")
         self._ensure_column("billing_requests", "operator_user_id", "INTEGER")
@@ -2415,6 +2417,206 @@ class Storage:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def default_launch_sell_custom_rules(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": "rule_roi_large_buy",
+                "type": "condition_group",
+                "label": "收益率 + 大单",
+                "enabled": True,
+                "operator": "and",
+                "sellPct": "30",
+                "conditions": [
+                    {"id": "roi", "type": "roi", "roiPct": "30"},
+                    {
+                        "id": "large_buy",
+                        "type": "large_buy",
+                        "largeBuyThreshold": "5000",
+                        "largeBuyUnit": "v",
+                    },
+                ],
+            },
+        ]
+
+    def normalize_launch_sell_custom_rules(
+        self,
+        payload: Dict[str, Any],
+        *,
+        baseline: Dict[str, Any],
+    ) -> str:
+        raw_rules = payload.get("customRules", payload.get("custom_rules"))
+        if raw_rules is None:
+            raw_json = baseline.get("custom_rules_json")
+            if raw_json:
+                with contextlib.suppress(Exception):
+                    loaded = json.loads(str(raw_json))
+                    if isinstance(loaded, list):
+                        raw_rules = loaded
+            if raw_rules is None:
+                raw_rules = self.default_launch_sell_custom_rules()
+        if isinstance(raw_rules, str):
+            try:
+                raw_rules = json.loads(raw_rules)
+            except Exception as exc:
+                raise ValueError("customRules must be an array") from exc
+        if not isinstance(raw_rules, list):
+            raise ValueError("customRules must be an array")
+
+        def normalize_condition(raw_condition: Dict[str, Any], *, rule_id: str, index: int) -> Dict[str, Any]:
+            condition_type = str(raw_condition.get("type") or "").strip()
+            if condition_type == "limit_price":
+                condition_type = "price"
+            if condition_type == "high_roi":
+                condition_type = "roi"
+            if condition_type not in {"price", "large_buy", "roi"}:
+                raise ValueError(f"{rule_id}.conditions[{index}].type is invalid")
+            condition_id = str(raw_condition.get("id") or condition_type).strip() or condition_type
+            condition: Dict[str, Any] = {"id": condition_id, "type": condition_type}
+            if condition_type == "price":
+                threshold = parse_strategy_decimal(
+                    raw_condition.get("priceThreshold", raw_condition.get("threshold")),
+                    f"{rule_id}.conditions[{index}].priceThreshold",
+                )
+                if threshold < 0:
+                    raise ValueError(f"{rule_id}.conditions[{index}].priceThreshold cannot be negative")
+                unit = str(raw_condition.get("priceUnit") or raw_condition.get("unit") or "usd").strip().lower()
+                if unit not in {"usd", "v"}:
+                    raise ValueError(f"{rule_id}.conditions[{index}].priceUnit must be usd or v")
+                condition.update({"priceThreshold": decimal_to_str(threshold, 18), "priceUnit": unit})
+            if condition_type == "large_buy":
+                threshold = parse_strategy_decimal(
+                    raw_condition.get("largeBuyThreshold", raw_condition.get("threshold")),
+                    f"{rule_id}.conditions[{index}].largeBuyThreshold",
+                )
+                if threshold <= 0:
+                    raise ValueError(f"{rule_id}.conditions[{index}].largeBuyThreshold must be positive")
+                unit = str(raw_condition.get("largeBuyUnit") or raw_condition.get("unit") or "v").strip().lower()
+                if unit not in {"v", "usd"}:
+                    raise ValueError(f"{rule_id}.conditions[{index}].largeBuyUnit must be v or usd")
+                condition.update({"largeBuyThreshold": decimal_to_str(threshold, 18), "largeBuyUnit": unit})
+            if condition_type == "roi":
+                roi_pct = parse_strategy_decimal(
+                    raw_condition.get("roiPct", raw_condition.get("threshold")),
+                    f"{rule_id}.conditions[{index}].roiPct",
+                )
+                if roi_pct < 0:
+                    raise ValueError(f"{rule_id}.conditions[{index}].roiPct cannot be negative")
+                condition["roiPct"] = decimal_to_str(roi_pct, 6)
+            return condition
+
+        def legacy_conditions(raw_item: Dict[str, Any], rule_type: str, *, rule_id: str) -> List[Dict[str, Any]]:
+            if rule_type == "limit_price":
+                return [
+                    normalize_condition(
+                        {
+                            "id": "price",
+                            "type": "price",
+                            "priceThreshold": raw_item.get("priceThreshold", "0.01"),
+                            "priceUnit": raw_item.get("priceUnit", "usd"),
+                        },
+                        rule_id=rule_id,
+                        index=0,
+                    )
+                ]
+            if rule_type == "large_buy":
+                return [
+                    normalize_condition(
+                        {
+                            "id": "large_buy",
+                            "type": "large_buy",
+                            "largeBuyThreshold": raw_item.get("largeBuyThreshold", "5000"),
+                            "largeBuyUnit": raw_item.get("largeBuyUnit", "v"),
+                        },
+                        rule_id=rule_id,
+                        index=0,
+                    )
+                ]
+            if rule_type == "high_roi":
+                return [
+                    normalize_condition(
+                        {
+                            "id": "roi",
+                            "type": "roi",
+                            "roiPct": raw_item.get("roiPct", "50"),
+                        },
+                        rule_id=rule_id,
+                        index=0,
+                    )
+                ]
+            if rule_type == "roi_and_large_buy":
+                return [
+                    normalize_condition(
+                        {
+                            "id": "roi",
+                            "type": "roi",
+                            "roiPct": raw_item.get("roiPct", "30"),
+                        },
+                        rule_id=rule_id,
+                        index=0,
+                    ),
+                    normalize_condition(
+                        {
+                            "id": "large_buy",
+                            "type": "large_buy",
+                            "largeBuyThreshold": raw_item.get("largeBuyThreshold", "5000"),
+                            "largeBuyUnit": raw_item.get("largeBuyUnit", "v"),
+                        },
+                        rule_id=rule_id,
+                        index=1,
+                    ),
+                ]
+            return []
+
+        default_rule = self.default_launch_sell_custom_rules()[0]
+        normalized: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for index, raw_item in enumerate(raw_rules):
+            if not isinstance(raw_item, dict):
+                continue
+            raw_conditions = raw_item.get("conditions")
+            raw_type = str(raw_item.get("type") or "").strip()
+            if raw_type == "condition_group" or isinstance(raw_conditions, list):
+                rule_type = "condition_group"
+            elif raw_type in {"limit_price", "large_buy", "high_roi", "roi_and_large_buy"}:
+                rule_type = raw_type
+            else:
+                raise ValueError(f"customRules[{index}].type is invalid")
+            rule_id = str(raw_item.get("id") or default_rule.get("id") or f"rule_{index + 1}").strip()
+            if not rule_id:
+                rule_id = f"rule_{index + 1}"
+            if rule_id in seen:
+                rule_id = f"{rule_id}_{index + 1}"
+            seen.add(rule_id)
+            enabled = parse_named_bool(raw_item.get("enabled", default_rule.get("enabled")), f"{rule_id}.enabled")
+            sell_pct = parse_strategy_decimal(raw_item.get("sellPct", default_rule.get("sellPct")), f"{rule_id}.sellPct")
+            if sell_pct < 0 or sell_pct > 100:
+                raise ValueError(f"{rule_id}.sellPct must be between 0 and 100")
+            operator = str(raw_item.get("operator") or ("and" if rule_type != "condition_group" else default_rule.get("operator", "and"))).strip().lower()
+            if operator not in {"and", "or"}:
+                raise ValueError(f"{rule_id}.operator must be and or or")
+            if isinstance(raw_conditions, list):
+                conditions = [
+                    normalize_condition(condition, rule_id=rule_id, index=condition_index)
+                    for condition_index, condition in enumerate(raw_conditions)
+                    if isinstance(condition, dict)
+                ]
+            else:
+                conditions = legacy_conditions(raw_item, rule_type, rule_id=rule_id)
+            if not conditions:
+                raise ValueError(f"{rule_id}.conditions must contain at least one condition")
+
+            item: Dict[str, Any] = {
+                "id": rule_id,
+                "type": "condition_group",
+                "label": str(raw_item.get("label") or default_rule.get("label") or rule_id).strip(),
+                "enabled": bool(enabled),
+                "operator": operator,
+                "sellPct": decimal_to_str(sell_pct, 6),
+                "conditions": conditions,
+            }
+            normalized.append(item)
+        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
     def default_launch_sell_runtime_config(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "id": None,
@@ -2431,6 +2633,12 @@ class Storage:
             "large_buy_high_v": decimal_to_str(DEFAULT_LAUNCH_SELL_LARGE_BUY_HIGH_V, 6),
             "sell_low_pct": decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_LOW_PCT, 6),
             "sell_high_pct": decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_HIGH_PCT, 6),
+            "custom_rules_json": json.dumps(
+                self.default_launch_sell_custom_rules(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
             "cooldown_sec": DEFAULT_LAUNCH_SELL_COOLDOWN_SEC,
             "catch_up_events_sec": DEFAULT_LAUNCH_SELL_CATCH_UP_EVENTS_SEC,
             "version": 0,
@@ -2503,6 +2711,7 @@ class Storage:
             payload.get("catchUpEventsSec", payload.get("catch_up_events_sec", baseline.get("catch_up_events_sec"))),
             "catchUpEventsSec",
         )
+        custom_rules_json = self.normalize_launch_sell_custom_rules(payload, baseline=baseline)
 
         checks = {
             "maxTaxRate": max_tax_rate,
@@ -2547,6 +2756,7 @@ class Storage:
             "large_buy_high_v": decimal_to_str(large_buy_high_v, 6),
             "sell_low_pct": decimal_to_str(sell_low_pct, 6),
             "sell_high_pct": decimal_to_str(sell_high_pct, 6),
+            "custom_rules_json": custom_rules_json,
             "cooldown_sec": cooldown_sec,
             "catch_up_events_sec": catch_up_events_sec,
         }
@@ -2588,13 +2798,13 @@ class Storage:
                 INSERT INTO launch_sell_runtime_configs(
                     project_id, project, strategy, rule_name, enabled, mode,
                     max_tax_rate, roi_low_pct, roi_high_pct, large_buy_low_v,
-                    large_buy_high_v, sell_low_pct, sell_high_pct, cooldown_sec,
+                    large_buy_high_v, sell_low_pct, sell_high_pct, custom_rules_json, cooldown_sec,
                     catch_up_events_sec, version, updated_by_user_id,
                     updated_reason, created_at, updated_at
                 ) VALUES (
                     :project_id, :project, :strategy, :rule_name, :enabled, :mode,
                     :max_tax_rate, :roi_low_pct, :roi_high_pct, :large_buy_low_v,
-                    :large_buy_high_v, :sell_low_pct, :sell_high_pct, :cooldown_sec,
+                    :large_buy_high_v, :sell_low_pct, :sell_high_pct, :custom_rules_json, :cooldown_sec,
                     :catch_up_events_sec, :version, :updated_by_user_id,
                     :updated_reason, :created_at, :updated_at
                 )
@@ -2611,6 +2821,7 @@ class Storage:
                     large_buy_high_v = excluded.large_buy_high_v,
                     sell_low_pct = excluded.sell_low_pct,
                     sell_high_pct = excluded.sell_high_pct,
+                    custom_rules_json = excluded.custom_rules_json,
                     cooldown_sec = excluded.cooldown_sec,
                     catch_up_events_sec = excluded.catch_up_events_sec,
                     version = excluded.version,
@@ -9838,6 +10049,11 @@ class VirtualsBot:
             rule_name=rule_name,
         )
         audit_rows = self.storage.list_launch_sell_runtime_config_audit(project_id, limit=10)
+        custom_rules: List[Dict[str, Any]] = []
+        with contextlib.suppress(Exception):
+            parsed_rules = json.loads(str(item.get("custom_rules_json") or "[]"))
+            if isinstance(parsed_rules, list):
+                custom_rules = [rule for rule in parsed_rules if isinstance(rule, dict)]
         return {
             "ok": True,
             "project": {
@@ -9864,6 +10080,7 @@ class VirtualsBot:
                 "largeBuyHighV": str(item.get("large_buy_high_v") or decimal_to_str(DEFAULT_LAUNCH_SELL_LARGE_BUY_HIGH_V, 6)),
                 "sellLowPct": str(item.get("sell_low_pct") or decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_LOW_PCT, 6)),
                 "sellHighPct": str(item.get("sell_high_pct") or decimal_to_str(DEFAULT_LAUNCH_SELL_SELL_HIGH_PCT, 6)),
+                "customRules": custom_rules,
                 "cooldownSec": int(item.get("cooldown_sec") or DEFAULT_LAUNCH_SELL_COOLDOWN_SEC),
                 "catchUpEventsSec": int(item.get("catch_up_events_sec") or DEFAULT_LAUNCH_SELL_CATCH_UP_EVENTS_SEC),
                 "version": int(item.get("version") or 0),

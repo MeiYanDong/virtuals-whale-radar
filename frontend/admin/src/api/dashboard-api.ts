@@ -261,6 +261,8 @@ export const dashboardApi = {
       payload: {
         enabled: boolean;
         mode: "simulate" | "broadcast";
+        strategy?: string;
+        ruleName?: string;
         maxTaxRate: string;
         roiLowPct: string;
         roiHighPct: string;
@@ -268,6 +270,28 @@ export const dashboardApi = {
         largeBuyHighV: string;
         sellLowPct: string;
         sellHighPct: string;
+        customRules?: Array<{
+          id: string;
+          type: "condition_group" | "limit_price" | "large_buy" | "high_roi" | "roi_and_large_buy";
+          label?: string;
+          enabled: boolean;
+          operator?: "and" | "or";
+          sellPct: string;
+          conditions?: Array<{
+            id?: string;
+            type: "price" | "large_buy" | "roi" | "limit_price" | "high_roi";
+            priceThreshold?: string;
+            priceUnit?: "usd" | "v";
+            largeBuyThreshold?: string;
+            largeBuyUnit?: "v" | "usd";
+            roiPct?: string;
+          }>;
+          priceThreshold?: string;
+          priceUnit?: "usd" | "v";
+          largeBuyThreshold?: string;
+          largeBuyUnit?: "v" | "usd";
+          roiPct?: string;
+        }>;
         cooldownSec: string;
         catchUpEventsSec: string;
         updatedReason?: string;

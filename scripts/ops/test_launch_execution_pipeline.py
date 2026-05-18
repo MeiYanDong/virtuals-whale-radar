@@ -24,6 +24,8 @@ from launch_execution_pipeline import (  # noqa: E402
     BURNER_PRIVATE_KEY_ENV,
     DEFAULT_LAUNCH_SLIPPAGE_BPS,
     GET_RESERVES_SELECTOR,
+    DynamicAfter1StrategyEvaluator,
+    DynamicExecutionConfig,
     LocalSigner,
     TOKEN0_SELECTOR,
     TOKEN1_SELECTOR,
@@ -40,6 +42,7 @@ from launch_execution_pipeline import (  # noqa: E402
     run_dry_run,
     SafeBroadcaster,
 )
+from sell_virtuals_token import bind_sell  # noqa: E402
 from virtuals_bot import (  # noqa: E402
     Storage,
     VirtualsBot,
@@ -262,6 +265,28 @@ async def test_order_binder_tax_adjusts_min_out() -> None:
     assert_eq(decoded["amountOutMinWei"], str(expected_min), "tax-adjusted binder amountOutMin")
     assert_eq(bound.quote.buy_tax_rate_pct, "95", "binder tax rate")
     assert_eq(bound.quote.effective_slippage_bps, 9750, "binder effective slippage")
+
+
+async def test_sell_binder_quote_matches_pool_quote_shape() -> None:
+    fake = FakeRPC(balance_wei=100 * 10**18, allowance_wei=100 * 10**18)
+    tx, quote = await bind_sell(
+        fake,
+        chain_id=8453,
+        from_addr="0x1111111111111111111111111111111111111111",
+        token_addr=TARGET_TOKEN,
+        pool_addr=POOL_ADDR,
+        virtual_token_addr=VIRTUAL_TOKEN,
+        amount_raw=1_000 * 10**18,
+        slippage_bps=DEFAULT_LAUNCH_SLIPPAGE_BPS,
+        deadline_offset_sec=180,
+        now_ts=100,
+    )
+    assert_eq(tx.to, VIRTUALS_BUY_ROUTER, "sell binder router")
+    assert_eq(tx.value_wei, "0", "sell binder value")
+    assert_eq(quote.effective_slippage_bps, DEFAULT_LAUNCH_SLIPPAGE_BPS, "sell binder effective slippage")
+    assert_eq(quote.buy_tax_rate_pct, None, "sell binder no buy tax")
+    assert_eq(quote.tax_adjusted_amount_out_raw, quote.quoted_amount_out_raw, "sell binder quote shape")
+    assert_eq(quote.deadline, 280, "sell binder deadline")
 
 
 def test_local_signer_signs_and_recovers_without_broadcast() -> None:
@@ -552,6 +577,165 @@ def test_launch_strategy_runtime_config_storage() -> None:
             storage.close()
 
 
+def test_launch_strategy_runtime_config_rejects_invalid_without_mutating() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "strategy-config-invalid.db"))
+        try:
+            project = storage.upsert_managed_project(
+                project_id=None,
+                name="HOT_INVALID",
+                signalhub_project_id="hot-invalid-1",
+                detail_url="https://app.virtuals.io/virtuals/3",
+                token_addr=None,
+                internal_pool_addr=None,
+                start_at=1000,
+                signalhub_end_at=None,
+                manual_end_at=2000,
+                resolved_end_at=2000,
+                is_watched=True,
+                collect_enabled=True,
+                backfill_enabled=True,
+                status="scheduled",
+                source="manual",
+            )
+            storage.upsert_launch_strategy_runtime_config(
+                project_row=project,
+                payload={
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "baseBuyV": "25",
+                    "dipBuyV": "50",
+                    "maxBuyV": "50",
+                    "maxProjectV": "150",
+                },
+                operator_user_id=None,
+            )
+            before = storage.get_launch_strategy_runtime_config(int(project["id"]))
+            assert_eq(before["version"], 1, "valid runtime version before invalid update")
+
+            invalid_payloads = [
+                {
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "baseBuyV": "25",
+                    "dipBuyV": "75",
+                    "maxBuyV": "50",
+                    "maxProjectV": "150",
+                },
+                {
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "baseBuyV": "25",
+                    "dipBuyV": "50",
+                    "flatPausePct": "101",
+                    "maxBuyV": "50",
+                    "maxProjectV": "150",
+                },
+            ]
+            for payload in invalid_payloads:
+                try:
+                    storage.upsert_launch_strategy_runtime_config(
+                        project_row=project,
+                        payload=payload,
+                        operator_user_id=None,
+                    )
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"invalid runtime config accepted: {payload}")
+
+            after = storage.get_launch_strategy_runtime_config(int(project["id"]))
+            assert_eq(after["version"], 1, "runtime version unchanged after invalid updates")
+            assert_eq(after["dip_buy_v"], "50.000000", "runtime dip unchanged after invalid updates")
+            assert_eq(after["max_buy_v"], "50.000000", "runtime max unchanged after invalid updates")
+            assert_eq(
+                len(storage.list_launch_strategy_runtime_config_audit(int(project["id"]))),
+                1,
+                "invalid updates do not write audit rows",
+            )
+        finally:
+            storage.close()
+
+
+def test_runtime_hot_reload_next_intent_uses_new_buy_size() -> None:
+    cases = [
+        {
+            "project": "SR_EVENT_REPLAY",
+            "samples": "data/replay-event-level/sr_event_replay-20260510T073102Z-samples.jsonl",
+            "rule": "gate_5k_tax95_fdv_one_per_tax",
+            "firstTax": "95",
+            "nextBaseTax": "94",
+        },
+        {
+            "project": "ISC_EVENT_REPLAY",
+            "samples": "data/replay-event-level/isc_event_replay-20260510T085419Z-samples.jsonl",
+            "rule": "gate_5k_tax89_fdv_one_per_tax",
+            "firstTax": "89",
+            "nextBaseTax": "87",
+        },
+    ]
+
+    for case in cases:
+        samples = load_samples(Path(case["samples"]))
+        evaluator = DynamicAfter1StrategyEvaluator(
+            project=case["project"],
+            rule=resolve_rule(case["rule"]),
+            config=DynamicExecutionConfig(base_buy_v=Decimal("25"), dip_buy_v=Decimal("50")),
+        )
+        first_intent = None
+        next_intent = None
+        for index, row in enumerate(samples):
+            decision = evaluator.evaluate(row, index=index)
+            if decision.intent is None:
+                continue
+            if first_intent is None:
+                first_intent = decision.intent
+                evaluator.config = replace(
+                    evaluator.config,
+                    base_buy_v=Decimal("100"),
+                    dip_buy_v=Decimal("200"),
+                )
+                continue
+            next_intent = decision.intent
+            break
+
+        if first_intent is None or next_intent is None:
+            raise AssertionError(f"{case['project']} did not produce enough intents for hot reload probe")
+        assert_eq(first_intent.tax_rate, case["firstTax"], f"{case['project']} first hot reload tax")
+        assert_eq(first_intent.buy_size_v, "25", f"{case['project']} first size before hot reload")
+        assert_eq(next_intent.tax_rate, case["nextBaseTax"], f"{case['project']} next hot reload tax")
+        assert_eq(next_intent.buy_size_v, "100", f"{case['project']} next size after hot reload")
+
+        dip_evaluator = DynamicAfter1StrategyEvaluator(
+            project=case["project"],
+            rule=resolve_rule(case["rule"]),
+            config=DynamicExecutionConfig(base_buy_v=Decimal("25"), dip_buy_v=Decimal("50")),
+        )
+        first_dip_intent = None
+        next_dip_intent = None
+        for index, row in enumerate(samples):
+            decision = dip_evaluator.evaluate(row, index=index)
+            if decision.intent is None:
+                continue
+            if first_dip_intent is None:
+                first_dip_intent = decision.intent
+                dip_evaluator.config = replace(
+                    dip_evaluator.config,
+                    base_buy_v=Decimal("100"),
+                    dip_buy_v=Decimal("200"),
+                    dip_from_own_cost_pct=Decimal("0"),
+                )
+                continue
+            next_dip_intent = decision.intent
+            break
+
+        if first_dip_intent is None or next_dip_intent is None:
+            raise AssertionError(f"{case['project']} did not produce enough dip intents for hot reload probe")
+        assert_eq(first_dip_intent.buy_size_v, "25", f"{case['project']} first dip size before hot reload")
+        assert_eq(next_dip_intent.buy_size_v, "200", f"{case['project']} dip size after hot reload")
+        assert_eq(next_dip_intent.reason, "dip20_double", f"{case['project']} dip reason after hot reload")
+
+
 def test_launch_sell_runtime_config_storage() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         storage = Storage(str(Path(tmp) / "sell-config.db"))
@@ -600,7 +784,83 @@ def test_launch_sell_runtime_config_storage() -> None:
             assert_eq(config["mode"], "broadcast", "sell runtime config mode")
             assert_eq(config["max_tax_rate"], "25.000000", "sell runtime tax")
             assert_eq(config["large_buy_high_v"], "9000.000000", "sell runtime large buy high")
+            assert_eq(bool(config.get("custom_rules_json")), True, "sell runtime custom rules json present")
             assert_eq(len(storage.list_launch_sell_runtime_config_audit(int(project["id"]))), 1, "sell runtime audit")
+
+            custom_config = storage.upsert_launch_sell_runtime_config(
+                project_row=project,
+                payload={
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "strategy": "custom_multi_sell",
+                    "ruleName": "custom_multi_sell",
+                    "customRules": [
+                        {
+                            "id": "price_rule",
+                            "type": "condition_group",
+                            "operator": "or",
+                            "enabled": True,
+                            "sellPct": "30",
+                            "conditions": [
+                                {
+                                    "id": "price",
+                                    "type": "price",
+                                    "priceThreshold": "0.01",
+                                    "priceUnit": "usd",
+                                }
+                            ],
+                        },
+                        {
+                            "id": "roi_large_buy",
+                            "type": "condition_group",
+                            "operator": "and",
+                            "enabled": True,
+                            "sellPct": "30",
+                            "conditions": [
+                                {"id": "roi", "type": "roi", "roiPct": "30"},
+                                {
+                                    "id": "large_buy",
+                                    "type": "large_buy",
+                                    "largeBuyThreshold": "5000",
+                                    "largeBuyUnit": "v",
+                                },
+                            ],
+                        },
+                    ],
+                },
+                operator_user_id=None,
+            )
+            assert_eq(custom_config["strategy"], "custom_multi_sell", "custom sell strategy")
+            assert_eq("condition_group" in custom_config["custom_rules_json"], True, "custom sell rules persisted")
+            custom_version = int(custom_config["version"])
+
+            try:
+                storage.upsert_launch_sell_runtime_config(
+                    project_row=project,
+                    payload={
+                        "enabled": True,
+                        "mode": "broadcast",
+                        "strategy": "custom_multi_sell",
+                        "ruleName": "custom_multi_sell",
+                        "customRules": [
+                            {
+                                "id": "bad_sell_pct",
+                                "type": "high_roi",
+                                "enabled": True,
+                                "roiPct": "30",
+                                "sellPct": "150",
+                            }
+                        ],
+                    },
+                    operator_user_id=None,
+                )
+            except ValueError as exc:
+                if "sellPct" not in str(exc):
+                    raise
+            else:
+                raise AssertionError("invalid custom sell pct must be rejected")
+            unchanged = storage.get_launch_sell_runtime_config(int(project["id"]))
+            assert_eq(int(unchanged["version"]), custom_version, "invalid custom config does not overwrite")
 
             storage.upsert_launch_execution_record(
                 {
@@ -758,9 +1018,12 @@ def main() -> None:
     test_virtuals_buy_calldata_parity()
     asyncio.run(test_tx_simulator_green_and_blocked())
     asyncio.run(test_order_binder_quote_and_min_out())
+    asyncio.run(test_sell_binder_quote_matches_pool_quote_shape())
     test_local_signer_signs_and_recovers_without_broadcast()
     test_launch_execution_ledger_storage()
     test_launch_strategy_runtime_config_storage()
+    test_launch_strategy_runtime_config_rejects_invalid_without_mutating()
+    test_runtime_hot_reload_next_intent_uses_new_buy_size()
     test_launch_sell_runtime_config_storage()
     test_route_metadata_storage_and_team_filter()
     asyncio.run(test_team_initialization_route_excludes_cost())

@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allowance-confirm-timeout-sec", type=int, default=10)
     parser.add_argument("--allowance-confirm-interval-sec", type=Decimal, default=Decimal("0.5"))
     parser.add_argument("--skip-sign", action="store_true", help="Read-only approve readiness check; do not load private key or sign.")
+    parser.add_argument("--force-exact", action="store_true", help="Broadcast approval even when current allowance is already sufficient.")
     parser.add_argument("--broadcast", action="store_true")
     parser.add_argument("--allow-shared-rpc-broadcast", action="store_true")
     parser.add_argument("--output-json")
@@ -139,6 +140,7 @@ async def wait_allowance_at_least(
     owner: str,
     spender: str,
     amount_wei: int,
+    exact: bool = False,
     timeout_sec: int,
     interval_sec: Decimal,
 ) -> dict[str, Any]:
@@ -148,7 +150,7 @@ async def wait_allowance_at_least(
     while True:
         last = await read_allowance(rpc, token=token, owner=owner, spender=spender)
         reads.append(str(last))
-        if last >= amount_wei:
+        if (last == amount_wei) if exact else (last >= amount_wei):
             return {"ok": True, "allowanceWei": str(last), "reads": reads}
         if time.time() >= deadline:
             return {"ok": False, "allowanceWei": str(last), "reads": reads}
@@ -203,16 +205,17 @@ async def async_main() -> None:
         "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
         "executionRpcSource": rpc_selection.source,
         "signingSkipped": bool(args.skip_sign),
+        "forceExact": bool(args.force_exact),
     }
 
     async with RPCClient(rpc_url, max_retries=3, timeout_sec=20) as rpc:
         before = await read_allowance(rpc, token=cfg.virtual_token_addr, owner=from_addr, spender=spender)
         output["allowanceBeforeWei"] = str(before)
-        if before >= amount_wei:
+        if before == amount_wei or (before >= amount_wei and not args.force_exact):
             output.update(
                 {
                     "skipped": True,
-                    "reason": "allowance_already_sufficient",
+                    "reason": "allowance_already_exact" if before == amount_wei else "allowance_already_sufficient",
                     "allowanceAfterWei": str(before),
                     "allowanceConfirmed": True,
                 }
@@ -308,6 +311,7 @@ async def async_main() -> None:
                     owner=from_addr,
                     spender=spender,
                     amount_wei=amount_wei,
+                    exact=bool(args.force_exact),
                     timeout_sec=int(args.allowance_confirm_timeout_sec),
                     interval_sec=Decimal(str(args.allowance_confirm_interval_sec)),
                 )

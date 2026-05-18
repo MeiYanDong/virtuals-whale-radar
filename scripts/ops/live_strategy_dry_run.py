@@ -67,6 +67,7 @@ def compact_sample(sample: dict[str, Any]) -> dict[str, Any]:
         "priceBlockNumber",
         "priceLatencyMs",
         "marketPriceSource",
+        "tokenPriceV",
         "tokenPriceUsd",
         "liveFdvUsd",
         "buyTaxRate",

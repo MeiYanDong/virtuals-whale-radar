@@ -2284,6 +2284,41 @@ Phase 052 执行结果：
   - 已确认 direct sell selector：`sell(uint256,address,uint256,uint256)` / `0xb233e056`。
   - 已将本轮 canary 买入的 `TDS / RRR / AURA / ASDSDA` 全部卖回 VIRTUAL，卖回合计 `3.9223602 VIRTUAL`。
   - 清仓后四个 token 余额均为 `0`，相关 token allowance 均为 `0`，最终 burner VIRTUAL 余额 `12.587713615542899411`。
+  - 2026-05-18 12:23 CST 复测 TDS 小额真实买卖：
+    - 预检通过：`simulationGreen=true / rpcSharedWithMain=false / executionRpcSource=VWR_EXEC_HTTP_RPC_URL`。
+    - 买入 `0.1 VIRTUAL -> TDS` 成功，tx `0x98ff0ba6a5a99b006242a1bb0319cc8738389bf856f4713f211a6b5c63212375`，receipt `status=0x1`，`sendRawMs=321.1ms`，实际收到 `2960685791648811043893` raw TDS。
+    - exact TDS 授权成功，tx `0xb1889f8825294eb0b7ba14b8817cc464c172aabd387e156e28e1e758363e5677`，receipt `status=0x1`，allowance 确认到 exact amount。
+    - exact amount 卖回成功，tx `0x161ba3dbaec8bbbf0b5787f41e8a9b217be1fe1a36c1afe4456021e59b367894`，receipt `status=0x1`，收到 `98010000000000000` wei VIRTUAL。
+    - 收尾核对：TDS 余额 `0`，TDS sell allowance `0`，active fuse `0`，VIRTUAL buy allowance `249.7 VIRTUAL`。
+    - 本次为本地 canary，`127.0.0.1:8000/healthz` 未运行；链上买卖不依赖本地 SignalHub。
+  - 2026-05-18 12:42 CST 补充完成“全窗口自动触发”真实 canary：
+    - 新增脚本 `scripts/ops/full_window_auto_trigger_canary.py`，输入 99 tick 发射样本流，让生产 `DynamicAfter1StrategyEvaluator` 自动产生 BuyIntent，并调用生产 `launch_prewarm_executor.prewarm_intent(...)` 广播；随后让生产卖出 evaluator 依据后续样本自动产生 SellIntent，并调用 `launch_sell_executor.execute_sell_decision(...)` 完成 exact approve + sell。
+    - 该验证不是手动 buy/sell：`autoTrigger=true`、`paperOnly=false`、`rpcSharedWithMain=false`，交易由样本流自动触发；但样本流来自 `runtime_control_launch_simulator.py` 的人工 fixture，不代表 TDS 或任何真实项目的官网税率走势。
+    - 最小额实测：`0.01 VIRTUAL -> TDS` 在 fixture tax `95%` 自动买入，tx `0x95dd79671943b3a700beba94073fd0089eef404c5ab42d3a8fac685dcc345bb4`，receipt `status=0x1`，`triggerToSendAckMs=343.1ms`。
+    - 后续 fixture 样本在 tax `92%` 自动触发卖出，tx `0x45f81a89de82f9e283856127fcbe329d2fea5ec302a4e561b9f5632015767130`，receipt `status=0x1`；这次卖出为链路强制 canary，当时使用了 `--sell-max-tax-rate 100`，不能当作生产卖出税率策略验证。
+    - 报告 `data/execution/full-window-auto-trigger-canary-TDS-20260518-124213-summary.json`：`ok=true`、`post_buy_balance_visible=1`、`sell_receipt_success=1`、`post_sell_balance_zero=1`、`tdsBalanceRawAfter=0`。
+    - 脚本已修复 receipt 后读取余额 stale 的问题：买入后等待 token balance 可见，卖出后等待 token balance 归零，再写 summary。
+    - 脚本已隔离本次 run 的执行账本：卖出评估只读取本次自动触发 canary 的 buy/sell strategy 记录，避免被 TDS 历史 canary 记录污染 position 口径。
+    - 脚本默认卖出税率上限已改回生产式 `30%`；如果需要高税率强制卖出 canary，必须显式增加 `--force-high-tax-sell-canary`。
+    - 收尾核对：TDS 余额 `0`，TDS sell allowance `0`，active fuse `0`，VIRTUAL buy allowance `249.54 VIRTUAL`。
+  - 2026-05-18 14:33 CST 完成“真实历史样本驱动 + 真实链上广播 + 运行时改参热加载”canary：
+    - 新增脚本 `scripts/ops/historical_live_auto_trigger_canary.py`，使用 `data/replay-event-level/sr_event_replay-20260510T073102Z-samples.jsonl` 的 `1089` 个 SR 历史样本作为触发源，使用当前仍可交易的 TDS internal market 作为真实执行标的；这验证自动触发和配置热加载，不要求历史成交价与当前链上成交价一致。
+    - 运行中在 sample `30` 写入管理员买入改参：`0.005 VIRTUAL -> 0.01 VIRTUAL`，执行器随后记录 `strategy_config_reloaded`，并在 sample `55` / tax `95%` 用新值自动买入 `0.01 VIRTUAL`，tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，receipt `0x1`，`triggerToSendAckMs=362.4ms`。
+    - 运行中在 sample `700` 写入管理员卖出改参并启用自动卖出，执行器随后记录 `sell_config_reloaded`，并在 sample `819` / tax `30%` 自动卖出本次 TDS 持仓，tx `0xce9d5637f82894ef2bfd2dc403664b6f143ba58b943ac3d0c7fc322fb8c47b0a`，receipt `0x1`。
+    - 报告 `data/execution/historical-live-auto-trigger-canary-TDS-SR-20260518-143334-summary.json`：`ok=true`、`samples=1089`、`strategy_config_reloaded=1`、`sell_config_reloaded=1`、`receipt_success=1`、`sell_receipt_success=1`、`post_sell_balance_zero=1`。
+    - 收尾核对：TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`、VIRTUAL buy allowance 精确恢复为 `10 VIRTUAL`；本地 TDS 自动买入/卖出运行配置已恢复到 disabled simulate。
+    - 授权脚本补强：`approve_virtual_spender.py` 与 `approve_erc20_spender.py` 新增 `--force-exact`；当目标 allowance 低于当前值或需要撤销到 `0` 时，不再因为“已有 allowance 足够”而跳过，确认阶段也会等待 exact allowance。
+  - 2026-05-18 15:35-15:36 CST 完成远端生产库候选项目筛选和双标的历史样本 canary：
+    - 远端 `managed_projects` 中，当前 direct-buy readiness 只有 `TDS` 与 `VOID` 为 `simulationGreen=true / signed=true`；`ROO / ISC / SR / SCL / ZODIAC / LUCA / F007` 当前 `eth_call/estimateGas` 返回 `0xd4181deb`，`FIRE` pool 读数或 simulation 失败；SignalHub 未来项目 `PROFIT / MTR / ORION / JDE / JMV / SHOPX` 当前也不可买。
+    - 远端发现生产代码/表结构漂移：缺少 `historical_live_auto_trigger_canary.py`，卖出执行器缺少 `multi_state_from_position`，`launch_sell_runtime_configs` 缺少 `custom_rules_json`。已同步当前脚本和 `virtuals_bot.py` 到服务器，并通过 Storage migration 补齐 `custom_rules_json`；生产服务未在本次测试中重启，健康检查保持正常。
+    - 远端 TDS 历史样本 canary 通过：sample `55` / tax `95%` 自动买入 `0.01 VIRTUAL`，tx `0x0b25e9fbc0fd7dbdba92aa3411f15c25efbbcb0d1a5eae898d61959f642571c1`；sample `819` / tax `30%` 自动卖出，tx `0xcec3e409a2ab999fb4fd6443dc5adb194793b1b717ea34eb352f2de4bb966b19`；summary `ok=true`、最终 TDS 余额 `0`、active fuse `0`。
+    - 远端 VOID 历史样本 canary 通过：sample `55` 自动买入 tx `0x11cb1c901df209424366389ec01cf6131f38daef0a76583be7c76d0f679ca90f`，sample `819` 自动卖出 tx `0xe02cd7b85b9a6973f9f40a0182d5d960985d31476d84deda9b7cec3e680fd718`；summary `ok=true`、最终 VOID 余额 `0`、active fuse `0`。
+  - 2026-05-18 17:14-17:17 CST 完成本地补充内盘标的 canary：
+    - 本地临时加入 `RRR / AURA / ASDSDA` managed project 行作为执行标的，全部使用 SR `1089` 个历史样本驱动、`0.01 VIRTUAL` 小额真实广播、sample `30/700` 运行时改参热加载；测试后已删除临时项目行和运行时配置。
+    - `RRR`：买入 tx `0x0e4e89b80992b6953fc2c5a53c88c16742210c6b78396e34919c9a6b3f579a49`，卖出 tx `0x93493ba0702dcff5f91f174b4509a52439d759068121235dd175bcebe225e3b7`，summary `ok=true`。
+    - `AURA`：买入 tx `0xc10555bf3e5bf02a7c838ad7e48126f6094a70469c70b66c3c712c3ca3b7990a`，卖出 tx `0x4d33174fae0dedb204dbeb8e33457cb4ca6f07b1044f086a0b2e3488a455978b`，summary `ok=true`。
+    - `ASDSDA`：买入 tx `0x325ef89c1e7f93ec8635c69bb8f84335aac986c497185edf155327543844e4cd`，卖出 tx `0xeefec6d0108b8bb15cb010d7c29fc85797d12351a7c95772c86f16fde8355e3f`，summary `ok=true`。
+    - 收尾核对：本地 `TDS / RRR / AURA / ASDSDA` 余额均为 `0`，token sell allowance 均为 `0`，VIRTUAL buy allowance 剩余 `9.93 VIRTUAL`。
   - 已新增执行账本 `launch_execution_ledger` 与 Storage API。
   - `live_strategy_dry_run.py` 已写入 would-buy / pause 记录，保持 `tradeSent=false`、`broadcastEnabled=false`。
   - `prewarmed_buy_canary.py` 已支持可选 `--ledger-intent-id`，可记录 simulation / sign / broadcast / receipt 阶段摘要；账本不保存 raw transaction。
@@ -2435,6 +2470,9 @@ Phase 052 执行结果：
 - 管理员项目详情页新增“自动买入控制”模块：
   - 支持恢复默认 `25/50/50/150` 与 `20/10` 阈值。
   - 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限和项目预算。
+  - UI 已从普通参数表重构为“买入策略卡”：买入触发条件只读展示，金额、节奏保护、抄底放大和风险上限分区编辑。
+  - 买入触发条件展示当前后端策略事实，不支持前端修改，也不向后端提交新字段：`LIVE 中`、`税率 ≤ 95%`、`榜单 V ≥ 5,000`、`有效榜单 20 人 / 5 个成本样本`、`含税 FDV ≤ 榜单成本`。
+  - `有效榜单 20 人 / 5 个成本样本` 用于避免误解：榜单人数表示大户广度，成本样本表示可参与榜单成本计算的有效地址数。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动买入`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已买入 V、最近调整时间和 active fuse 提示。
 - 后端新增运行时配置能力：
@@ -2451,34 +2489,46 @@ Phase 052 执行结果：
   - Python `py_compile`。
   - `scripts/ops/test_launch_execution_pipeline.py`。
   - `scripts/ops/test_launch_prewarm_executor.py`。
+  - 新增并验证 `scripts/ops/runtime_control_launch_simulator.py`。
   - 前端 `npm run build`。
   - 前端 `npm run lint`。
 - 本地管理员页面烟测通过：
   - 使用临时本地配置启动 writer，`/admin/projects/1?project=TDS` 可渲染“自动买入控制”。
   - 当前前端只保留 `恢复默认`、`保存并启用`、`停用自动买入` 三个主要动作。
   - HTTP 保存烟测通过：保存后可重置为 disabled `25/50/50/150`。
+  - 2026-05-18 本地网页保存 TDS 小额参数 `0.1/0.2/0.2/0.6` 后，后端回读 `enabled=true / mode=broadcast / version=22`。
+  - 100x 完整发射窗口 paper replay 通过：99 个税率 tick 约 1 分钟跑完，产生 `0.1/0.2/0.1/0.2 VIRTUAL` 四次买入意图，项目预算 `0.6 VIRTUAL` 生效后阻断后续意图，全程 `paperOnly=true / tradeSent=false`。
+  - 测试完成后已停用本地 TDS 自动买入，回读 `enabled=false / mode=simulate / version=23`。
 - 当前边界：
   - 真实广播仍受原有 CLI/env、独立 execution RPC、active fuse、simulation 和 receipt 保护。
+  - `100x` 适合完整窗口烟测；如果需要人工在前端中途改参并观察下一 tick 热加载，应使用 `20x` 或脚本暂停检查点。
 
 ## 45. 自动卖出运行时控制台（Phase 056，2026-05-15）
 
 - 子 plan：`docs/phases/phase-056-runtime-autosell-control-plan.md`。
 - 子 todo：`docs/phases/phase-056-runtime-autosell-control-todo.md`。
 - 管理员项目详情页新增“自动卖出控制”模块：
-  - 支持恢复默认收益率 `30/50`、大单 `5000/8000`、卖出比例 `30/50`、冷却 `60s` 和事件回看 `120s`。
-  - 支持编辑税率窗口、收益率档位、大单档位、卖出比例、冷却时间和事件回看窗口。
+  - 支持恢复默认税率窗口、冷却、事件回看窗口和默认卖出规则。
+  - 支持编辑税率窗口、冷却时间、事件回看窗口和条件组合式自定义卖出规则。
+  - 前端从固定四规则卡片升级为规则构建器：每条规则可添加价格、大单、收益条件，并选择 `AND 全部满足` 或 `OR 任一满足`。
+  - 默认推荐规则：`收益率 >= 30% AND 单笔买入 >= 5000 VIRTUAL` 时卖出 `30%`。
+  - 大单门槛单位支持 `VIRTUAL / USD`；限价单位支持 `USD / VIRTUAL`。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动卖出`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已卖出目标、卖出次数、最近卖出时间和 active fuse 提示。
 - 后端新增运行时配置能力：
   - `launch_sell_runtime_configs` 保存当前项目自动卖出配置。
+  - `custom_rules_json` 保存 `condition_group` 白名单规则，保存前做类型、条件、逻辑、单位、阈值和卖出比例校验。
+  - 兼容旧的 `limit_price / large_buy / high_roi / roi_and_large_buy` 配置，并在保存时归一化为条件组。
   - `launch_sell_runtime_config_audit` 保存每次修改的 before/after 审计。
   - 管理员 API：`GET/POST /api/admin/projects/{project_id}/launch-sell-config`。
-  - 静态风控校验：二档阈值不能低于一档阈值；大单阈值必须为正；冷却时间不能为负；事件回看窗口必须为正。
+  - 静态风控校验：卖出比例必须在 `0-100%`；大单阈值必须为正；限价阈值不能为负；冷却时间不能为负；事件回看窗口必须为正。
 - 自动卖出执行器已接入热加载：
   - 无配置行时默认视为未启用，阻断真实卖出。
   - 配置存在且 `enabled=false` 时不卖出。
   - `broadcast` 执行器遇到配置 `mode=simulate` 时阻断真实卖出。
   - 配置版本变化时写入 `sell_config_reloaded` 日志。
+  - `strategy=custom_multi_sell` 时使用 `CustomSellConfig/evaluate_custom_sell`；支持一条规则内部 `AND/OR` 条件组合，多规则可同时触发，卖出增量累加，但不会超过原始仓位 `100%` 或当前钱包余额。
+  - 大单条件按 `rule_id + tx_hash` 去重，避免同一笔大单重复触发同一条规则。
 - 本地验证通过：
   - Python `py_compile`。
   - `scripts/ops/test_launch_execution_pipeline.py`。

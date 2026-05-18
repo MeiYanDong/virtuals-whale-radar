@@ -574,6 +574,7 @@ async def build_sample(
         "priceBlockNumber": market.get("priceBlockNumber"),
         "priceLatencyMs": market.get("priceLatencyMs"),
         "marketPriceSource": market.get("marketPriceSource"),
+        "tokenPriceV": market.get("tokenPriceV"),
         "tokenPriceUsd": market.get("tokenPriceUsd"),
         "liveFdvUsd": market.get("liveFdvUsd"),
         "buyTaxRate": market.get("buyTaxRate"),

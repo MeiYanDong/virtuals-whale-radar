@@ -438,6 +438,7 @@ export interface LaunchSellRuntimeConfigItem {
   largeBuyHighV: string;
   sellLowPct: string;
   sellHighPct: string;
+  customRules: LaunchSellCustomRule[];
   cooldownSec: number;
   catchUpEventsSec: number;
   version: number;
@@ -445,6 +446,31 @@ export interface LaunchSellRuntimeConfigItem {
   updatedReason: string;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+export interface LaunchSellCustomRule {
+  id: string;
+  type: "condition_group" | "limit_price" | "large_buy" | "high_roi" | "roi_and_large_buy";
+  label?: string;
+  enabled: boolean;
+  operator?: "and" | "or";
+  sellPct: string;
+  conditions?: LaunchSellCondition[];
+  priceThreshold?: string;
+  priceUnit?: "usd" | "v";
+  largeBuyThreshold?: string;
+  largeBuyUnit?: "v" | "usd";
+  roiPct?: string;
+}
+
+export interface LaunchSellCondition {
+  id?: string;
+  type: "price" | "large_buy" | "roi" | "limit_price" | "high_roi";
+  priceThreshold?: string;
+  priceUnit?: "usd" | "v";
+  largeBuyThreshold?: string;
+  largeBuyUnit?: "v" | "usd";
+  roiPct?: string;
 }
 
 export interface LaunchSellRuntimeConfigResponse {

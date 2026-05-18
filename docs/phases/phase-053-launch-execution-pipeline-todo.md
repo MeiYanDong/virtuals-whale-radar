@@ -231,6 +231,24 @@
 - [x] 将本轮 canary 买入的 TDS / RRR / AURA / ASDSDA 全部卖回 VIRTUAL。
 - [x] 清仓后链上核对：四个 token 余额均为 `0`，对 router/spender 的 token allowance 均为 `0`。
 - [x] 卖回合计收到 `3.9223602 VIRTUAL`，最终 burner VIRTUAL 余额 `12.587713615542899411`。
+- [x] 2026-05-18 生产 TDS internal-market canary：`0.1 VIRTUAL` 买入、exact TDS 授权、exact amount 卖回均成功，receipt 均为 `0x1`。
+- [x] 修复 `sell_virtuals_token.py` 的 `PoolQuote` 字段缺失崩溃，并补充 sell binder 无网络测试。
+- [x] TDS canary 收尾确认：TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`、服务健康。
+- [x] 新增 `scripts/ops/full_window_auto_trigger_canary.py`，验证 live 窗口样本流自动触发生产买入/卖出执行器。
+- [x] 2026-05-18 12:42 CST 完成 TDS 全窗口自动触发链路 canary：fixture tax `95%` 自动买入 `0.01 VIRTUAL`，tx `0x95dd79671943b3a700beba94073fd0089eef404c5ab42d3a8fac685dcc345bb4`，receipt `0x1`；fixture tax `92%` 强制自动卖出，tx `0x45f81a89de82f9e283856127fcbe329d2fea5ec302a4e561b9f5632015767130`，receipt `0x1`；最终 `tdsBalanceRawAfter=0`。该测试只证明自动触发链路，不代表真实项目税率走势或生产卖出税率策略。
+- [x] 全窗口自动触发 canary 已修复 receipt 后余额读取 stale：买入后等待 token balance 可见，卖出后等待 token balance 归零。
+- [x] 全窗口自动触发 canary 已修复账本污染：卖出评估只读取本次 run 的 buy/sell strategy 记录。
+- [x] `full_window_auto_trigger_canary.py` 默认卖出税率上限改回 `30%`；高税率强制卖出 canary 必须显式传 `--force-high-tax-sell-canary`。
+- [x] 新增 `scripts/ops/historical_live_auto_trigger_canary.py`，用真实历史样本流验证自动触发、运行时改参热加载和真实广播，而不是人工 fixture。
+- [x] 2026-05-18 14:33 CST 完成 SR 历史样本驱动 TDS internal-market 真实 canary：sample `30` 买入改参后热加载，sample `55` / tax `95%` 自动买入 `0.01 VIRTUAL`，tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，receipt `0x1`；sample `700` 卖出改参后热加载，sample `819` / tax `30%` 自动卖出，tx `0xce9d5637f82894ef2bfd2dc403664b6f143ba58b943ac3d0c7fc322fb8c47b0a`，receipt `0x1`；summary `ok=true`。
+- [x] 历史 canary 收尾：TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`、VIRTUAL allowance 精确 `10 VIRTUAL`，并恢复 TDS 买入/卖出运行时配置为 disabled simulate。
+- [x] `historical_live_auto_trigger_canary.py` 增加 `--sell-trigger-mode price_zero`，用于 canary 路径在 `tax <= 30%` 后验证自动卖出执行链路，不要求正收益；生产卖出策略仍由自动卖出配置决定。
+- [x] 2026-05-18 15:35-15:36 CST 远端生产库候选筛选完成：当前只有 `TDS / VOID` direct-buy readiness 通过；其他生产项目和 SignalHub 未来项目当前不可买或 simulation 失败。
+- [x] 远端漂移已修复：同步当前 canary / buy / sell 执行脚本和 `virtuals_bot.py`，并补齐 `launch_sell_runtime_configs.custom_rules_json`；测试过程中生产服务保持 active，健康检查正常。
+- [x] 远端 TDS 历史样本 canary 通过：sample `55` 买入 tx `0x0b25e9fbc0fd7dbdba92aa3411f15c25efbbcb0d1a5eae898d61959f642571c1`，sample `819` 卖出 tx `0xcec3e409a2ab999fb4fd6443dc5adb194793b1b717ea34eb352f2de4bb966b19`，最终余额 `0`、active fuse `0`。
+- [x] 远端 VOID 历史样本 canary 通过：sample `55` 买入 tx `0x11cb1c901df209424366389ec01cf6131f38daef0a76583be7c76d0f679ca90f`，sample `819` 卖出 tx `0xe02cd7b85b9a6973f9f40a0182d5d960985d31476d84deda9b7cec3e680fd718`，最终余额 `0`、active fuse `0`。
+- [x] 本地临时补测 `RRR / AURA / ASDSDA` 三个内盘标的，均完成 SR `1089` 样本驱动自动买入、运行中卖出配置热加载、`tax 30%` 后自动卖出，summary 均 `ok=true`；临时项目行和运行时配置已清理。
+- [x] `approve_virtual_spender.py` 和 `approve_erc20_spender.py` 新增 `--force-exact`，支持强制降额授权和撤销到 `0`，exact 模式等待 allowance 等于目标值。
 
 ## 7. ExecutionLedger
 

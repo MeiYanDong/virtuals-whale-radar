@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Gauge, Info, LockKeyhole, Pause, Play, RotateCcw, WalletCards } from "lucide-react";
+import { Gauge, Info, LockKeyhole, Pause, Play, Plus, RotateCcw, Trash2, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
 import type {
+  LaunchSellCustomRule,
   LaunchSellRuntimeConfigResponse,
   LaunchStrategyRuntimeConfigResponse,
   OverviewActiveResponse,
@@ -197,6 +198,7 @@ type LaunchSellFormState = {
   enabled: boolean;
   mode: "simulate" | "broadcast";
   maxTaxRate: string;
+  rules: SellRuleDraft[];
   roiLowPct: string;
   roiHighPct: string;
   largeBuyLowV: string;
@@ -206,6 +208,33 @@ type LaunchSellFormState = {
   cooldownSec: string;
   catchUpEventsSec: string;
   updatedReason: string;
+};
+
+type SellConditionType = "price" | "large_buy" | "roi";
+
+type SellConditionDraft = {
+  id: string;
+  type: SellConditionType;
+  priceThreshold: string;
+  priceUnit: "usd" | "v";
+  largeBuyThreshold: string;
+  largeBuyUnit: "v" | "usd";
+  roiPct: string;
+};
+
+type SellRuleDraft = {
+  id: string;
+  enabled: boolean;
+  label: string;
+  operator: "and" | "or";
+  sellPct: string;
+  conditions: SellConditionDraft[];
+};
+
+type LaunchSellSubmitPayload = LaunchSellFormState & {
+  strategy: string;
+  ruleName: string;
+  customRules: ReturnType<typeof buildLaunchSellCustomRules>;
 };
 
 function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse): LaunchStrategyFormState {
@@ -234,6 +263,117 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
   };
 }
 
+function createSellCondition(type: SellConditionType, id = `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`): SellConditionDraft {
+  return {
+    id,
+    type,
+    priceThreshold: "0.01",
+    priceUnit: "usd",
+    largeBuyThreshold: "5000",
+    largeBuyUnit: "v",
+    roiPct: type === "roi" ? "30" : "50",
+  };
+}
+
+function recommendedSellRules(): SellRuleDraft[] {
+  return [
+    {
+      id: "rule_roi_large_buy",
+      enabled: true,
+      label: "收益率 + 大单",
+      operator: "and",
+      sellPct: "30",
+      conditions: [
+        createSellCondition("roi", "roi"),
+        createSellCondition("large_buy", "large_buy"),
+      ],
+    },
+  ];
+}
+
+function normalizeSellConditionType(type: string | undefined): SellConditionType {
+  if (type === "price" || type === "limit_price") return "price";
+  if (type === "large_buy") return "large_buy";
+  if (type === "roi" || type === "high_roi") return "roi";
+  return "roi";
+}
+
+function draftConditionFromApi(condition: NonNullable<LaunchSellCustomRule["conditions"]>[number]): SellConditionDraft {
+  const type = normalizeSellConditionType(condition.type);
+  return {
+    ...createSellCondition(type, condition.id || type),
+    priceThreshold: formatEditableNumber(condition.priceThreshold ?? "0.01", 8),
+    priceUnit: condition.priceUnit === "v" ? "v" : "usd",
+    largeBuyThreshold: formatEditableNumber(condition.largeBuyThreshold ?? "5000", 0),
+    largeBuyUnit: condition.largeBuyUnit === "usd" ? "usd" : "v",
+    roiPct: formatEditableNumber(condition.roiPct ?? "30", 0),
+  };
+}
+
+function legacyConditionsFromRule(rule: LaunchSellCustomRule): SellConditionDraft[] {
+  if (rule.type === "limit_price") {
+    return [
+      {
+        ...createSellCondition("price", "price"),
+        priceThreshold: formatEditableNumber(rule.priceThreshold ?? "0.01", 8),
+        priceUnit: rule.priceUnit === "v" ? "v" : "usd",
+      },
+    ];
+  }
+  if (rule.type === "large_buy") {
+    return [
+      {
+        ...createSellCondition("large_buy", "large_buy"),
+        largeBuyThreshold: formatEditableNumber(rule.largeBuyThreshold ?? "5000", 0),
+        largeBuyUnit: rule.largeBuyUnit === "usd" ? "usd" : "v",
+      },
+    ];
+  }
+  if (rule.type === "high_roi") {
+    return [
+      {
+        ...createSellCondition("roi", "roi"),
+        roiPct: formatEditableNumber(rule.roiPct ?? "50", 0),
+      },
+    ];
+  }
+  if (rule.type === "roi_and_large_buy") {
+    return [
+      {
+        ...createSellCondition("roi", "roi"),
+        roiPct: formatEditableNumber(rule.roiPct ?? "30", 0),
+      },
+      {
+        ...createSellCondition("large_buy", "large_buy"),
+        largeBuyThreshold: formatEditableNumber(rule.largeBuyThreshold ?? "5000", 0),
+        largeBuyUnit: rule.largeBuyUnit === "usd" ? "usd" : "v",
+      },
+    ];
+  }
+  return [];
+}
+
+function draftRulesFromApiRules(rules: LaunchSellCustomRule[] | undefined): SellRuleDraft[] {
+  const source = rules && rules.length > 0 ? rules : [];
+  const parsed = source
+    .map((rule, index) => {
+      const conditions = rule.conditions?.length
+        ? rule.conditions.map(draftConditionFromApi)
+        : legacyConditionsFromRule(rule);
+      if (!conditions.length) return null;
+      return {
+        id: rule.id || `rule_${index + 1}`,
+        enabled: Boolean(rule.enabled),
+        label: rule.label || `卖出规则 ${index + 1}`,
+        operator: rule.operator === "or" ? "or" : "and",
+        sellPct: formatEditableNumber(rule.sellPct ?? "30", 0),
+        conditions,
+      } satisfies SellRuleDraft;
+    })
+    .filter((rule): rule is SellRuleDraft => Boolean(rule));
+  return parsed.length ? parsed : recommendedSellRules();
+}
+
 function formFromLaunchSellConfig(data?: LaunchSellRuntimeConfigResponse): LaunchSellFormState {
   const item = data?.item;
   const roiLowPct = formatEditableNumber(item?.roiLowPct ?? "30", 0);
@@ -253,6 +393,7 @@ function formFromLaunchSellConfig(data?: LaunchSellRuntimeConfigResponse): Launc
     enabled: item?.enabled ?? false,
     mode: item?.mode ?? "simulate",
     maxTaxRate: formatEditableNumber(item?.maxTaxRate ?? "30", 0),
+    rules: draftRulesFromApiRules(item?.customRules),
     roiLowPct,
     roiHighPct:
       roiLow !== null && roiHigh !== null ? formatStrategyInputNumber(Math.max(roiLow, roiHigh)) : rawRoiHighPct,
@@ -324,6 +465,26 @@ function normalizeLaunchSellFormForSubmit(form: LaunchSellFormState): LaunchSell
   if (sellLow !== null && sellHigh !== null) next.sellHighPct = formatStrategyInputNumber(Math.max(sellLow, sellHigh));
 
   return next;
+}
+
+function buildLaunchSellCustomRules(form: LaunchSellFormState) {
+  return form.rules.map((rule, index) => ({
+    id: rule.id || `rule_${index + 1}`,
+    type: "condition_group" as const,
+    label: rule.label || `卖出规则 ${index + 1}`,
+    enabled: rule.enabled,
+    operator: rule.operator,
+    sellPct: rule.sellPct,
+    conditions: rule.conditions.map((condition) => ({
+      id: condition.id,
+      type: condition.type,
+      priceThreshold: condition.type === "price" ? condition.priceThreshold : undefined,
+      priceUnit: condition.type === "price" ? condition.priceUnit : undefined,
+      largeBuyThreshold: condition.type === "large_buy" ? condition.largeBuyThreshold : undefined,
+      largeBuyUnit: condition.type === "large_buy" ? condition.largeBuyUnit : undefined,
+      roiPct: condition.type === "roi" ? condition.roiPct : undefined,
+    })),
+  }));
 }
 
 function applyLaunchStrategyPatch(
@@ -442,6 +603,7 @@ const defaultStrategyPatch: Partial<LaunchStrategyFormState> = {
 };
 const defaultSellPatch: Partial<LaunchSellFormState> = {
   maxTaxRate: "30",
+  rules: recommendedSellRules(),
   roiLowPct: "30",
   roiHighPct: "50",
   largeBuyLowV: "5000",
@@ -451,6 +613,17 @@ const defaultSellPatch: Partial<LaunchSellFormState> = {
   cooldownSec: "60",
   catchUpEventsSec: "120",
 };
+
+const launchBuyTriggerConditions = [
+  { label: "LIVE 中" },
+  { label: "税率 ≤ 95%" },
+  { label: "榜单 V ≥ 5,000" },
+  {
+    label: "有效榜单 20 人 / 5 个成本样本",
+    hint: "至少 20 个大户进入榜单，且其中至少 5 个地址能计算买入成本，才允许用榜单成本作为买入判断依据。",
+  },
+  { label: "含税 FDV ≤ 榜单成本" },
+];
 
 function StrategyInfoHint({ label }: { label: string }) {
   return (
@@ -469,6 +642,15 @@ function StrategyInfoHint({ label }: { label: string }) {
         {label}
       </span>
     </span>
+  );
+}
+
+function ReadOnlyConditionChip({ label, hint }: { label: string; hint?: string }) {
+  return (
+    <div className="launch-strategy-condition-chip inline-flex min-h-10 items-center gap-1.5 rounded-full border border-border bg-[color:var(--surface-soft-strong)] px-3 py-2 text-sm font-semibold text-foreground">
+      <span>{label}</span>
+      {hint ? <StrategyInfoHint label={hint} /> : null}
+    </div>
   );
 }
 
@@ -544,8 +726,10 @@ function LaunchStrategyControlPanel({
         <div className="space-y-4">
           <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
-              <div className={strategyLabelClass}>参数设置</div>
-              <div className="text-sm text-muted-foreground">保存后自动买入执行器会热读取这些参数。</div>
+              <div className={strategyLabelClass}>买入策略</div>
+              <div className="text-sm text-muted-foreground">
+                入场条件由当前系统策略固定；金额、节奏和上限可在发射过程中调整。
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -576,74 +760,128 @@ function LaunchStrategyControlPanel({
             </div>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className={strategyFieldClass}>
-              <StrategyFieldLabel label="基础买入" unit="VIRTUAL" />
-              <Input
-                className={strategyInputClass}
-                inputMode="decimal"
-                aria-label="基础买入，单位 VIRTUAL"
-                value={form.baseBuyV}
-                onChange={(event) => onChange(applyLaunchStrategyPatch(form, { baseBuyV: event.target.value }))}
-              />
+          <div className="grid gap-4 2xl:grid-cols-[0.9fr_1.1fr]">
+            <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className={strategyLabelClass}>买入触发条件</div>
+                <Badge variant="secondary">只读</Badge>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {launchBuyTriggerConditions.map((condition) => (
+                  <ReadOnlyConditionChip key={condition.label} label={condition.label} hint={condition.hint} />
+                ))}
+              </div>
+              <div className="mt-3 text-xs leading-5 text-muted-foreground">
+                这里展示当前自动买入策略的固定入场门槛，不会随前端保存而改写。
+              </div>
             </div>
-            <div className={strategyFieldClass}>
-              <StrategyFieldLabel label="抄底买入" unit="VIRTUAL" />
-              <Input
-                className={strategyInputClass}
-                inputMode="decimal"
-                aria-label="抄底买入，单位 VIRTUAL"
-                value={form.dipBuyV}
-                onChange={(event) => onChange(applyLaunchStrategyPatch(form, { dipBuyV: event.target.value }))}
-              />
-            </div>
-            <div className={strategyFieldClass}>
-              <StrategyFieldLabel label="单笔上限" unit="VIRTUAL" />
-              <Input
-                className={strategyInputClass}
-                inputMode="decimal"
-                aria-label="单笔上限，单位 VIRTUAL"
-                value={form.maxBuyV}
-                onChange={(event) => onChange({ maxBuyV: event.target.value })}
-              />
-            </div>
-            <div className={strategyFieldClass}>
-              <StrategyFieldLabel label="项目预算" unit="VIRTUAL" />
-              <Input
-                className={strategyInputClass}
-                inputMode="decimal"
-                aria-label="项目预算，单位 VIRTUAL"
-                value={form.maxProjectV}
-                onChange={(event) => onChange({ maxProjectV: event.target.value })}
-              />
-            </div>
-            <div className={strategyFieldClass}>
-              <StrategyFieldLabel
-                label="抄底阈值"
-                unit="%"
-                hint="当当前含税估算 FDV 低于我方历史加权买入 FDV 这个比例以上时，下一次满足买入条件会使用抄底买入金额。默认 20%，表示比我方成本低 20% 才加大买入。"
-              />
-              <Input
-                className={strategyInputClass}
-                inputMode="numeric"
-                aria-label="抄底阈值，单位百分比"
-                value={form.dipFromOwnCostPct}
-                onChange={(event) => onChange({ dipFromOwnCostPct: event.target.value })}
-              />
-            </div>
-            <div className={strategyFieldClass}>
-              <StrategyFieldLabel
-                label="横盘跳过"
-                unit="%"
-                hint="某税率档买入后，如果下一相邻税率档的含税估算 FDV 相对上一买点变化不超过这个比例，就跳过这一档；只跳过一次，下一档会重新判断。默认 10%。"
-              />
-              <Input
-                className={strategyInputClass}
-                inputMode="numeric"
-                aria-label="横盘跳过，单位百分比"
-                value={form.flatPausePct}
-                onChange={(event) => onChange({ flatPausePct: event.target.value })}
-              />
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className={strategyLabelClass}>买入金额</div>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+                    VIRTUAL
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel label="基础买入" unit="VIRTUAL" />
+                    <Input
+                      className={strategyInputClass}
+                      inputMode="decimal"
+                      aria-label="基础买入，单位 VIRTUAL"
+                      value={form.baseBuyV}
+                      onChange={(event) => onChange(applyLaunchStrategyPatch(form, { baseBuyV: event.target.value }))}
+                    />
+                  </div>
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel label="抄底买入" unit="VIRTUAL" />
+                    <Input
+                      className={strategyInputClass}
+                      inputMode="decimal"
+                      aria-label="抄底买入，单位 VIRTUAL"
+                      value={form.dipBuyV}
+                      onChange={(event) => onChange(applyLaunchStrategyPatch(form, { dipBuyV: event.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className={strategyLabelClass}>节奏保护</div>
+                  <Badge variant="secondary">每档一次</Badge>
+                </div>
+                <div className={strategyFieldClass}>
+                  <StrategyFieldLabel
+                    label="横盘跳过"
+                    unit="%"
+                    hint="某税率档买入后，如果下一相邻税率档的含税估算 FDV 相对上一买点变化不超过这个比例，就跳过这一档；只跳过一次，下一档会重新判断。默认 10%。"
+                  />
+                  <Input
+                    className={strategyInputClass}
+                    inputMode="numeric"
+                    aria-label="横盘跳过，单位百分比"
+                    value={form.flatPausePct}
+                    onChange={(event) => onChange({ flatPausePct: event.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className={strategyLabelClass}>抄底放大</div>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+                    %
+                  </span>
+                </div>
+                <div className={strategyFieldClass}>
+                  <StrategyFieldLabel
+                    label="抄底阈值"
+                    unit="%"
+                    hint="当当前含税估算 FDV 低于我方历史加权买入 FDV 这个比例以上时，下一次满足买入条件会使用抄底买入金额。默认 20%，表示比我方成本低 20% 才加大买入。"
+                  />
+                  <Input
+                    className={strategyInputClass}
+                    inputMode="numeric"
+                    aria-label="抄底阈值，单位百分比"
+                    value={form.dipFromOwnCostPct}
+                    onChange={(event) => onChange({ dipFromOwnCostPct: event.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className={strategyLabelClass}>风险上限</div>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+                    VIRTUAL
+                  </span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel label="单笔上限" unit="VIRTUAL" />
+                    <Input
+                      className={strategyInputClass}
+                      inputMode="decimal"
+                      aria-label="单笔上限，单位 VIRTUAL"
+                      value={form.maxBuyV}
+                      onChange={(event) => onChange({ maxBuyV: event.target.value })}
+                    />
+                  </div>
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel label="项目预算" unit="VIRTUAL" />
+                    <Input
+                      className={strategyInputClass}
+                      inputMode="decimal"
+                      aria-label="项目预算，单位 VIRTUAL"
+                      value={form.maxProjectV}
+                      onChange={(event) => onChange({ maxProjectV: event.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -676,6 +914,62 @@ function LaunchSellControlPanel({
   const statusVariant = form.enabled ? "success" : "secondary";
   const statusLabel = form.enabled ? "已启用" : "未启用";
   const lastAudit = data?.audit[0];
+  const enabledRuleCount = form.rules.filter((rule) => rule.enabled).length;
+  const updateRule = (ruleId: string, patch: Partial<SellRuleDraft>) => {
+    onChange({ rules: form.rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)) });
+  };
+  const updateCondition = (ruleId: string, conditionId: string, patch: Partial<SellConditionDraft>) => {
+    onChange({
+      rules: form.rules.map((rule) =>
+        rule.id === ruleId
+          ? {
+              ...rule,
+              conditions: rule.conditions.map((condition) =>
+                condition.id === conditionId ? { ...condition, ...patch } : condition,
+              ),
+            }
+          : rule,
+      ),
+    });
+  };
+  const addRule = () => {
+    const nextIndex = form.rules.length + 1;
+    onChange({
+      rules: [
+        ...form.rules,
+        {
+          id: `rule_${Date.now()}`,
+          enabled: true,
+          label: `卖出规则 ${nextIndex}`,
+          operator: "and",
+          sellPct: "30",
+          conditions: [createSellCondition("roi")],
+        },
+      ],
+    });
+  };
+  const removeRule = (ruleId: string) => {
+    if (form.rules.length <= 1) return;
+    onChange({ rules: form.rules.filter((rule) => rule.id !== ruleId) });
+  };
+  const addCondition = (ruleId: string, type: SellConditionType) => {
+    onChange({
+      rules: form.rules.map((rule) =>
+        rule.id === ruleId
+          ? { ...rule, conditions: [...rule.conditions, createSellCondition(type)] }
+          : rule,
+      ),
+    });
+  };
+  const removeCondition = (ruleId: string, conditionId: string) => {
+    onChange({
+      rules: form.rules.map((rule) =>
+        rule.id === ruleId && rule.conditions.length > 1
+          ? { ...rule, conditions: rule.conditions.filter((condition) => condition.id !== conditionId) }
+          : rule,
+      ),
+    });
+  };
 
   return (
     <SectionCard
@@ -712,7 +1006,9 @@ function LaunchSellControlPanel({
           <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
               <div className={strategyLabelClass}>卖出规则</div>
-              <div className="text-sm text-muted-foreground">收益率和大单买入必须同时满足，才会触发自动卖出。</div>
+              <div className="text-sm text-muted-foreground">
+                {enabledRuleCount}/{form.rules.length} 条启用。每条规则用 AND / OR 组合条件，满足后卖出指定仓位比例。
+              </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -758,6 +1054,206 @@ function LaunchSellControlPanel({
                 onChange={(event) => onChange({ maxTaxRate: event.target.value })}
               />
             </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="大单回看"
+                unit="秒"
+                hint="大单规则只看最近这段时间内的买入事件，避免旧大单反复触发。默认 120 秒。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="大单回看，单位秒"
+                value={form.catchUpEventsSec}
+                onChange={(event) => onChange({ catchUpEventsSec: event.target.value })}
+              />
+            </div>
+            <div className={strategyFieldClass}>
+              <StrategyFieldLabel
+                label="冷却"
+                unit="秒"
+                hint="成功卖出后，在这段时间内不再触发新的自动卖出，避免同一波行情连续广播。默认 60 秒。"
+              />
+              <Input
+                className={strategyInputClass}
+                inputMode="numeric"
+                aria-label="自动卖出冷却时间，单位秒"
+                value={form.cooldownSec}
+                onChange={(event) => onChange({ cooldownSec: event.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {form.rules.map((rule, ruleIndex) => (
+              <div key={rule.id} className="rounded-[24px] border border-border bg-[color:var(--surface-soft)] p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <label className="flex items-center gap-2 text-base font-semibold tracking-[-0.02em]">
+                    <input
+                      type="checkbox"
+                      checked={rule.enabled}
+                      onChange={(event) => updateRule(rule.id, { enabled: event.target.checked })}
+                    />
+                    卖出规则 {ruleIndex + 1}
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">{rule.operator === "and" ? "AND 全部满足" : "OR 任一满足"}</Badge>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeRule(rule.id)}
+                      disabled={form.rules.length <= 1}
+                    >
+                      <Trash2 className="size-4" />
+                      删除
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-[1fr_0.7fr]">
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel label="满足方式" unit="" />
+                    <Select
+                      className={strategyInputClass}
+                      value={rule.operator}
+                      onChange={(event) => updateRule(rule.id, { operator: event.target.value === "or" ? "or" : "and" })}
+                    >
+                      <option value="and">全部条件都满足 AND</option>
+                      <option value="or">任一条件满足 OR</option>
+                    </Select>
+                  </div>
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel label="卖出" unit="%" />
+                    <Input
+                      className={strategyInputClass}
+                      inputMode="numeric"
+                      aria-label={`卖出规则 ${ruleIndex + 1} 卖出比例`}
+                      value={rule.sellPct}
+                      onChange={(event) => updateRule(rule.id, { sellPct: event.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <div className={strategyLabelClass}>条件</div>
+                  {rule.conditions.map((condition, conditionIndex) => (
+                    <div
+                      key={condition.id}
+                      className="grid gap-2 rounded-[18px] border border-border/80 bg-[color:var(--surface-empty)] p-3 md:grid-cols-[0.8fr_1.4fr_auto]"
+                    >
+                      <Select
+                        className={strategyInputClass}
+                        value={condition.type}
+                        aria-label={`卖出规则 ${ruleIndex + 1} 条件 ${conditionIndex + 1} 类型`}
+                        onChange={(event) =>
+                          updateCondition(rule.id, condition.id, {
+                            ...createSellCondition(event.target.value as SellConditionType, condition.id),
+                            type: event.target.value as SellConditionType,
+                          })
+                        }
+                      >
+                        <option value="price">价格达到</option>
+                        <option value="large_buy">出现大单</option>
+                        <option value="roi">收益达标</option>
+                      </Select>
+
+                      {condition.type === "price" ? (
+                        <div className="grid gap-2 md:grid-cols-[1fr_0.8fr]">
+                          <Input
+                            className={strategyInputClass}
+                            inputMode="decimal"
+                            aria-label="价格达到阈值"
+                            value={condition.priceThreshold}
+                            onChange={(event) => updateCondition(rule.id, condition.id, { priceThreshold: event.target.value })}
+                          />
+                          <Select
+                            className={strategyInputClass}
+                            value={condition.priceUnit}
+                            onChange={(event) => updateCondition(rule.id, condition.id, { priceUnit: event.target.value === "v" ? "v" : "usd" })}
+                          >
+                            <option value="usd">USD</option>
+                            <option value="v">VIRTUAL</option>
+                          </Select>
+                        </div>
+                      ) : null}
+
+                      {condition.type === "large_buy" ? (
+                        <div className="grid gap-2 md:grid-cols-[1fr_0.8fr]">
+                          <Input
+                            className={strategyInputClass}
+                            inputMode="numeric"
+                            aria-label="大单买入阈值"
+                            value={condition.largeBuyThreshold}
+                            onChange={(event) =>
+                              updateCondition(rule.id, condition.id, { largeBuyThreshold: event.target.value })
+                            }
+                          />
+                          <Select
+                            className={strategyInputClass}
+                            value={condition.largeBuyUnit}
+                            onChange={(event) =>
+                              updateCondition(rule.id, condition.id, { largeBuyUnit: event.target.value === "usd" ? "usd" : "v" })
+                            }
+                          >
+                            <option value="v">VIRTUAL</option>
+                            <option value="usd">USD</option>
+                          </Select>
+                        </div>
+                      ) : null}
+
+                      {condition.type === "roi" ? (
+                        <div className="grid gap-2 md:grid-cols-[1fr_0.8fr]">
+                          <Input
+                            className={strategyInputClass}
+                            inputMode="numeric"
+                            aria-label="收益率阈值"
+                            value={condition.roiPct}
+                            onChange={(event) => updateCondition(rule.id, condition.id, { roiPct: event.target.value })}
+                          />
+                          <div className="flex h-11 items-center rounded-2xl border border-border bg-[color:var(--surface-soft)] px-4 text-sm text-muted-foreground">
+                            %
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label="删除条件"
+                        onClick={() => removeCondition(rule.id, condition.id)}
+                        disabled={rule.conditions.length <= 1}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => addCondition(rule.id, "price")}>
+                    <Plus className="size-4" />
+                    价格条件
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => addCondition(rule.id, "large_buy")}>
+                    <Plus className="size-4" />
+                    大单条件
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => addCondition(rule.id, "roi")}>
+                    <Plus className="size-4" />
+                    收益条件
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <Button type="button" variant="outline" className="w-full" onClick={addRule}>
+              <Plus className="size-4" />
+              添加卖出规则
+            </Button>
+          </div>
+
+          <div className="hidden">
             <div className={strategyFieldClass}>
               <StrategyFieldLabel
                 label="收益率一档"
@@ -971,7 +1467,7 @@ export function OverviewPage() {
   });
 
   const launchSellConfigMutation = useMutation({
-    mutationFn: async (payload: LaunchSellFormState) => {
+    mutationFn: async (payload: LaunchSellSubmitPayload) => {
       if (!detailProjectId) {
         throw new Error("当前没有可配置的项目。");
       }
@@ -1010,7 +1506,7 @@ export function OverviewPage() {
   };
 
   const saveLaunchSellConfig = (mode: "broadcast" | "disabled") => {
-    const next: LaunchSellFormState = {
+    const nextForm: LaunchSellFormState = {
       ...normalizeLaunchSellFormForSubmit(launchSellForm),
       enabled: mode !== "disabled",
       mode: mode === "broadcast" ? "broadcast" : "simulate",
@@ -1018,9 +1514,16 @@ export function OverviewPage() {
         launchSellForm.updatedReason.trim() ||
         (mode === "broadcast" ? "管理员手动保存并启用自动卖出" : "管理员手动停用自动卖出"),
     };
+    const next: LaunchSellSubmitPayload = {
+      ...nextForm,
+      strategy: "custom_multi_sell",
+      ruleName: "custom_multi_sell",
+      customRules: buildLaunchSellCustomRules(nextForm),
+    };
     if (mode === "disabled" && !window.confirm("确认停用自动卖出？")) return;
     if (mode === "broadcast") {
-      const message = `将启用自动卖出：税率 <= ${next.maxTaxRate}%，收益率 ${next.roiLowPct}/${next.roiHighPct}%，大单 ${next.largeBuyLowV}/${next.largeBuyHighV} VIRTUAL。确认继续？`;
+      const enabledRules = next.customRules.filter((rule) => rule.enabled).map((rule) => rule.label || rule.id);
+      const message = `将启用自动卖出：税率 <= ${next.maxTaxRate}%，规则 ${enabledRules.length ? enabledRules.join(" / ") : "未启用任何规则"}。确认继续？`;
       if (!window.confirm(message)) return;
     }
     launchSellConfigMutation.mutate(next);

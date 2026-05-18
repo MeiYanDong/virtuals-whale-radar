@@ -1039,6 +1039,25 @@
 - [x] 新增 `scripts/ops/approve_erc20_spender.py` 和 `scripts/ops/sell_virtuals_token.py`，支持 canary token 精确授权后卖回 VIRTUAL。
 - [x] `sell_virtuals_token.py` 优先使用独立 execution RPC；真实卖出广播默认要求独立 execution RPC。
 - [x] 已将本轮 canary 买入的 TDS / RRR / AURA / ASDSDA 全部卖回 VIRTUAL；卖回合计 `3.9223602 VIRTUAL`，最终 burner VIRTUAL 余额 `12.587713615542899411`。
+- [x] 2026-05-18 用已结束但仍有内盘的 `TDS` 做真实生产 canary：`0.1 VIRTUAL` 买入成功，exact TDS 授权成功，exact amount 卖回成功，三笔 receipt 均为 `0x1`。
+- [x] 2026-05-18 12:23 CST 复测 TDS 小额真实买卖：预检通过；买入 tx `0x98ff0ba6a5a99b006242a1bb0319cc8738389bf856f4713f211a6b5c63212375`、exact 授权 tx `0xb1889f8825294eb0b7ba14b8817cc464c172aabd387e156e28e1e758363e5677`、卖回 tx `0x161ba3dbaec8bbbf0b5787f41e8a9b217be1fe1a36c1afe4456021e59b367894`，三笔 receipt 均 `0x1`；收尾 TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`。
+- [x] 修复 `sell_virtuals_token.py` 在 sell quote 构造时缺失 `effective_slippage_bps / buy_tax_rate_pct / tax_adjusted_amount_out_raw` 的崩溃；新增无网络单测覆盖 sell binder 的 `PoolQuote` 结构。
+- [x] TDS canary 收尾核对：TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`、`/health` 与 SignalHub `/healthz` 均正常。
+- [x] 新增 `scripts/ops/full_window_auto_trigger_canary.py`，用于验证“live 窗口数据流自动触发买入/卖出”，不再把手动 buy/sell canary 当作自动触发验证。
+- [x] 2026-05-18 12:42 CST 完成 TDS 全窗口自动触发链路 canary：99 tick 人工 fixture 样本流自动触发 fixture tax `95%` 买入 `0.01 VIRTUAL`，tx `0x95dd79671943b3a700beba94073fd0089eef404c5ab42d3a8fac685dcc345bb4`，receipt `0x1`；后续 fixture 样本在 tax `92%` 强制触发卖出，tx `0x45f81a89de82f9e283856127fcbe329d2fea5ec302a4e561b9f5632015767130`，receipt `0x1`；summary `ok=true`、`tdsBalanceRawAfter=0`、`post_sell_balance_zero=1`。该测试只证明自动触发链路，不代表真实项目税率走势或生产卖出税率策略。
+- [x] 修复全窗口自动触发 canary 的 receipt 后余额 stale 问题：买入后等待 token balance 可见，卖出后等待 token balance 归零，再写 summary。
+- [x] 修复全窗口自动触发 canary 的账本污染问题：卖出评估只读取本次 run 的 buy/sell strategy 记录，避免 TDS 历史 canary 记录影响 position 口径。
+- [x] `full_window_auto_trigger_canary.py` 默认卖出税率上限改回 `30%`；高税率强制卖出 canary 必须显式传 `--force-high-tax-sell-canary`。
+- [x] 新增 `scripts/ops/historical_live_auto_trigger_canary.py`，用真实历史 SR 样本流驱动当前 TDS internal-market 小额真实买卖，验证自动触发、前端/DB 运行时改参热加载和生产执行器广播链路。
+- [x] 2026-05-18 14:33 CST 完成历史样本驱动真实 canary：SR `1089` 个样本；sample `30` 买入改参后 `strategy_config_reloaded=1`；sample `55` / tax `95%` 自动买入 `0.01 VIRTUAL`，tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，receipt `0x1`；sample `700` 卖出改参后 `sell_config_reloaded=1`；sample `819` / tax `30%` 自动卖出，tx `0xce9d5637f82894ef2bfd2dc403664b6f143ba58b943ac3d0c7fc322fb8c47b0a`，receipt `0x1`；summary `ok=true`。
+- [x] 历史样本驱动 canary 收尾核对：TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`、VIRTUAL buy allowance 精确恢复为 `10 VIRTUAL`；本地 TDS 自动买入/卖出配置恢复到 disabled simulate。
+- [x] `historical_live_auto_trigger_canary.py` 增加 `--sell-trigger-mode price_zero`，用于只验证“tax <= 30% 后执行自动卖出链路”，不要求当前真实成交价带来正收益；该模式只用于 canary，不代表生产卖出策略。
+- [x] 2026-05-18 15:35-15:36 CST 完成远端生产库候选筛选：`TDS / VOID` 可做 direct-buy canary；`ROO / ISC / SR / SCL / ZODIAC / LUCA / F007` 当前 `eth_call/estimateGas` revert，`FIRE` pool/simulation 失败，SignalHub 未来项目当前不可买。
+- [x] 远端漂移修复：同步当前 canary / buy / sell 执行脚本和 `virtuals_bot.py` 到服务器，补齐 `launch_sell_runtime_configs.custom_rules_json` 表结构；生产服务未重启，`/health` 与 `/healthz` 保持正常。
+- [x] 远端 TDS 历史样本 canary 通过：sample `55` 自动买入 tx `0x0b25e9fbc0fd7dbdba92aa3411f15c25efbbcb0d1a5eae898d61959f642571c1`，sample `819` 自动卖出 tx `0xcec3e409a2ab999fb4fd6443dc5adb194793b1b717ea34eb352f2de4bb966b19`，summary `ok=true`、最终余额 `0`、active fuse `0`。
+- [x] 远端 VOID 历史样本 canary 通过：sample `55` 自动买入 tx `0x11cb1c901df209424366389ec01cf6131f38daef0a76583be7c76d0f679ca90f`，sample `819` 自动卖出 tx `0xe02cd7b85b9a6973f9f40a0182d5d960985d31476d84deda9b7cec3e680fd718`，summary `ok=true`、最终余额 `0`、active fuse `0`。
+- [x] 本地补充 `RRR / AURA / ASDSDA` 三个仍可交易内盘标的 canary，均用 SR `1089` 样本驱动、运行时改参热加载、小额真实买入和自动卖出，summary 均 `ok=true`；测试后已删除临时本地项目行和运行时配置，四个 token 余额/allowance 均为 `0`。
+- [x] `approve_virtual_spender.py` 与 `approve_erc20_spender.py` 支持 `--force-exact`，并在 exact 模式下等待 allowance 等于目标值，修复撤销到 `0` 时确认读数可能显示旧 allowance 的问题。
 - [x] 新增执行账本 `launch_execution_ledger` 与 Storage API。
 - [x] `live_strategy_dry_run.py` 已把 `would_buy / pause` 写入执行账本。
 - [x] `prewarmed_buy_canary.py` 支持可选账本写入 simulation / sign / broadcast / receipt 阶段摘要，不保存 raw transaction。
@@ -1114,6 +1133,9 @@
 - [x] 项目详情页新增管理员专用“自动买入控制”模块。
 - [x] 支持恢复默认 `25/50/50/150` 与 `20/10` 阈值。
 - [x] 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限和项目预算。
+- [x] 自动买入 UI 重构为“买入策略卡”：买入触发条件只读展示，金额、节奏、抄底放大和风险上限分区编辑。
+- [x] 买入触发条件前端只展示当前后端策略事实，不新增提交字段，不改策略逻辑。
+- [x] 合并展示 `有效榜单 20 人 / 5 个成本样本`，并解释榜单人数和成本样本不是同一件事。
 - [x] 前端收敛为 `恢复默认`、`保存并启用`、`停用自动买入`，隐藏 mode/updatedReason 等原生字段。
 - [x] `launch_prewarm_executor.py` 支持配置热加载。
 - [x] 配置缺失时沿用 CLI/systemd 默认值。
@@ -1124,6 +1146,8 @@
 - [x] 前端验证：`npm run build`、`npm run lint`。
 - [x] 本地管理员页面浏览器烟测：`/admin/projects/1?project=TDS` 可渲染“自动买入控制”，主要动作收敛为恢复默认、保存并启用、停用自动买入。
 - [x] 本地 HTTP 保存烟测：POST simulate `100/200/200/300` 成功后重置为 disabled `25/50/50/150`。
+- [x] 新增本地发射模拟入口 `scripts/ops/runtime_control_launch_simulator.py`，只读验证前端保存的运行时参数会被执行器在后续 tick 热读。
+- [x] TDS 小额参数网页保存与 100x 完整窗口 paper replay 通过：`version=22` 使用 `0.1/0.2/0.2/0.6`，触发 `0.1/0.2/0.1/0.2 VIRTUAL` 四次买入意图，预算 `0.6 VIRTUAL` 生效后阻断后续意图；测试后停用为 `version=23`。
 
 ## Phase 56：自动卖出运行时控制台
 
@@ -1133,14 +1157,20 @@
 - [x] 新增 `launch_sell_runtime_config_audit` 审计表。
 - [x] 新增管理员读取/保存自动卖出配置 API。
 - [x] 项目详情页新增管理员专用“自动卖出控制”模块。
-- [x] 支持恢复默认收益率 `30/50`、大单 `5000/8000`、卖出比例 `30/50`、冷却 `60s` 和事件回看 `120s`。
-- [x] 支持编辑税率窗口、收益率档位、大单档位、卖出比例、冷却时间和事件回看窗口。
+- [x] 支持恢复默认税率窗口、冷却、事件回看窗口和默认卖出规则。
+- [x] 支持编辑税率窗口、冷却时间、事件回看窗口和条件组合式自定义卖出规则。
+- [x] 支持规则构建器：每条规则可添加价格、大单、收益条件，并选择 `AND / OR`。
+- [x] 兼容旧的限价卖出、大单卖出、高收益率卖出、收益率 + 大单配置。
+- [x] 大单门槛单位支持 `VIRTUAL / USD`；限价单位支持 `USD / VIRTUAL`。
+- [x] 后端保存 `custom_rules_json`，保存前做类型、单位、阈值和卖出比例校验。
 - [x] 前端收敛为 `恢复默认`、`保存并启用`、`停用自动卖出`，隐藏 mode/updatedReason 等原生字段。
 - [x] `launch_sell_executor.py` 支持配置热加载。
 - [x] 配置缺失时默认阻断真实卖出。
 - [x] `enabled=false` 或 `mode=simulate` 时阻断真实卖出。
 - [x] 配置版本变化时写入 `sell_config_reloaded`。
 - [x] `DualSellConfig` 支持运行时卖出一档/二档比例。
+- [x] `CustomSellConfig/evaluate_custom_sell` 支持条件组 `AND/OR` 和多规则同时触发，卖出增量累加但不超过原始仓位 `100%` 或当前钱包余额。
+- [x] 大单条件按 `rule_id + tx_hash` 去重，避免同一笔大单重复触发同一规则。
 - [x] 本地验证：Python `py_compile`、`test_launch_execution_pipeline.py`、`test_launch_sell_strategy.py`、`test_launch_sell_executor.py`。
 - [x] 前端验证：`npm run build`、`npm run lint`。
 - [x] 本地执行器热加载探针：保存探针配置后，`launch_sell_executor.py` 记录 `sell_config_reloaded`，随后恢复 disabled 默认配置。

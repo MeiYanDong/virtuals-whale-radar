@@ -339,6 +339,28 @@ Canary 退出：
 - 卖回合计收到 `3.9223602 VIRTUAL`。
 - 清仓后四个 token 余额均为 `0`，对 router/spender 的 allowance 均为 `0`。
 - 最终 burner VIRTUAL 余额：`12.587713615542899411`。
+- 2026-05-18 追加真实生产 canary：选择已结束但仍有 internal market 的 `TDS`，验证 `0.1 VIRTUAL` 买入 -> exact TDS 授权 -> exact amount 卖回，三笔交易 receipt 均为 `0x1`，执行 RPC 与主采集 RPC 保持分离。
+- 本次验证修复了 `sell_virtuals_token.py` 的 sell quote 结构兼容问题；`PoolQuote` 新增字段后，卖出脚本必须显式填充 `effective_slippage_bps / buy_tax_rate_pct / tax_adjusted_amount_out_raw`。
+- 收尾链上核对：TDS 余额 `0`、TDS sell allowance `0`、active fuse `0`，主程序 `/health` 与 SignalHub `/healthz` 正常。
+
+全窗口自动触发 canary：
+
+- 新增 `scripts/ops/full_window_auto_trigger_canary.py`，用于验证 live 窗口样本流自动触发执行器，而不是手动调用买卖脚本。
+- 验证路径：99 tick 人工 fixture 样本流 -> 生产 `DynamicAfter1StrategyEvaluator` -> `launch_prewarm_executor.prewarm_intent(...)` -> receipt -> 后续样本 -> 生产卖出 evaluator -> `launch_sell_executor.execute_sell_decision(...)` -> exact approve/sell receipt。
+- 2026-05-18 12:42 CST，TDS `0.01 VIRTUAL` 链路实测通过：fixture tax `95%` 自动买入 tx `0x95dd79671943b3a700beba94073fd0089eef404c5ab42d3a8fac685dcc345bb4`，receipt `0x1`；fixture tax `92%` 强制自动卖出 tx `0x45f81a89de82f9e283856127fcbe329d2fea5ec302a4e561b9f5632015767130`，receipt `0x1`。
+- 报告：`data/execution/full-window-auto-trigger-canary-TDS-20260518-124213-summary.json`，`ok=true`、`paperOnly=false`、`post_buy_balance_visible=1`、`post_sell_balance_zero=1`、`tdsBalanceRawAfter=0`。
+- 脚本已处理 receipt 后余额读取 stale：买入后等待 token balance 可见，卖出后等待 token balance 归零。
+- 脚本已隔离本次 run 的执行账本：卖出评估只读取本次自动触发 canary 的 buy/sell strategy 记录，避免被 TDS 历史 canary 记录污染 position 口径。
+- 这次高税率卖出使用的是强制链路 canary，不代表真实项目税率走势或生产卖出策略；脚本默认卖出税率上限已改回 `30%`，高税率强制卖出必须显式传 `--force-high-tax-sell-canary`。
+
+历史样本驱动真实 canary：
+
+- 新增 `scripts/ops/historical_live_auto_trigger_canary.py`，用于把真实历史发射样本作为触发源，同时在当前可交易 internal market 上真实广播小额买卖。
+- 验证路径：SR `1089` 个历史样本 -> sample `30` 写入买入改参 -> `strategy_config_reloaded` -> sample `55` / tax `95%` 自动买入 TDS -> sample `700` 写入卖出改参 -> `sell_config_reloaded` -> sample `819` / tax `30%` 自动卖出 TDS。
+- 2026-05-18 14:33 CST，TDS 小额链路实测通过：买入 tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，卖出 tx `0xce9d5637f82894ef2bfd2dc403664b6f143ba58b943ac3d0c7fc322fb8c47b0a`，两笔 receipt 均 `0x1`。
+- 报告：`data/execution/historical-live-auto-trigger-canary-TDS-SR-20260518-143334-summary.json`，`ok=true`、`strategy_config_reloaded=1`、`sell_config_reloaded=1`、`post_sell_balance_zero=1`、active fuse `0`。
+- 收尾状态：TDS 余额 `0`、TDS sell allowance `0`、VIRTUAL buy allowance 精确恢复 `10 VIRTUAL`，TDS 运行时买入/卖出配置恢复 disabled simulate。
+- `approve_virtual_spender.py` 与 `approve_erc20_spender.py` 新增 `--force-exact`，用于强制降额授权和撤销到 `0`；exact 模式必须确认链上 allowance 等于目标值。
 
 ## 5. 测试顺序
 

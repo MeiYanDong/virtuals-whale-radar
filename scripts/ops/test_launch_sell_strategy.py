@@ -15,9 +15,16 @@ if str(OPS_DIR) not in sys.path:
     sys.path.insert(0, str(OPS_DIR))
 
 from launch_sell_strategy import (  # noqa: E402
+    CustomSellCondition,
+    CustomSellConfig,
+    CustomSellRule,
     DualSellInput,
     DualSellState,
+    LargeBuySignal,
+    MultiSellInput,
+    MultiSellState,
     apply_successful_sell,
+    evaluate_custom_sell,
     evaluate_dual_sell,
 )
 
@@ -140,12 +147,172 @@ def test_tax_gate_and_threshold_boundaries() -> None:
     assert_eq(below.large_buy_tx_hash, None, "below threshold tx not surfaced")
 
 
+def test_custom_limit_price_and_roi_rules_are_independent() -> None:
+    config = CustomSellConfig(
+        max_tax_rate=Decimal("30"),
+        cooldown_sec=60,
+        rules=(
+            CustomSellRule(
+                id="limit_price",
+                type="limit_price",
+                enabled=True,
+                price_threshold=Decimal("0.01"),
+                price_unit="usd",
+                sell_pct=Decimal("30"),
+            ),
+            CustomSellRule(
+                id="high_roi",
+                type="high_roi",
+                enabled=True,
+                roi_threshold_pct=Decimal("50"),
+                sell_pct=Decimal("40"),
+            ),
+        ),
+    )
+    decision = evaluate_custom_sell(
+        state=MultiSellState(total_position_raw=1000, current_balance_raw=1000),
+        signal=MultiSellInput(
+            timestamp=100,
+            tax_rate=Decimal("20"),
+            current_roi_pct=Decimal("55"),
+            token_price_usd=Decimal("0.02"),
+            token_price_v=Decimal("0.01"),
+        ),
+        config=config,
+    )
+    assert_eq(decision.should_sell, True, "custom independent rules sell")
+    assert_eq(decision.total_sell_pct, Decimal("70"), "custom independent pct sums")
+    assert_eq(decision.amount_raw, 700, "custom independent amount")
+
+
+def test_custom_large_buy_and_combo_use_rule_scoped_tx_processing() -> None:
+    config = CustomSellConfig(
+        max_tax_rate=Decimal("30"),
+        rules=(
+            CustomSellRule(
+                id="large_buy",
+                type="large_buy",
+                enabled=True,
+                large_buy_threshold=Decimal("5000"),
+                large_buy_unit="v",
+                sell_pct=Decimal("30"),
+            ),
+            CustomSellRule(
+                id="combo",
+                type="roi_and_large_buy",
+                enabled=True,
+                roi_threshold_pct=Decimal("50"),
+                large_buy_threshold=Decimal("8000"),
+                large_buy_unit="usd",
+                sell_pct=Decimal("50"),
+            ),
+        ),
+    )
+    event = LargeBuySignal(tx_hash="0xaaa", timestamp=99, spent_v=Decimal("6000"), spent_usd=Decimal("9000"))
+    decision = evaluate_custom_sell(
+        state=MultiSellState(total_position_raw=1000, current_balance_raw=1000),
+        signal=MultiSellInput(
+            timestamp=100,
+            tax_rate=Decimal("20"),
+            current_roi_pct=Decimal("55"),
+            token_price_usd=Decimal("0.02"),
+            token_price_v=Decimal("0.01"),
+            recent_large_buys=(event,),
+        ),
+        config=config,
+    )
+    assert_eq(decision.should_sell, True, "custom large+combo sell")
+    assert_eq(decision.total_sell_pct, Decimal("80"), "custom large+combo pct")
+    processed = MultiSellState(
+        total_position_raw=1000,
+        current_balance_raw=1000,
+        rule_sold_pct={"large_buy": Decimal("30")},
+        total_sold_pct=Decimal("30"),
+        processed_rule_buy_txs={"large_buy:0xaaa"},
+    )
+    repeat = evaluate_custom_sell(
+        state=processed,
+        signal=MultiSellInput(
+            timestamp=120,
+            tax_rate=Decimal("20"),
+            current_roi_pct=Decimal("55"),
+            token_price_usd=Decimal("0.02"),
+            token_price_v=Decimal("0.01"),
+            recent_large_buys=(event,),
+        ),
+        config=config,
+    )
+    assert_eq(repeat.total_sell_pct, Decimal("50"), "processed tx only blocks matching rule")
+
+
+def test_custom_condition_group_and_or_rules() -> None:
+    config = CustomSellConfig(
+        max_tax_rate=Decimal("30"),
+        rules=(
+            CustomSellRule(
+                id="combo_and",
+                type="condition_group",
+                enabled=True,
+                operator="and",
+                sell_pct=Decimal("30"),
+                conditions=(
+                    CustomSellCondition(type="roi", roi_threshold_pct=Decimal("30")),
+                    CustomSellCondition(type="large_buy", large_buy_threshold=Decimal("5000"), large_buy_unit="v"),
+                ),
+            ),
+            CustomSellRule(
+                id="price_or_roi",
+                type="condition_group",
+                enabled=True,
+                operator="or",
+                sell_pct=Decimal("20"),
+                conditions=(
+                    CustomSellCondition(type="price", price_threshold=Decimal("0.05"), price_unit="usd"),
+                    CustomSellCondition(type="roi", roi_threshold_pct=Decimal("80")),
+                ),
+            ),
+        ),
+    )
+    event = LargeBuySignal(tx_hash="0xgroup", timestamp=99, spent_v=Decimal("6000"), spent_usd=Decimal("4000"))
+    decision = evaluate_custom_sell(
+        state=MultiSellState(total_position_raw=1000, current_balance_raw=1000),
+        signal=MultiSellInput(
+            timestamp=100,
+            tax_rate=Decimal("20"),
+            current_roi_pct=Decimal("35"),
+            token_price_usd=Decimal("0.02"),
+            token_price_v=Decimal("0.01"),
+            recent_large_buys=(event,),
+        ),
+        config=config,
+    )
+    assert_eq(decision.should_sell, True, "condition group sells")
+    assert_eq(decision.total_sell_pct, Decimal("30"), "and group pct only")
+
+    or_decision = evaluate_custom_sell(
+        state=MultiSellState(total_position_raw=1000, current_balance_raw=1000),
+        signal=MultiSellInput(
+            timestamp=120,
+            tax_rate=Decimal("20"),
+            current_roi_pct=Decimal("90"),
+            token_price_usd=Decimal("0.02"),
+            token_price_v=Decimal("0.01"),
+            recent_large_buys=(),
+        ),
+        config=config,
+    )
+    assert_eq(or_decision.total_sell_pct, Decimal("20"), "or group pct")
+
+
 def main() -> None:
     test_roi_or_large_buy_alone_does_not_sell()
     test_large_buy_requires_roi_confirmation()
     test_threshold_pair_uses_lower_confirmed_tier()
     test_cooldown_and_balance_cap()
     test_tax_gate_and_threshold_boundaries()
+    test_custom_limit_price_and_roi_rules_are_independent()
+    test_custom_large_buy_and_combo_use_rule_scoped_tx_processing()
+    test_custom_condition_group_and_or_rules()
     print("launch_sell_strategy tests ok")
 
 

@@ -305,6 +305,8 @@
   .launch-strategy-metric,
   .launch-strategy-action,
   .launch-strategy-command-bar,
+  .launch-strategy-rule-card,
+  .launch-strategy-condition-chip,
   .launch-strategy-fuse,
   .launch-strategy-input {
     transition:
@@ -375,6 +377,20 @@
     box-shadow: 0 12px 26px color-mix(in srgb, var(--primary) 8%, transparent);
   }
 
+  .launch-strategy-rule-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+    background-color: var(--surface-soft-strong);
+    box-shadow: 0 14px 30px color-mix(in srgb, var(--primary) 10%, transparent);
+  }
+
+  .launch-strategy-condition-chip:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+    background-color: color-mix(in srgb, var(--primary) 10%, var(--surface-soft-strong));
+    color: color-mix(in srgb, var(--primary) 82%, var(--foreground));
+  }
+
   .launch-strategy-field:hover .launch-strategy-label,
   .launch-strategy-field:focus-within .launch-strategy-label {
     color: color-mix(in srgb, var(--primary) 86%, var(--foreground));
@@ -403,6 +419,8 @@
     .launch-strategy-metric,
     .launch-strategy-action,
     .launch-strategy-command-bar,
+    .launch-strategy-rule-card,
+    .launch-strategy-condition-chip,
     .launch-strategy-fuse,
     .launch-strategy-input,
     .launch-strategy-label {
@@ -412,6 +430,8 @@
     .launch-strategy-metric:hover,
     .launch-strategy-action:hover:not(:disabled),
     .launch-strategy-action:active:not(:disabled),
+    .launch-strategy-rule-card:hover,
+    .launch-strategy-condition-chip:hover,
     .launch-strategy-field:hover .launch-strategy-label,
     .launch-strategy-field:focus-within .launch-strategy-label,
     .launch-strategy-input:focus-visible,

@@ -202,6 +202,9 @@ async def bind_sell(
         quoted_amount_out_raw=str(quoted_amount_out),
         amount_out_min_wei=str(amount_out_min),
         slippage_bps=int(slippage_bps),
+        effective_slippage_bps=int(slippage_bps),
+        buy_tax_rate_pct=None,
+        tax_adjusted_amount_out_raw=str(quoted_amount_out),
         lp_fee_bps=30,
         deadline=deadline,
     )
