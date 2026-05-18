@@ -83,6 +83,8 @@
   "EMAIL_VERIFY_TOKEN_TTL_SEC": 1800,
   "BILLING_CONTACT_QR_URL": "/admin/brand/contact-qr-wechat.png",
   "BILLING_CONTACT_HINT": "扫码添加运营联系方式，付款后联系管理员手动补积分。",
+  "BILLING_USDC_RECEIVER": "",
+  "BILLING_USDC_TOKEN_ADDR": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   "CORS_ALLOW_ORIGINS": [],
   "LOG_LEVEL": "info"
 }

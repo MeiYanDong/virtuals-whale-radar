@@ -8111,10 +8111,11 @@ class VirtualsBot:
                 role="user",
                 status="active",
                 source=source_value,
-                signup_bonus_credits=0,
+                signup_bonus_credits=DEFAULT_SIGNUP_BONUS_CREDITS,
                 email_verified_at=now,
                 signup_ip=self.request_client_ip(request),
                 signup_device_fingerprint=source_value.replace("_", "-"),
+                signup_bonus_granted_at=now,
             )
         self.storage.upsert_wallet_auth_identity(
             user_id=int(user["id"]),
