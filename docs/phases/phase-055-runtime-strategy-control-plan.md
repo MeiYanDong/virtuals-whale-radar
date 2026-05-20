@@ -195,7 +195,7 @@
 - 历史热路径真实广播：`triggerToSendAckMs` 约 `343-450ms`。
 - 冷路径完整构造到发送 ACK 历史记录约 `2.6s`。
 
-本轮落地两项低风险优化：
+本轮落地三项低风险优化：
 
 1. 限价单优先级互斥。
    - 同一 tick 内，若已有含税估算 FDV 限价单进入触发/广播流程，则普通自动买入不再在该 tick 继续触发。
@@ -205,11 +205,18 @@
    - 普通自动买入广播后不等待 receipt，先释放热路径；后续循环后台补查 receipt，并把账本更新为 `receipt_success` 或 `receipt_failed`。
    - 目的：把热路径从“等待区块确认”改为“发送 ACK 即释放”，避免阻塞下一 tick。
    - 后台补查失败或 receipt 失败仍触发 fuse，不放松安全门禁。
+3. 可选预签候选交易池。
+   - 新增 `--enable-signed-candidate-cache`，默认关闭；当前生产 systemd 模板未启用。
+   - 发射 `LIVE` 时，执行器可在后台按当前税率和候选买入金额提前完成 bind、simulate、fee、sign。
+   - 触发普通买入或含税估算 FDV 限价单时，如果买入金额和税率命中候选，热路径直接 `eth_sendRawTransaction`。
+   - raw tx 只保存在进程内存，不写 DB、不写 JSONL、不打印；日志只记录 signed tx hash、nonce、gas、候选年龄和耗时。
+   - 为避免同一 pending nonce 被复用，候选命中一次后立即清空同批候选；未命中或过期自动回退原有稳定路径。
+   - 限价单和普通策略仍共享原有广播门禁、独立 execution RPC、active fuse、余额/授权/eth_call/estimateGas 与预算风控。
 
-暂不在本轮实现：
+仍不默认启用：
 
-- 预签候选交易池。
 - 税率档本地预测卡点广播。
 - 50ms 轮询默认化。
+- 预签候选交易池默认启用。
 
-这些需要单独压测和 canary，不能和本轮互斥/no-wait 改动混在一起。
+预签候选交易池已具备代码能力，但需要单独小额 canary 后再写入生产模板。当前策略是“能力可部署，默认不开关”。

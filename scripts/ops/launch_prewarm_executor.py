@@ -21,7 +21,7 @@ import os
 import signal
 import sys
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -109,6 +109,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-project-v", type=Decimal, default=Decimal("25"))
     parser.add_argument("--receipt-timeout-sec", type=int, default=90)
     parser.add_argument("--no-wait-receipt", action="store_true")
+    parser.add_argument("--enable-signed-candidate-cache", action="store_true")
+    parser.add_argument("--signed-candidate-ttl-sec", type=float, default=2.0)
+    parser.add_argument("--signed-candidate-refresh-min-sec", type=float, default=0.5)
+    parser.add_argument("--signed-candidate-max-count", type=int, default=4)
     return parser.parse_args()
 
 
@@ -212,6 +216,84 @@ def normalized_tax_key(value: Any) -> str:
         return format(parsed.normalize(), "f")
     except Exception:
         return raw
+
+
+def signed_candidate_key(*, buy_size_v: Any, tax_rate: Any) -> str:
+    buy_size = decimal_value(buy_size_v)
+    if buy_size <= 0:
+        return ""
+    tax_key = normalized_tax_key(tax_rate)
+    if not tax_key:
+        return ""
+    return f"{format(buy_size.normalize(), 'f')}|{tax_key}"
+
+
+@dataclass
+class SignedBuyCandidate:
+    key: str
+    buy_size_v: str
+    tax_rate: str
+    built_at: float
+    expires_at: float
+    signed: Any
+    quote: Any
+    simulation: dict[str, Any]
+    timings_ms: dict[str, float]
+
+    def compact(self) -> dict[str, Any]:
+        age_ms = max(0.0, (time.monotonic() - self.built_at) * 1000)
+        ttl_ms = max(0.0, (self.expires_at - time.monotonic()) * 1000)
+        return {
+            "key": self.key,
+            "buySizeV": self.buy_size_v,
+            "taxRate": self.tax_rate,
+            "ageMs": round(age_ms, 1),
+            "ttlRemainingMs": round(ttl_ms, 1),
+            "signedTxHash": self.signed.tx_hash,
+            "signedSummary": {
+                "from": self.signed.from_addr,
+                "to": self.signed.to,
+                "chainId": self.signed.chain_id,
+                "nonce": self.signed.nonce,
+                "gas": self.signed.gas,
+            },
+        }
+
+
+def take_signed_candidate(
+    cache: dict[str, SignedBuyCandidate],
+    *,
+    buy_size_v: Any,
+    tax_rate: Any,
+) -> SignedBuyCandidate | None:
+    key = signed_candidate_key(buy_size_v=buy_size_v, tax_rate=tax_rate)
+    if not key:
+        return None
+    candidate = cache.pop(key, None)
+    if not candidate:
+        return None
+    if time.monotonic() >= candidate.expires_at:
+        return None
+    # All candidates in one refresh batch usually share the same pending nonce.
+    # Once one raw tx is consumed, discard alternatives to avoid nonce reuse.
+    cache.clear()
+    return candidate
+
+
+def prune_signed_candidate_cache(cache: dict[str, SignedBuyCandidate]) -> None:
+    now = time.monotonic()
+    for key in list(cache.keys()):
+        if now >= cache[key].expires_at:
+            cache.pop(key, None)
+
+
+def signed_candidate_cache_config(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "enabled": bool(args.enable_signed_candidate_cache),
+        "ttlSec": float(args.signed_candidate_ttl_sec),
+        "refreshMinSec": float(args.signed_candidate_refresh_min_sec),
+        "maxCount": int(args.signed_candidate_max_count),
+    }
 
 
 def compact_fuse(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -514,6 +596,154 @@ def receipt_summary(receipt: dict[str, Any] | None, receipt_deltas: dict[str, An
     }
 
 
+def candidate_buy_sizes(
+    *,
+    effective_args: argparse.Namespace,
+    runtime_config: DynamicExecutionConfig,
+    pending_limit_orders: list[dict[str, Any]],
+) -> list[Decimal]:
+    sizes: list[Decimal] = []
+    for value in (runtime_config.base_buy_v, runtime_config.dip_buy_v):
+        parsed = decimal_value(value)
+        if parsed > 0:
+            sizes.append(parsed)
+    for row in pending_limit_orders:
+        if not bool(int(row.get("enabled") or 0)):
+            continue
+        if str(row.get("status") or "") != "pending":
+            continue
+        parsed = decimal_value(row.get("buy_v"))
+        if parsed > 0:
+            sizes.append(parsed)
+
+    unique: list[Decimal] = []
+    seen: set[str] = set()
+    max_buy = Decimal(effective_args.max_buy_v) if effective_args.max_buy_v is not None else Decimal("0")
+    for size in sizes:
+        if max_buy > 0 and size > max_buy:
+            continue
+        key = format(size.normalize(), "f")
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(size)
+    return unique
+
+
+async def build_signed_buy_candidate(
+    *,
+    args: argparse.Namespace,
+    cfg: Any,
+    rpc: RPCClient,
+    project_row: dict[str, Any],
+    sample: dict[str, Any],
+    buy_size_v: Decimal,
+) -> SignedBuyCandidate:
+    tax_rate = sample.get("buyTaxRate")
+    key = signed_candidate_key(buy_size_v=buy_size_v, tax_rate=tax_rate)
+    if not key:
+        raise ValueError("missing buy size or tax rate for signed candidate")
+    token_addr = str(project_row.get("token_addr") or "").strip()
+    pool_addr = str(project_row.get("internal_pool_addr") or "").strip()
+    if not token_addr or not pool_addr:
+        raise ValueError("missing token or internal pool")
+
+    timings: dict[str, float] = {}
+    start = time.perf_counter()
+    bound = await VirtualsOrderBinder(
+        rpc,
+        virtual_token_addr=cfg.virtual_token_addr,
+        slippage_bps=int(args.slippage_bps),
+        deadline_offset_sec=int(args.deadline_offset_sec),
+    ).bind_buy(
+        chain_id=cfg.chain_id,
+        from_addr=args.from_address,
+        token_addr=token_addr,
+        pool_addr=pool_addr,
+        amount_in_v=buy_size_v,
+        buy_tax_rate_pct=tax_rate,
+        now_ts=int(time.time()),
+    )
+    timings["bindBuyMs"] = elapsed_ms(start)
+
+    start = time.perf_counter()
+    simulation = await TxSimulator(rpc, virtual_token_addr=cfg.virtual_token_addr).simulate(bound.tx)
+    timings["simulateMs"] = elapsed_ms(start)
+    simulation_compact = compact_simulation(simulation)
+    if not simulation["green"]:
+        raise ValueError(simulation_failure_reason(simulation))
+
+    start = time.perf_counter()
+    fees = await suggest_fees(
+        rpc,
+        max_fee_gwei=args.max_fee_gwei,
+        priority_gwei=args.max_priority_fee_gwei,
+    )
+    timings["feeSuggestMs"] = elapsed_ms(start)
+    gas_estimate = int(simulation["checks"]["estimateGas"]["gas"])
+    gas = gas_estimate * (10_000 + int(args.gas_buffer_bps)) // 10_000
+    nonce_to_use = int(simulation["checks"]["nonce"]["pendingNonce"])
+    tx = replace(
+        bound.tx,
+        nonce=nonce_to_use,
+        gas=gas,
+        max_fee_per_gas=str(fees["maxFeePerGas"]),
+        max_priority_fee_per_gas=str(fees["maxPriorityFeePerGas"]),
+    )
+    start = time.perf_counter()
+    signed = LocalSigner().sign(tx)
+    timings["signMs"] = elapsed_ms(start)
+
+    built_at = time.monotonic()
+    return SignedBuyCandidate(
+        key=key,
+        buy_size_v=format(buy_size_v.normalize(), "f"),
+        tax_rate=normalized_tax_key(tax_rate),
+        built_at=built_at,
+        expires_at=built_at + max(0.1, float(args.signed_candidate_ttl_sec)),
+        signed=signed,
+        quote=bound.quote,
+        simulation=simulation_compact,
+        timings_ms=timings,
+    )
+
+
+async def refresh_signed_candidates(
+    *,
+    args: argparse.Namespace,
+    cfg: Any,
+    rpc: RPCClient,
+    project_row: dict[str, Any],
+    sample: dict[str, Any],
+    buy_sizes: list[Decimal],
+) -> dict[str, Any]:
+    if not bool(args.enable_signed_candidate_cache):
+        return {"candidates": [], "errors": [], "skipped": "disabled"}
+    if args.mode not in {"sign-ready", "broadcast"}:
+        return {"candidates": [], "errors": [], "skipped": "mode_not_signing"}
+    if str(sample.get("projectStatus") or "").lower() != "live":
+        return {"candidates": [], "errors": [], "skipped": "project_not_live"}
+    if not buy_sizes:
+        return {"candidates": [], "errors": [], "skipped": "no_candidate_size"}
+
+    candidates: list[SignedBuyCandidate] = []
+    errors: list[dict[str, Any]] = []
+    for buy_size in buy_sizes[: max(1, int(args.signed_candidate_max_count))]:
+        try:
+            candidate = await build_signed_buy_candidate(
+                args=args,
+                cfg=cfg,
+                rpc=rpc,
+                project_row=project_row,
+                sample=sample,
+                buy_size_v=buy_size,
+            )
+            candidates.append(candidate)
+        except Exception as exc:
+            errors.append({"buySizeV": format(buy_size.normalize(), "f"), "reason": str(exc)})
+    return {"candidates": candidates, "errors": errors, "skipped": ""}
+
+
 async def prewarm_intent(
     *,
     args: argparse.Namespace,
@@ -530,6 +760,7 @@ async def prewarm_intent(
     nonce_override: int | None = None,
     skip_tax_rate_guard: bool = False,
     force_no_wait_receipt: bool = False,
+    signed_candidate: SignedBuyCandidate | None = None,
 ) -> dict[str, Any]:
     mode = executor_mode(args)
     ledger_record = make_ledger_record(
@@ -713,6 +944,164 @@ async def prewarm_intent(
 
     timings: dict[str, float] = {}
     try:
+        if signed_candidate is not None and args.mode in {"sign-ready", "broadcast"}:
+            timings.update(signed_candidate.timings_ms)
+            simulation_compact = signed_candidate.simulation
+            signed = signed_candidate.signed
+            payload.update(
+                {
+                    "event": "signed_ready",
+                    "signed": True,
+                    "signedTxHash": signed.tx_hash,
+                    "signedCandidate": signed_candidate.compact(),
+                    "quote": asdict(signed_candidate.quote),
+                    "simulation": simulation_compact,
+                    "signedSummary": {
+                        "from": signed.from_addr,
+                        "to": signed.to,
+                        "chainId": signed.chain_id,
+                        "nonce": signed.nonce,
+                        "gas": signed.gas,
+                    },
+                    "timingsMs": timings,
+                    "reason": "signed_candidate_cache_hit_no_raw_tx_persisted",
+                }
+            )
+            update_ledger_stage(
+                bot,
+                intent_id=intent_id,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+                mode=mode,
+                status="signed_ready",
+                reason="signed_candidate_cache_hit_no_raw_tx_persisted",
+                simulation=simulation_compact,
+                signed_tx_hash=signed.tx_hash,
+            )
+            if args.mode == "sign-ready":
+                return payload
+
+            start = time.perf_counter()
+            send_start = time.perf_counter()
+            sent_hash = await rpc.call("eth_sendRawTransaction", [signed.raw_tx])
+            timings["sendRawMs"] = elapsed_ms(send_start)
+            timings["triggerToSendAckMs"] = elapsed_ms(start)
+            payload.update(
+                {
+                    "event": "broadcast_sent",
+                    "readOnly": False,
+                    "broadcasted": True,
+                    "tradeSent": True,
+                    "broadcastEnabled": True,
+                    "txHash": str(sent_hash),
+                    "timingsMs": timings,
+                    "reason": "send_presigned_raw_transaction_ack",
+                }
+            )
+            update_ledger_stage(
+                bot,
+                intent_id=intent_id,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+                mode=mode,
+                status="broadcast_sent",
+                reason="send_presigned_raw_transaction_ack",
+                simulation=simulation_compact,
+                signed_tx_hash=signed.tx_hash,
+                broadcast_tx_hash=str(sent_hash),
+                trade_sent=True,
+                broadcast_enabled=True,
+            )
+
+            skip_receipt_wait = bool(args.no_wait_receipt or force_no_wait_receipt)
+            if skip_receipt_wait:
+                payload["receiptSkipped"] = True
+                payload["reason"] = "receipt_wait_skipped"
+                update_ledger_stage(
+                    bot,
+                    intent_id=intent_id,
+                    project_name=project_name,
+                    strategy_name=strategy_name,
+                    rule_name=rule_name,
+                    mode=mode,
+                    status="broadcast_sent_no_receipt_wait",
+                    reason="receipt_wait_skipped",
+                    simulation=simulation_compact,
+                    signed_tx_hash=signed.tx_hash,
+                    broadcast_tx_hash=str(sent_hash),
+                    trade_sent=True,
+                    broadcast_enabled=True,
+                )
+                return payload
+
+            receipt_start = time.perf_counter()
+            receipt = await wait_receipt(rpc, str(sent_hash), timeout_sec=int(args.receipt_timeout_sec))
+            timings["waitReceiptMs"] = elapsed_ms(receipt_start)
+            receipt_deltas = receipt_transfer_deltas(
+                receipt,
+                owner=args.from_address,
+                virtual_token=cfg.virtual_token_addr,
+                target_token=token_addr,
+            )
+            balance_start = time.perf_counter()
+            virtual_after, token_after, allowance_after = await asyncio.gather(
+                read_erc20_balance(rpc, token=cfg.virtual_token_addr, owner=args.from_address),
+                read_erc20_balance(rpc, token=token_addr, owner=args.from_address),
+                read_allowance(rpc, token=cfg.virtual_token_addr, owner=args.from_address, spender=VIRTUALS_BUY_SPENDER),
+            )
+            timings["readAfterMs"] = elapsed_ms(balance_start)
+            receipt_payload = receipt_summary(receipt, receipt_deltas)
+            receipt_status = str((receipt or {}).get("status") or "")
+            receipt_ok = receipt_status in {"0x1", "1"}
+            payload.update(
+                {
+                    "event": "receipt_success" if receipt_ok else "receipt_failed",
+                    "receiptSkipped": False,
+                    "receipt": receipt_payload,
+                    "balancesAfter": {
+                        "virtualWei": str(virtual_after),
+                        "targetTokenRaw": str(token_after),
+                        "allowanceWei": str(allowance_after),
+                    },
+                    "timingsMs": timings,
+                    "reason": "receipt_observed" if receipt is not None else "receipt_timeout",
+                }
+            )
+            if not receipt_ok:
+                reason = "receipt_timeout" if receipt is None else "receipt_failed"
+                fuse = trigger_fuse(
+                    bot,
+                    project_name=project_name,
+                    strategy_name=strategy_name,
+                    rule_name=rule_name,
+                    intent_id=intent_id,
+                    failure_stage="receipt",
+                    failure_reason=reason,
+                    details={"txHash": str(sent_hash), "receipt": receipt_payload},
+                )
+                payload["activeFuse"] = compact_fuse(fuse)
+            update_ledger_stage(
+                bot,
+                intent_id=intent_id,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+                mode=mode,
+                status="receipt_success" if receipt_ok else "receipt_failed",
+                reason="receipt_observed" if receipt is not None else "receipt_timeout",
+                simulation=simulation_compact,
+                signed_tx_hash=signed.tx_hash,
+                broadcast_tx_hash=str(sent_hash),
+                receipt=receipt_payload,
+                failure_stage=None if receipt_ok else "receipt",
+                failure_reason=None if receipt_ok else ("receipt_timeout" if receipt is None else "receipt_failed"),
+                trade_sent=True,
+                broadcast_enabled=True,
+            )
+            return payload
+
         start = time.perf_counter()
         bound = await VirtualsOrderBinder(
             rpc,
@@ -1237,6 +1626,9 @@ async def async_main() -> None:
     last_logged_heartbeat = 0.0
     sample_count = 0
     counts = {"would_buy": 0, "prewarm": 0, "fdv_limit_order": 0, "pause": 0, "skip": 0}
+    signed_candidate_cache: dict[str, SignedBuyCandidate] = {}
+    signed_candidate_refresh_task: asyncio.Task[dict[str, Any]] | None = None
+    last_signed_candidate_refresh_started = 0.0
 
     async with VirtualsBot(cfg, role="backfill") as bot:
         project_row = find_project(bot, str(args.project))
@@ -1278,6 +1670,7 @@ async def async_main() -> None:
             "maxProjectV": str(effective_args.max_project_v),
             "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
             "restoredStrategyState": compact_strategy_state(restored_state),
+            "signedCandidateCache": signed_candidate_cache_config(args),
         }
         append_jsonl(output_jsonl, service_meta)
         print(json.dumps(service_meta, ensure_ascii=False), flush=True)
@@ -1292,6 +1685,50 @@ async def async_main() -> None:
                     sample = await build_sample(bot, project_row, clock)
                     sample["triggerTypes"] = derive_trigger_types(previous_sample, sample)
                     current_fingerprint = fingerprint(sample)
+                    if signed_candidate_refresh_task is not None and signed_candidate_refresh_task.done():
+                        refresh_payload: dict[str, Any] | None = None
+                        try:
+                            refresh_result = signed_candidate_refresh_task.result()
+                            candidates = refresh_result.get("candidates") or []
+                            errors = refresh_result.get("errors") or []
+                            for candidate in candidates:
+                                signed_candidate_cache[candidate.key] = candidate
+                            if candidates or errors:
+                                refresh_payload = {
+                                    "event": "signed_candidate_cache_refreshed",
+                                    "at": utc_iso(),
+                                    "atCst": cst_iso(),
+                                    "project": project_name,
+                                    "rule": rule.name,
+                                    "strategy": evaluator.config.name,
+                                    "mode": executor_mode(args),
+                                    "readOnly": args.mode != "broadcast",
+                                    "tradeSent": False,
+                                    "broadcastEnabled": broadcast_enabled(args),
+                                    "candidateCount": len(candidates),
+                                    "candidates": [candidate.compact() for candidate in candidates],
+                                    "errors": errors[:3],
+                                }
+                        except Exception as exc:
+                            refresh_payload = {
+                                "event": "signed_candidate_cache_refresh_failed",
+                                "at": utc_iso(),
+                                "atCst": cst_iso(),
+                                "project": project_name,
+                                "rule": rule.name,
+                                "strategy": evaluator.config.name,
+                                "mode": executor_mode(args),
+                                "readOnly": args.mode != "broadcast",
+                                "tradeSent": False,
+                                "broadcastEnabled": broadcast_enabled(args),
+                                "reason": str(exc),
+                            }
+                        finally:
+                            signed_candidate_refresh_task = None
+                        if refresh_payload:
+                            append_jsonl(output_jsonl, refresh_payload)
+                            print(json.dumps(refresh_payload, ensure_ascii=False), flush=True)
+                    prune_signed_candidate_cache(signed_candidate_cache)
                     reconciled_limit_orders = await reconcile_fdv_limit_order_receipts(
                         args=effective_args if "effective_args" in locals() else args,
                         cfg=cfg,
@@ -1377,6 +1814,7 @@ async def async_main() -> None:
                         runtime_block_reason = "runtime_config_mode_not_broadcast"
 
                     fdv_limit_order_attempted = False
+                    open_limit_orders: list[dict[str, Any]] = []
                     if not runtime_block_reason:
                         open_limit_orders = bot.storage.list_launch_fdv_limit_orders(
                             project_id=int(project_row.get("id") or 0),
@@ -1419,6 +1857,15 @@ async def async_main() -> None:
                                 nonce_override=next_nonce_override,
                                 skip_tax_rate_guard=True,
                                 force_no_wait_receipt=True,
+                                signed_candidate=(
+                                    None
+                                    if next_nonce_override is not None
+                                    else take_signed_candidate(
+                                        signed_candidate_cache,
+                                        buy_size_v=claimed.get("buy_v"),
+                                        tax_rate=sample.get("buyTaxRate"),
+                                    )
+                                ),
                             )
                             limit_payload["fdvLimitOrder"] = compact_fdv_limit_order(claimed)
                             if limit_payload.get("tradeSent"):
@@ -1535,6 +1982,11 @@ async def async_main() -> None:
                                 sample=sample,
                                 sample_index=sample_count - 1,
                                 intent=asdict(decision.intent),
+                                signed_candidate=take_signed_candidate(
+                                    signed_candidate_cache,
+                                    buy_size_v=decision.intent.buy_size_v,
+                                    tax_rate=sample.get("buyTaxRate"),
+                                ),
                             )
                             payload["runtimeStrategyConfig"] = compact_runtime_config(runtime_config_row, effective_args)
                             if args.mode == "broadcast" and not bool(payload.get("tradeSent")) and state_before_decision is not None:
@@ -1555,6 +2007,33 @@ async def async_main() -> None:
                         print(json.dumps(payload, ensure_ascii=False), flush=True)
                         if payload["event"] == "heartbeat":
                             last_logged_heartbeat = time.monotonic()
+
+                    if (
+                        bool(args.enable_signed_candidate_cache)
+                        and not runtime_block_reason
+                        and args.mode in {"sign-ready", "broadcast"}
+                        and str(sample.get("projectStatus") or "").lower() == "live"
+                        and signed_candidate_refresh_task is None
+                        and (time.monotonic() - last_signed_candidate_refresh_started)
+                        >= max(0.1, float(args.signed_candidate_refresh_min_sec))
+                    ):
+                        sizes = candidate_buy_sizes(
+                            effective_args=effective_args,
+                            runtime_config=evaluator.config,
+                            pending_limit_orders=open_limit_orders,
+                        )
+                        if sizes:
+                            signed_candidate_refresh_task = asyncio.create_task(
+                                refresh_signed_candidates(
+                                    args=effective_args,
+                                    cfg=cfg,
+                                    rpc=rpc,
+                                    project_row=project_row,
+                                    sample=sample,
+                                    buy_sizes=sizes,
+                                )
+                            )
+                            last_signed_candidate_refresh_started = time.monotonic()
 
                     previous_sample = dict(sample)
                     previous_fingerprint = current_fingerprint

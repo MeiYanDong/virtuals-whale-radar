@@ -1156,6 +1156,8 @@
 - [x] 2026-05-20 TDS 限价单 L5 小额真实广播 canary 通过：模拟 `LIVE` sample 触发临时限价单 `FDV <= 120 万 USD / 买入 0.01 VIRTUAL`，tx `0x0b707eedd76e8c694ff43bfba2e8b4c3b407ca26759ffd290432fe18c61ccb9e` receipt `0x1`，限价单 `id=5` 已 `filled`，账本 `receipt_success`；随后测试仓位已卖回 VIRTUAL，卖出 tx `0xd4cfccda71debeda1946f9450af693a0dda26a7c7692bc4582bdafc4fa73e54e` receipt `0x1`，最终 TDS 余额 `0`、TDS 授权 `0`。
 - [x] 2026-05-20 TDS 限价单前端/API 热更新 L2 验证通过：管理员 HTTP API 创建临时限价单 `id=8` 后，模拟执行器下一 tick 输出 `paper_fdv_limit_order_intent`；更新阈值后下一 tick 不触发；删除后订单变为 `canceled / enabled=false`；TDS runtime config 已恢复 `enabled=false / mode=simulate`。
 - [x] 2026-05-20 自动买入速度优先优化：限价单触发后同 tick 跳过普通自动买入；普通买入广播后不等待 receipt，由后台补查更新账本；生产 autobuy 模板默认使用 `--no-wait-receipt` 和 `0.1s` live poll；本地 `py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 通过。
+- [x] 2026-05-20 自动买入预签候选交易池：新增默认关闭的 `--enable-signed-candidate-cache`，后台预先 bind/simulate/sign，触发时命中候选后直接广播；raw tx 只保存在内存，同批候选命中一次后清空，避免 nonce 复用；本地 `py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 通过。
+- [ ] 预签候选交易池完成小额 canary 后，再决定是否写入生产 systemd 默认启用参数。
 
 ## Phase 56：自动卖出运行时控制台
 

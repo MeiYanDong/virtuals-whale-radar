@@ -8,6 +8,7 @@ import sys
 from argparse import Namespace
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 OPS_DIR = Path(__file__).resolve().parent
@@ -17,6 +18,7 @@ if str(OPS_DIR) not in sys.path:
     sys.path.insert(0, str(OPS_DIR))
 
 from launch_prewarm_executor import (  # noqa: E402
+    SignedBuyCandidate,
     compact_runtime_config,
     eligible_fdv_limit_orders,
     fdv_limit_order_intent,
@@ -25,6 +27,8 @@ from launch_prewarm_executor import (  # noqa: E402
     runtime_dynamic_config,
     runtime_effective_args,
     sample_tax_fdv_wan,
+    signed_candidate_key,
+    take_signed_candidate,
 )
 
 
@@ -143,6 +147,46 @@ def test_fdv_limit_order_helpers() -> None:
     assert_eq(intent["fdvLimitOrderId"], 1, "fdv order id")
 
 
+def test_signed_candidate_cache_take_once_and_clear_batch() -> None:
+    assert_eq(signed_candidate_key(buy_size_v="25.0", tax_rate="92.0"), "25|92", "candidate key normalizes")
+    signed = SimpleNamespace(
+        tx_hash="0xsigned",
+        from_addr="0x" + "1" * 40,
+        to="0x" + "2" * 40,
+        chain_id=8453,
+        nonce=9,
+        gas=123456,
+        raw_tx="0xraw",
+    )
+    candidate = SignedBuyCandidate(
+        key="25|92",
+        buy_size_v="25",
+        tax_rate="92",
+        built_at=100.0,
+        expires_at=9999999999.0,
+        signed=signed,
+        quote=SimpleNamespace(),
+        simulation={"green": True},
+        timings_ms={"signMs": 1.0},
+    )
+    alternative = SignedBuyCandidate(
+        key="50|92",
+        buy_size_v="50",
+        tax_rate="92",
+        built_at=100.0,
+        expires_at=9999999999.0,
+        signed=signed,
+        quote=SimpleNamespace(),
+        simulation={"green": True},
+        timings_ms={"signMs": 1.0},
+    )
+    cache = {"25|92": candidate, "50|92": alternative}
+    taken = take_signed_candidate(cache, buy_size_v="25", tax_rate="92")
+    assert_eq(taken, candidate, "candidate hit")
+    assert_eq(cache, {}, "candidate batch cleared after hit")
+    assert_eq(take_signed_candidate(cache, buy_size_v="25", tax_rate="92"), None, "candidate is single-use")
+
+
 class FakeStorage:
     def __init__(self) -> None:
         self.updates = []
@@ -230,6 +274,7 @@ def main() -> None:
     test_rebuild_strategy_state_from_sent_rows()
     test_runtime_config_helpers()
     test_fdv_limit_order_helpers()
+    test_signed_candidate_cache_take_once_and_clear_batch()
     test_reconcile_standard_buy_receipts_updates_only_standard_buys()
     print("launch_prewarm_executor tests ok")
 

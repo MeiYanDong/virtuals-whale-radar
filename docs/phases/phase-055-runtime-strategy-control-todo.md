@@ -28,6 +28,7 @@
 - [x] 配置版本变化时写入 `strategy_config_reloaded` 日志。
 - [x] 2026-05-20 移除“含税估算 FDV 上限”的前端入口和执行器依赖；旧 DB 字段只保留兼容，不再作为操作入口。
 - [x] 2026-05-20 新增独立含税估算 FDV 限价单执行链路：不依赖大户榜单成本，支持多单并列触发、快速连续广播、本地 nonce 递增和后续成交回执补查。
+- [x] 2026-05-20 新增可选预签候选交易池：后台预先 bind/simulate/sign，触发时命中候选后直接广播；默认关闭，不写 raw tx 到日志或 DB。
 
 ## 4. 前端
 
@@ -68,3 +69,5 @@
 - [x] 2026-05-20 速度优先优化：普通自动买入支持 no-wait receipt，并由后续循环后台补查 receipt 更新账本和 fuse。
 - [x] 2026-05-20 速度优先优化：生产 autobuy systemd 模板默认启用 `--no-wait-receipt`，并将 live poll 调整到 `0.1s`。
 - [x] 2026-05-20 速度优先优化验证：`py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 本地通过；`test_launch_prewarm_executor.py` 新增普通买入 no-wait receipt 后台补查单测。
+- [x] 2026-05-20 预签候选交易池本地验证：`py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 通过；新增候选 key 归一化、单次命中和同批清空单测。
+- [ ] 预签候选交易池生产小额 canary 通过后，再决定是否写入 production autobuy systemd 模板默认参数。
