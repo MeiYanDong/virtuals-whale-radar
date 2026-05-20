@@ -1221,6 +1221,7 @@
 - [x] 钱包登录身份与用户追踪钱包拆分：新增 `wallet_auth_identities`，钱包登录只信任签名验证后的认证身份，不再把 `user_wallets` 里的任意追踪地址当作登录归属。
 - [x] 同一钱包地址通过 Base Account / OKX Wallet / injected wallet 登录时，优先复用已有钱包认证身份；历史钱包用户通过 synthetic wallet email 兼容回收。
 - [x] 修复 OKX Wallet 登录成功后停留在登录页的问题：钱包登录成功后先写入本地 auth cache 并立即执行跳转，接口刷新改为后台执行，同时保留浏览器级跳转兜底。
+- [x] 2026-05-20 生产站 Base USDC 支付由 operator 实测通过，积分到账正常；Base 外部分发仍暂停，主线继续回到自用实盘盈利闭环。
 - [x] 整理 Base 生态上架资料包：`docs/base-ecosystem-listing.md`。
 - [x] 本地验证：`py_compile`、钱包认证身份临时库探针、`npm run lint`、`npm run build`、浏览器验证 `/base` 与 `/app/billing`。
 
@@ -1276,5 +1277,6 @@
 - [x] 2026-05-20 从生产 SignalHub upcoming feed 选出 `PROFIT` / `MTR` 候选，并记录到 `docs/phases/phase-061-live-candidates-2026-05-20.md`。
 - [x] 对 `PROFIT` / `MTR` 完成非广播 prewarmed buy 模拟：均未广播、未发送交易；当前 direct buy 在发射前 revert，25 V 预算还需要提前提高 VIRTUAL 授权。
 - [x] 选择 `MTR` 作为第一次只读 runbook 演练对象：已加入生产 managed/watch，并创建 `dryrun,prewarm` 启动 timer 与归档 timer。
+- [x] 2026-05-20 11:15 CST 复查 MTR：生产健康、timer、fuse 与 execution RPC 均正常；readiness 仍为 `ready=false`，5V 也因未到可交易状态 revert，25/50V 还需提高 allowance。
 - [ ] 若要把 MTR 从只读演练升级为真钱实盘，先确认预算、授权、自动买入/自动卖出 timer 范围。
 - [ ] 下一次真实 live 项目按 Phase 061 runbook 创建启动与归档 timer，并在窗口后完成一页复盘。
