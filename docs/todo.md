@@ -1275,5 +1275,6 @@
 - [x] 完成第一项实盘链路短板收口：生产 execution RPC 压力观察通过，确认执行 RPC 与主采集 RPC 分离。
 - [x] 2026-05-20 从生产 SignalHub upcoming feed 选出 `PROFIT` / `MTR` 候选，并记录到 `docs/phases/phase-061-live-candidates-2026-05-20.md`。
 - [x] 对 `PROFIT` / `MTR` 完成非广播 prewarmed buy 模拟：均未广播、未发送交易；当前 direct buy 在发射前 revert，25 V 预算还需要提前提高 VIRTUAL 授权。
-- [ ] 选择 `MTR` 或其他更强候选作为第一次完整 runbook 演练对象；真实广播前必须确认预算、授权、自动买入/自动卖出 timer 范围。
+- [x] 选择 `MTR` 作为第一次只读 runbook 演练对象：已加入生产 managed/watch，并创建 `dryrun,prewarm` 启动 timer 与归档 timer。
+- [ ] 若要把 MTR 从只读演练升级为真钱实盘，先确认预算、授权、自动买入/自动卖出 timer 范围。
 - [ ] 下一次真实 live 项目按 Phase 061 runbook 创建启动与归档 timer，并在窗口后完成一页复盘。

@@ -1,6 +1,6 @@
 # Phase 061 Live Candidates - 2026-05-20
 
-状态：只读候选观察，未启动真实交易。
+状态：MTR 已进入只读观察准备，未启动真实交易。
 
 本记录用于 Phase 061 自用实盘盈利闭环。目标不是做外部用户体验，而是找到下一次可用于完整 runbook 的真实 Virtuals 发射窗口。
 
@@ -62,6 +62,24 @@
 | PROFIT | 2026-05-20 21:00:15 CST | 2026-05-20 20:25:15 CST | 2026-05-20 22:49:15 CST | `dryrun,prewarm` |
 | MTR | 2026-05-21 21:28:57 CST | 2026-05-21 20:53:57 CST | 2026-05-21 23:17:57 CST | `dryrun,prewarm` |
 
+## MTR 只读观察准备
+
+2026-05-20 已在生产机执行以下准备动作：
+
+- 将 `MTR` 加入 `managed_projects`，生产 id 为 `16`。
+- `is_watched=1`，`collect_enabled=1`，`backfill_enabled=1`，`status=scheduled`，`source=signalhub`。
+- 创建 `vwr-launch-mtr-start.timer`，触发时间 `2026-05-21 20:53:57 CST`。
+- 创建 `vwr-launch-mtr-archive.timer`，触发时间 `2026-05-21 23:17:57 CST`。
+- start unit 仅包含 `vwr-launch-dryrun@MTR.service` 与 `vwr-launch-prewarm@MTR.service`。
+- 未创建本次 `autobuy/autosell` 启动链路；四个 launch service 当前均为 `inactive`。
+
+生产健康检查：
+
+- `vwr@writer`、`vwr@realtime`、`vwr@backfill`、`vwr-signalhub`、`nginx` 均为 `active`。
+- `/health ok=true`，`queueSize=0`，`pendingTx=0`。
+
+注意：`schedule_launch_services.py` 会安装四个模板文件，但本次 `vwr-launch-mtr-start.service` 的 `ExecStart` 只启动 `dryrun` 和 `prewarm` 两个服务。
+
 ## 当前判断
 
 1. `PROFIT` 是今天的即时候选，但时间更紧，且只有 C / medium。
@@ -73,5 +91,5 @@
 ## 下一步
 
 - 默认建议：用 `MTR` 做 Phase 061 第一次完整 runbook 演练；`PROFIT` 只做观察或 dryrun。
-- 安全可执行动作：把候选项目加入管理 / watch、创建 `dryrun,prewarm` 的系统 timer、窗口后归档。
+- 已执行的安全动作：`MTR` 已加入管理 / watch，并创建 `dryrun,prewarm` 的系统 timer 与窗口后归档 timer。
 - 需要明确确认后才能执行的动作：VIRTUAL 授权广播、`autobuy,autosell` timer、任何真实买入或卖出广播。
