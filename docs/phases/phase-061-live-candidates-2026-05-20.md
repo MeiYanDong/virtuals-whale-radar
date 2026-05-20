@@ -130,19 +130,19 @@ Readiness：
 
 ## 2026-05-20 11:42 CST 限价策略部署后复查
 
-本次复查发生在新增“含税估算 FDV 限价”策略代码同步生产并重启 `writer / realtime / backfill` 后。
+本次复查发生在早期“含税估算 FDV 上限”兼容字段同步生产并重启 `writer / realtime / backfill` 后。
 
 生产健康：
 
 - `vwr@writer`、`vwr@realtime`、`vwr@backfill`、`vwr-signalhub`、`nginx` 均为 `active`。
 - `/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`。
 - SignalHub `/healthz` 返回 `{"status":"ok"}`。
-- `launch_strategy_runtime_configs` 已包含 `fdv_limit_enabled / fdv_limit_wan_usd` 两列。
+- `launch_strategy_runtime_configs` 已包含 `fdv_limit_enabled / fdv_limit_wan_usd` 两列；后续版本已将其降级为兼容字段，不再作为管理员操作入口。
 
 MTR 状态：
 
 - MTR 生产项目 id 仍为 `16`，状态 `scheduled`。
-- MTR 当前没有 runtime config override；新增 FDV 限价默认关闭，不改变现有只读观察行为。
+- MTR 当前没有 runtime config override；旧 FDV 上限字段默认关闭，不改变现有只读观察行为。
 - 当前没有 MTR active fuse。
 - `vwr-launch-mtr-start.timer` 与 `vwr-launch-mtr-archive.timer` 均仍 active。
 - `vwr-launch-dryrun@MTR`、`vwr-launch-prewarm@MTR`、`vwr-launch-autobuy@MTR`、`vwr-launch-autosell@MTR` 当前均为 `inactive`。

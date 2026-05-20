@@ -395,6 +395,8 @@ DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT = Decimal("20")
 DEFAULT_LAUNCH_FLAT_PAUSE_PCT = Decimal("10")
 DEFAULT_LAUNCH_MAX_BUY_V = Decimal("50")
 DEFAULT_LAUNCH_MAX_PROJECT_V = Decimal("150")
+DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY = "tax_fdv_limit_order"
+DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE = "tax_fdv_limit_order"
 DEFAULT_LAUNCH_SELL_STRATEGY = "dual_roi_large_buy_sell"
 DEFAULT_LAUNCH_SELL_RULE = "dual_roi_large_buy_sell"
 DEFAULT_LAUNCH_SELL_MAX_TAX_RATE = Decimal("30")
@@ -1918,6 +1920,34 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_launch_strategy_runtime_config_audit_project
                 ON launch_strategy_runtime_config_audit(project_id, created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS launch_fdv_limit_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                project TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'pending',
+                trigger_fdv_wan_usd TEXT NOT NULL,
+                buy_v TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                triggered_at INTEGER,
+                broadcast_tx_hash TEXT NOT NULL DEFAULT '',
+                ledger_intent_id TEXT NOT NULL DEFAULT '',
+                filled_at INTEGER,
+                last_error TEXT NOT NULL DEFAULT '',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                updated_by_user_id INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES managed_projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(updated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_launch_fdv_limit_orders_project_status
+                ON launch_fdv_limit_orders(project_id, status, enabled, sort_order, id);
+
+            CREATE INDEX IF NOT EXISTS idx_launch_fdv_limit_orders_project_time
+                ON launch_fdv_limit_orders(project, updated_at DESC, id DESC);
+
             CREATE TABLE IF NOT EXISTS launch_sell_runtime_configs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER NOT NULL UNIQUE,
@@ -2474,6 +2504,286 @@ class Storage:
                 total += Decimal(str(row["buy_size_v"] or "0"))
         return total
 
+    def list_launch_fdv_limit_orders(
+        self,
+        *,
+        project_id: Optional[int] = None,
+        project: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        bounded_limit = max(1, min(int(limit), 500))
+        clauses: List[str] = []
+        params: List[Any] = []
+        if project_id is not None:
+            clauses.append("project_id = ?")
+            params.append(int(project_id))
+        if project:
+            clauses.append("lower(project) = lower(?)")
+            params.append(str(project).strip())
+        if statuses:
+            clean_statuses = [str(x).strip() for x in statuses if str(x).strip()]
+            if clean_statuses:
+                clauses.append(f"status IN ({','.join('?' for _ in clean_statuses)})")
+                params.extend(clean_statuses)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.conn.execute(
+            f"""
+            SELECT *
+            FROM launch_fdv_limit_orders
+            {where_sql}
+            ORDER BY
+                CASE status
+                    WHEN 'pending' THEN 0
+                    WHEN 'triggering' THEN 1
+                    WHEN 'broadcast_sent' THEN 2
+                    WHEN 'failed' THEN 3
+                    WHEN 'filled' THEN 4
+                    ELSE 5
+                END,
+                sort_order ASC,
+                id ASC
+            LIMIT ?
+            """,
+            (*params, bounded_limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_launch_fdv_limit_order(self, order_id: int) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM launch_fdv_limit_orders
+            WHERE id = ?
+            """,
+            (int(order_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_launch_fdv_limit_orders(
+        self,
+        *,
+        project_row: Dict[str, Any],
+        payload: Dict[str, Any],
+        operator_user_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        raw_orders = payload.get("orders")
+        if raw_orders is None:
+            raw_orders = []
+        if not isinstance(raw_orders, list):
+            raise ValueError("orders must be an array")
+
+        project_id = int(project_row["id"])
+        project = str(project_row.get("name") or "").strip()
+        now = int(time.time())
+        seen_ids: Set[int] = set()
+        normalized: List[Dict[str, Any]] = []
+        for index, raw in enumerate(raw_orders):
+            if not isinstance(raw, dict):
+                raise ValueError(f"orders[{index}] must be an object")
+            raw_id = raw.get("id")
+            order_id: Optional[int] = None
+            existing: Optional[Dict[str, Any]] = None
+            if raw_id not in {None, ""}:
+                order_id = int(raw_id)
+                existing = self.get_launch_fdv_limit_order(order_id)
+                if not existing or int(existing.get("project_id") or 0) != project_id:
+                    raise ValueError(f"limit order not found: {order_id}")
+                if str(existing.get("status") or "") in {"broadcast_sent", "filled", "triggering"}:
+                    normalized.append(dict(existing))
+                    seen_ids.add(order_id)
+                    continue
+            trigger = parse_strategy_decimal(
+                raw.get("triggerFdvWanUsd", raw.get("trigger_fdv_wan_usd")),
+                f"orders[{index}].triggerFdvWanUsd",
+            )
+            buy_v = parse_strategy_decimal(raw.get("buyV", raw.get("buy_v")), f"orders[{index}].buyV")
+            if trigger <= 0:
+                raise ValueError("含税估算 FDV 限价必须大于 0")
+            if buy_v <= 0:
+                raise ValueError("限价单买入数量必须大于 0")
+            enabled = parse_named_bool(raw.get("enabled", True), f"orders[{index}].enabled")
+            status = str(raw.get("status") or (existing or {}).get("status") or "pending").strip()
+            if status not in {"pending", "failed", "canceled"}:
+                status = "pending"
+            normalized.append(
+                {
+                    "id": order_id,
+                    "project_id": project_id,
+                    "project": project,
+                    "enabled": 1 if enabled else 0,
+                    "status": "pending" if enabled else status,
+                    "trigger_fdv_wan_usd": decimal_to_str(trigger, 6),
+                    "buy_v": decimal_to_str(buy_v, 6),
+                    "sort_order": int(raw.get("sortOrder", raw.get("sort_order", index))),
+                    "last_error": "",
+                    "updated_by_user_id": int(operator_user_id) if operator_user_id else None,
+                    "created_at": int((existing or {}).get("created_at") or now),
+                    "updated_at": now,
+                }
+            )
+            if order_id is not None:
+                seen_ids.add(order_id)
+
+        with self.conn:
+            existing_editable = self.list_launch_fdv_limit_orders(
+                project_id=project_id,
+                statuses=["pending", "failed", "canceled"],
+                limit=500,
+            )
+            for row in existing_editable:
+                row_id = int(row.get("id") or 0)
+                if row_id and row_id not in seen_ids:
+                    self.conn.execute(
+                        """
+                        UPDATE launch_fdv_limit_orders
+                        SET status = 'canceled',
+                            enabled = 0,
+                            updated_at = ?,
+                            updated_by_user_id = ?
+                        WHERE id = ?
+                        """,
+                        (now, int(operator_user_id) if operator_user_id else None, row_id),
+                    )
+
+            for item in normalized:
+                if item.get("id"):
+                    self.conn.execute(
+                        """
+                        UPDATE launch_fdv_limit_orders
+                        SET enabled = :enabled,
+                            status = :status,
+                            trigger_fdv_wan_usd = :trigger_fdv_wan_usd,
+                            buy_v = :buy_v,
+                            sort_order = :sort_order,
+                            last_error = :last_error,
+                            updated_by_user_id = :updated_by_user_id,
+                            updated_at = :updated_at
+                        WHERE id = :id
+                          AND status IN ('pending', 'failed', 'canceled')
+                        """,
+                        item,
+                    )
+                else:
+                    self.conn.execute(
+                        """
+                        INSERT INTO launch_fdv_limit_orders(
+                            project_id, project, enabled, status, trigger_fdv_wan_usd, buy_v,
+                            sort_order, last_error, updated_by_user_id, created_at, updated_at
+                        ) VALUES (
+                            :project_id, :project, :enabled, :status, :trigger_fdv_wan_usd, :buy_v,
+                            :sort_order, :last_error, :updated_by_user_id, :created_at, :updated_at
+                        )
+                        """,
+                        item,
+                    )
+        return self.list_launch_fdv_limit_orders(project_id=project_id, limit=500)
+
+    def mark_launch_fdv_limit_order_triggering(self, order_id: int) -> Optional[Dict[str, Any]]:
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE launch_fdv_limit_orders
+                SET status = 'triggering',
+                    triggered_at = COALESCE(triggered_at, ?),
+                    attempt_count = attempt_count + 1,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'pending'
+                  AND enabled = 1
+                """,
+                (now, now, int(order_id)),
+            )
+        return self.get_launch_fdv_limit_order(order_id)
+
+    def mark_launch_fdv_limit_order_retryable(
+        self,
+        order_id: int,
+        *,
+        error: str,
+    ) -> Optional[Dict[str, Any]]:
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE launch_fdv_limit_orders
+                SET status = 'pending',
+                    last_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status = 'triggering'
+                """,
+                (str(error or "").strip()[:500], now, int(order_id)),
+            )
+        return self.get_launch_fdv_limit_order(order_id)
+
+    def mark_launch_fdv_limit_order_failed(
+        self,
+        order_id: int,
+        *,
+        error: str,
+    ) -> Optional[Dict[str, Any]]:
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE launch_fdv_limit_orders
+                SET status = 'failed',
+                    last_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (str(error or "").strip()[:500], now, int(order_id)),
+            )
+        return self.get_launch_fdv_limit_order(order_id)
+
+    def mark_launch_fdv_limit_order_broadcast_sent(
+        self,
+        order_id: int,
+        *,
+        tx_hash: str,
+        ledger_intent_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE launch_fdv_limit_orders
+                SET status = 'broadcast_sent',
+                    broadcast_tx_hash = ?,
+                    ledger_intent_id = ?,
+                    last_error = '',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (str(tx_hash or "").strip(), str(ledger_intent_id or "").strip(), now, int(order_id)),
+            )
+        return self.get_launch_fdv_limit_order(order_id)
+
+    def mark_launch_fdv_limit_order_receipt(
+        self,
+        order_id: int,
+        *,
+        ok: bool,
+        error: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        now = int(time.time())
+        status = "filled" if ok else "failed"
+        with self.conn:
+            self.conn.execute(
+                """
+                UPDATE launch_fdv_limit_orders
+                SET status = ?,
+                    filled_at = CASE WHEN ? = 1 THEN ? ELSE filled_at END,
+                    last_error = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (status, 1 if ok else 0, now, str(error or "").strip()[:500], now, int(order_id)),
+            )
+        return self.get_launch_fdv_limit_order(order_id)
+
     def default_launch_strategy_runtime_config(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "id": None,
@@ -2559,9 +2869,9 @@ class Storage:
         if fdv_limit_raw is not None and str(fdv_limit_raw).strip() != "":
             fdv_limit_wan_usd = parse_strategy_decimal(fdv_limit_raw, "fdvLimitWanUsd")
             if fdv_limit_wan_usd < 0:
-                raise ValueError("估算市值限价不能为负数")
+                raise ValueError("含税估算 FDV 上限不能为负数")
         if fdv_limit_enabled and (fdv_limit_wan_usd is None or fdv_limit_wan_usd <= 0):
-            raise ValueError("启用估算市值限价时，最高估算市值必须大于 0")
+            raise ValueError("启用含税估算 FDV 上限时，上限必须大于 0")
         max_buy_v = parse_strategy_decimal(
             payload.get("maxBuyV", payload.get("max_buy_v", baseline.get("max_buy_v"))),
             "maxBuyV",
@@ -11330,6 +11640,84 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    def launch_fdv_limit_orders_payload(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
+        project_id = int(project_row["id"])
+        rows = self.storage.list_launch_fdv_limit_orders(project_id=project_id, limit=500)
+        return {
+            "ok": True,
+            "project": {
+                "id": project_id,
+                "name": str(project_row.get("name") or ""),
+                "status": str(project_row.get("status") or ""),
+                "projectedStatus": self.derive_managed_project_status(project_row),
+                "startAt": int(project_row.get("start_at") or 0),
+                "resolvedEndAt": int(project_row.get("resolved_end_at") or 0),
+            },
+            "items": [
+                {
+                    "id": int(row.get("id") or 0),
+                    "projectId": int(row.get("project_id") or project_id),
+                    "project": str(row.get("project") or project_row.get("name") or ""),
+                    "enabled": bool(int(row.get("enabled") or 0)),
+                    "status": str(row.get("status") or "pending"),
+                    "triggerFdvWanUsd": str(row.get("trigger_fdv_wan_usd") or ""),
+                    "buyV": str(row.get("buy_v") or ""),
+                    "sortOrder": int(row.get("sort_order") or 0),
+                    "triggeredAt": row.get("triggered_at"),
+                    "broadcastTxHash": str(row.get("broadcast_tx_hash") or ""),
+                    "ledgerIntentId": str(row.get("ledger_intent_id") or ""),
+                    "filledAt": row.get("filled_at"),
+                    "lastError": str(row.get("last_error") or ""),
+                    "attemptCount": int(row.get("attempt_count") or 0),
+                    "updatedByUserId": row.get("updated_by_user_id"),
+                    "createdAt": int(row.get("created_at") or 0),
+                    "updatedAt": int(row.get("updated_at") or 0),
+                }
+                for row in rows
+            ],
+            "execution": {
+                "strategy": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                "ruleName": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                "mode": "speed_first",
+                "receiptWait": "skipped_on_hot_path",
+            },
+        }
+
+    async def launch_fdv_limit_orders_get_handler(self, request: web.Request) -> web.Response:
+        self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(int(raw_project_id))
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            return web.json_response(self.launch_fdv_limit_orders_payload(project_row))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+    async def launch_fdv_limit_orders_set_handler(self, request: web.Request) -> web.Response:
+        user = self.require_admin(request)
+        raw_project_id = str(request.match_info.get("project_id", "")).strip()
+        if not raw_project_id:
+            return web.json_response({"error": "project_id is required"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json body"}, status=400)
+        try:
+            project_row = self.storage.get_managed_project(int(raw_project_id))
+            if not project_row:
+                return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            self.storage.upsert_launch_fdv_limit_orders(
+                project_row=project_row,
+                payload=payload,
+                operator_user_id=int(user.get("id") or 0) or None,
+            )
+            return web.json_response(self.launch_fdv_limit_orders_payload(project_row))
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+
     def launch_sell_runtime_config_payload(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
         project_id = int(project_row["id"])
         stored = self.storage.get_launch_sell_runtime_config(project_id)
@@ -13759,6 +14147,8 @@ class VirtualsBot:
         app.router.add_delete("/api/admin/projects/{project_id}", admin_only(self.managed_project_delete_handler))
         app.router.add_get("/api/admin/projects/{project_id}/launch-strategy-config", admin_only(self.launch_strategy_runtime_config_get_handler))
         app.router.add_post("/api/admin/projects/{project_id}/launch-strategy-config", admin_only(self.launch_strategy_runtime_config_set_handler))
+        app.router.add_get("/api/admin/projects/{project_id}/launch-fdv-limit-orders", admin_only(self.launch_fdv_limit_orders_get_handler))
+        app.router.add_post("/api/admin/projects/{project_id}/launch-fdv-limit-orders", admin_only(self.launch_fdv_limit_orders_set_handler))
         app.router.add_get("/api/admin/projects/{project_id}/launch-sell-config", admin_only(self.launch_sell_runtime_config_get_handler))
         app.router.add_post("/api/admin/projects/{project_id}/launch-sell-config", admin_only(self.launch_sell_runtime_config_set_handler))
         app.router.add_post("/api/admin/projects/{project_id}/team-address-overrides", admin_only(self.team_address_override_upsert_handler))

@@ -478,6 +478,45 @@ export interface LaunchStrategyRuntimeConfigResponse {
   }>;
 }
 
+export interface LaunchFdvLimitOrderItem {
+  id: number;
+  projectId: number;
+  project: string;
+  enabled: boolean;
+  status: "pending" | "triggering" | "broadcast_sent" | "filled" | "failed" | "canceled" | string;
+  triggerFdvWanUsd: string;
+  buyV: string;
+  sortOrder: number;
+  triggeredAt: number | null;
+  broadcastTxHash: string;
+  ledgerIntentId: string;
+  filledAt: number | null;
+  lastError: string;
+  attemptCount: number;
+  updatedByUserId: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LaunchFdvLimitOrdersResponse {
+  ok: boolean;
+  project: {
+    id: number;
+    name: string;
+    status: string;
+    projectedStatus: string;
+    startAt: number;
+    resolvedEndAt: number;
+  };
+  items: LaunchFdvLimitOrderItem[];
+  execution: {
+    strategy: string;
+    ruleName: string;
+    mode: string;
+    receiptWait: string;
+  };
+}
+
 export interface LaunchSellRuntimeConfigItem {
   id: number | null;
   projectId: number;

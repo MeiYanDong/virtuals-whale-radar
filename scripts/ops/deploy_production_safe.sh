@@ -91,6 +91,7 @@ FILES=(
   docs/phases/phase-054-route-filter-validation-2026-05-15.md
   docs/phases/phase-055-runtime-strategy-control-plan.md
   docs/phases/phase-055-runtime-strategy-control-todo.md
+  docs/phases/phase-055-live-window-production-like-test-runbook.md
   docs/phases/phase-056-runtime-autosell-control-plan.md
   docs/phases/phase-056-runtime-autosell-control-todo.md
   docs/phases/phase-061-operator-profit-workflow.md
@@ -112,6 +113,7 @@ FILES=(
   scripts/ops/live_strategy_dry_run.py
   scripts/ops/local_signer_probe.py
   scripts/ops/native_launch_replay.py
+  scripts/ops/runtime_control_launch_simulator.py
   scripts/ops/backtest_launch_strategy.py
   scripts/ops/prewarmed_buy_canary.py
   scripts/ops/recalc_dual_sell_strategy.py

@@ -34,8 +34,11 @@ from launch_prewarm_executor import (  # noqa: E402
     compact_runtime_config,
     compact_strategy_state,
     decimal_value,
+    eligible_fdv_limit_orders,
+    fdv_limit_order_intent,
     runtime_dynamic_config,
     runtime_effective_args,
+    sample_tax_fdv_wan,
 )
 from live_strategy_dry_run import append_jsonl, cst_iso, utc_iso  # noqa: E402
 from virtuals_bot import Storage, load_config  # noqa: E402
@@ -53,6 +56,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", default="paper-broadcast", help="Displayed mode for default config summaries.")
     parser.add_argument("--max-buy-v", type=Decimal, default=Decimal("0.2"))
     parser.add_argument("--max-project-v", type=Decimal, default=Decimal("0.6"))
+    parser.add_argument(
+        "--skip-fdv-limit-orders",
+        action="store_true",
+        help="Do not evaluate independent tax-FDV limit orders during the replay.",
+    )
     parser.add_argument("--output-jsonl", default="")
     parser.add_argument("--summary-json", default="")
     return parser.parse_args()
@@ -200,6 +208,7 @@ def main() -> None:
     )
     effective_args = runtime_effective_args(args, runtime_config_row)
     paper_sent_project_v = Decimal("0")
+    paper_triggered_fdv_limit_order_ids: set[int] = set()
     events: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
 
@@ -260,6 +269,89 @@ def main() -> None:
                     "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
                 }
             else:
+                if not args.skip_fdv_limit_orders:
+                    open_limit_orders = storage.list_launch_fdv_limit_orders(
+                        project_id=int(project_row.get("id") or 0),
+                        statuses=["pending"],
+                        limit=100,
+                    )
+                    limit_orders = eligible_fdv_limit_orders(
+                        [
+                            row
+                            for row in open_limit_orders
+                            if int(row.get("id") or 0) not in paper_triggered_fdv_limit_order_ids
+                        ],
+                        tax_fdv_wan_usd=sample_tax_fdv_wan(sample),
+                        project_status=str(sample.get("projectStatus") or ""),
+                    )
+                    for limit_order in limit_orders:
+                        intent = fdv_limit_order_intent(
+                            row=limit_order,
+                            project_name=project_name,
+                            sample=sample,
+                            sample_index=sample_index,
+                        )
+                        fdv_args = copy.copy(effective_args)
+                        order_buy_v = decimal_value(limit_order.get("buy_v"))
+                        if fdv_args.max_buy_v is None or Decimal(str(fdv_args.max_buy_v)) < order_buy_v:
+                            fdv_args.max_buy_v = order_buy_v
+                        risk_reason, risk_details = paper_risk_block(
+                            intent=intent,
+                            effective_args=fdv_args,
+                            paper_sent_project_v=paper_sent_project_v,
+                        )
+                        if risk_reason:
+                            limit_payload = {
+                                "event": "paper_fdv_limit_order_blocked_by_risk_cap",
+                                "reason": risk_reason,
+                                "at": utc_iso(),
+                                "atCst": cst_iso(),
+                                "project": project_name,
+                                "sampleIndex": sample_index,
+                                "taxRate": sample.get("buyTaxRate"),
+                                "paperOnly": True,
+                                "tradeSent": False,
+                                "risk": risk_details,
+                                "intent": intent,
+                                "fdvLimitOrder": {
+                                    "id": int(limit_order.get("id") or 0),
+                                    "enabled": bool(int(limit_order.get("enabled") or 0)),
+                                    "status": str(limit_order.get("status") or ""),
+                                    "triggerFdvWanUsd": str(limit_order.get("trigger_fdv_wan_usd") or ""),
+                                    "buyV": str(limit_order.get("buy_v") or ""),
+                                },
+                                "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, fdv_args),
+                            }
+                        else:
+                            buy_size = decimal_value(intent.get("buy_size_v"))
+                            paper_sent_project_v += buy_size
+                            paper_triggered_fdv_limit_order_ids.add(int(limit_order.get("id") or 0))
+                            limit_payload = {
+                                "event": "paper_fdv_limit_order_intent",
+                                "reason": "tax_fdv_limit_order_triggered",
+                                "at": utc_iso(),
+                                "atCst": cst_iso(),
+                                "project": project_name,
+                                "sampleIndex": sample_index,
+                                "taxRate": sample.get("buyTaxRate"),
+                                "paperOnly": True,
+                                "tradeSent": False,
+                                "paperSentProjectV": fmt_decimal(paper_sent_project_v),
+                                "intent": intent,
+                                "fdvLimitOrder": {
+                                    "id": int(limit_order.get("id") or 0),
+                                    "enabled": bool(int(limit_order.get("enabled") or 0)),
+                                    "status": str(limit_order.get("status") or ""),
+                                    "triggerFdvWanUsd": str(limit_order.get("trigger_fdv_wan_usd") or ""),
+                                    "buyV": str(limit_order.get("buy_v") or ""),
+                                },
+                                "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, fdv_args),
+                            }
+                        counts[limit_payload["event"]] = counts.get(limit_payload["event"], 0) + 1
+                        events.append(limit_payload)
+                        append_jsonl(output_jsonl, limit_payload)
+                        print(json.dumps(limit_payload, ensure_ascii=False), flush=True)
+
                 state_before = copy.deepcopy(evaluator.state)
                 decision = evaluator.evaluate(sample, index=sample_index)
                 if decision.intent:
@@ -344,7 +436,11 @@ def main() -> None:
         storage.close()
 
     buy_events = [event for event in events if event.get("event") == "paper_buy_intent"]
+    fdv_limit_events = [event for event in events if event.get("event") == "paper_fdv_limit_order_intent"]
     blocked_events = [event for event in events if event.get("event") == "paper_blocked_by_risk_cap"]
+    fdv_limit_blocked_events = [
+        event for event in events if event.get("event") == "paper_fdv_limit_order_blocked_by_risk_cap"
+    ]
     summary = {
         "ok": True,
         "project": project_name,
@@ -354,9 +450,14 @@ def main() -> None:
         "counts": counts,
         "paperSentProjectV": fmt_decimal(paper_sent_project_v),
         "buyIntentCount": len(buy_events),
+        "fdvLimitOrderIntentCount": len(fdv_limit_events),
         "riskBlockedCount": len(blocked_events),
+        "fdvLimitOrderRiskBlockedCount": len(fdv_limit_blocked_events),
         "buySizes": [event.get("intent", {}).get("buy_size_v") for event in buy_events],
         "buyTaxes": [event.get("taxRate") for event in buy_events],
+        "fdvLimitOrderIds": [event.get("fdvLimitOrder", {}).get("id") for event in fdv_limit_events],
+        "fdvLimitOrderBuySizes": [event.get("intent", {}).get("buy_size_v") for event in fdv_limit_events],
+        "fdvLimitOrderTaxes": [event.get("taxRate") for event in fdv_limit_events],
         "riskBlockedTaxes": [event.get("taxRate") for event in blocked_events[:10]],
     }
     if summary_json:

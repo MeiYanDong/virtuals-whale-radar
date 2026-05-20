@@ -1127,13 +1127,15 @@
 
 - [x] 新增 Phase 055 子 plan：`docs/phases/phase-055-runtime-strategy-control-plan.md`。
 - [x] 新增 Phase 055 子 todo：`docs/phases/phase-055-runtime-strategy-control-todo.md`。
+- [x] 2026-05-20 新增生产逼近测试 runbook：`docs/phases/phase-055-live-window-production-like-test-runbook.md`。
 - [x] 新增 `launch_strategy_runtime_configs` 表。
 - [x] 新增 `launch_strategy_runtime_config_audit` 审计表。
 - [x] 新增管理员读取/保存运行时策略配置 API。
 - [x] 项目详情页新增管理员专用“自动买入控制”模块。
 - [x] 支持恢复默认 `25/50/50/150` 与 `20/10` 阈值。
 - [x] 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限和项目预算。
-- [x] 2026-05-20 新增可选“含税估算 FDV 限价”：默认关闭，开启后作为原有买入门槛之后的额外上限，单位 `万 USD`。
+- [x] 2026-05-20 删除“含税估算 FDV 上限”的前端入口和执行器依赖；旧字段仅保留 DB/API 兼容。
+- [x] 2026-05-20 新增独立“含税估算 FDV 限价单”：可配置多个订单，触发后速度优先连续广播，并在后续循环补查成交结果。
 - [x] 自动买入 UI 重构为“买入策略卡”：买入触发条件只读展示，金额、节奏、抄底放大和风险上限分区编辑。
 - [x] 买入触发条件前端只展示当前后端策略事实，不新增提交字段，不改策略逻辑。
 - [x] 合并展示 `有效榜单 20 人 / 5 个成本样本`，并解释榜单人数和成本样本不是同一件事。
@@ -1149,7 +1151,10 @@
 - [x] 本地管理员页面浏览器烟测：`/admin/projects/1?project=TDS` 可渲染“自动买入控制”，主要动作收敛为恢复默认、保存并启用、停用自动买入。
 - [x] 本地 HTTP 保存烟测：POST simulate `100/200/200/300` 成功后重置为 disabled `25/50/50/150`。
 - [x] 新增本地发射模拟入口 `scripts/ops/runtime_control_launch_simulator.py`，只读验证前端保存的运行时参数会被执行器在后续 tick 热读。
+- [x] 2026-05-20 `runtime_control_launch_simulator.py` 扩展为同时验证独立含税估算 FDV 限价单：每个 tick 重新读取 `launch_fdv_limit_orders`，前端/API 创建、删除、更新后下一 tick 生效。
 - [x] TDS 小额参数网页保存与 100x 完整窗口 paper replay 通过：`version=22` 使用 `0.1/0.2/0.2/0.6`，触发 `0.1/0.2/0.1/0.2 VIRTUAL` 四次买入意图，预算 `0.6 VIRTUAL` 生效后阻断后续意图；测试后停用为 `version=23`。
+- [x] 2026-05-20 TDS 限价单 L5 小额真实广播 canary 通过：模拟 `LIVE` sample 触发临时限价单 `FDV <= 120 万 USD / 买入 0.01 VIRTUAL`，tx `0x0b707eedd76e8c694ff43bfba2e8b4c3b407ca26759ffd290432fe18c61ccb9e` receipt `0x1`，限价单 `id=5` 已 `filled`，账本 `receipt_success`；随后测试仓位已卖回 VIRTUAL，卖出 tx `0xd4cfccda71debeda1946f9450af693a0dda26a7c7692bc4582bdafc4fa73e54e` receipt `0x1`，最终 TDS 余额 `0`、TDS 授权 `0`。
+- [x] 2026-05-20 TDS 限价单前端/API 热更新 L2 验证通过：管理员 HTTP API 创建临时限价单 `id=8` 后，模拟执行器下一 tick 输出 `paper_fdv_limit_order_intent`；更新阈值后下一 tick 不触发；删除后订单变为 `canceled / enabled=false`；TDS runtime config 已恢复 `enabled=false / mode=simulate`。
 
 ## Phase 56：自动卖出运行时控制台
 

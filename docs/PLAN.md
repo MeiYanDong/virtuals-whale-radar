@@ -2470,13 +2470,15 @@ Phase 052 执行结果：
 
 - 子 plan：`docs/phases/phase-055-runtime-strategy-control-plan.md`。
 - 子 todo：`docs/phases/phase-055-runtime-strategy-control-todo.md`。
+- 生产逼近测试 runbook：`docs/phases/phase-055-live-window-production-like-test-runbook.md`。
 - 管理员项目详情页新增“自动买入控制”模块：
   - 支持恢复默认 `25/50/50/150` 与 `20/10` 阈值。
   - 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限和项目预算。
   - UI 已从普通参数表重构为“买入策略卡”：买入触发条件只读展示，金额、节奏保护、抄底放大和风险上限分区编辑。
   - 买入触发条件展示当前后端策略事实，不支持前端修改，也不向后端提交新字段：`LIVE 中`、`税率 ≤ 95%`、`榜单 V ≥ 5,000`、`有效榜单 20 人 / 5 个成本样本`、`含税 FDV ≤ 榜单成本`。
   - `有效榜单 20 人 / 5 个成本样本` 用于避免误解：榜单人数表示大户广度，成本样本表示可参与榜单成本计算的有效地址数。
-  - 2026-05-20 新增可选“估算市值限价”：管理员可设置最高含税估算 FDV（万 USD），默认关闭；开启后作为原有入场门槛之后的额外保险条件，不会放宽买入。
+  - 2026-05-20 删除前端“含税估算 FDV 上限”卡片：该能力属于早期错误方向的兼容字段，不再作为管理员操作入口，也不再被自动买入执行器热路径读取。
+  - 2026-05-20 新增独立“含税估算 FDV 限价单”：管理员可设置多个 `FDV <= X 万 USD，买入 Y VIRTUAL` 订单；限价单不使用“大户策略”语义，不依赖榜单成本。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动买入`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已买入 V、最近调整时间和 active fuse 提示。
 - 后端新增运行时配置能力：
@@ -2493,8 +2495,10 @@ Phase 052 执行结果：
   - Python `py_compile`。
   - `scripts/ops/test_launch_execution_pipeline.py`。
   - `scripts/ops/test_launch_prewarm_executor.py`。
-  - 2026-05-20 限价配置补测：高于限价跳过、等于限价继续买入；执行器热加载可读取 `fdv_limit_enabled / fdv_limit_wan_usd`。
-  - 新增并验证 `scripts/ops/runtime_control_launch_simulator.py`。
+  - 2026-05-20 旧上限兼容补测：`fdv_limit_enabled / fdv_limit_wan_usd` 可留在旧库结构中，但执行器会忽略，不影响现有策略。
+  - 2026-05-20 独立限价单链路补测：新增 `launch_fdv_limit_orders`，执行器支持多单同轮触发、速度优先连续广播、本地 nonce 递增和后续成交补查。
+  - 新增并验证 `scripts/ops/runtime_control_launch_simulator.py`；2026-05-20 已扩展为每个 tick 重新读取 `launch_fdv_limit_orders`，可验证限价单创建、删除、更新后下一 tick 被执行器采用。
+  - 新增生产逼近测试分层：L1 API/DB 写入，L2 paper live 窗口回放，L3 prewarm simulate，L4 sign-ready，L5 小额真实 broadcast canary。
   - 前端 `npm run build`。
   - 前端 `npm run lint`。
 - 本地管理员页面烟测通过：
@@ -2504,6 +2508,19 @@ Phase 052 执行结果：
   - 2026-05-18 本地网页保存 TDS 小额参数 `0.1/0.2/0.2/0.6` 后，后端回读 `enabled=true / mode=broadcast / version=22`。
   - 100x 完整发射窗口 paper replay 通过：99 个税率 tick 约 1 分钟跑完，产生 `0.1/0.2/0.1/0.2 VIRTUAL` 四次买入意图，项目预算 `0.6 VIRTUAL` 生效后阻断后续意图，全程 `paperOnly=true / tradeSent=false`。
   - 测试完成后已停用本地 TDS 自动买入，回读 `enabled=false / mode=simulate / version=23`。
+- 限价单 L5 小额真实广播 canary 通过：
+  - 2026-05-20 使用 TDS internal market 和模拟 `LIVE` sample 触发临时限价单 `FDV <= 120 万 USD / 买入 0.01 VIRTUAL`。
+  - tx `0x0b707eedd76e8c694ff43bfba2e8b4c3b407ca26759ffd290432fe18c61ccb9e`，receipt `status=0x1`。
+  - 限价单 `id=5` 更新为 `filled`，执行账本 `lexec_fac3e940eced0227d50f1d6e` 更新为 `receipt_success`。
+  - receipt transfer delta：消耗 `0.01 VIRTUAL`，收到 `296.117155126927088022 TDS`。
+  - 测试仓位已卖回 VIRTUAL：精确授权 TDS tx `0x206335bcabb2bd8780e78b10b6090a7b2620fe11d5e72bfb64325d6a6ab7cdaf`，全额卖出 tx `0xd4cfccda71debeda1946f9450af693a0dda26a7c7692bc4582bdafc4fa73e54e`，receipt `status=0x1`，收到 `0.009801 VIRTUAL`；最终 TDS 余额 `0`、TDS 授权 `0`。
+  - 报告：`data/execution/tds-fdv-limit-order-broadcast-canary-20260520-144736-summary.json`。
+- 限价单热更新 L2 验证通过：
+  - 通过本地管理员 HTTP API 创建临时限价单 `id=8`，模拟器下一 tick 输出 `paper_fdv_limit_order_intent`，`fdvLimitOrderBuySizes=["0.010000"]`。
+  - 更新同一订单为不触发阈值后，下一 tick `fdvLimitOrderIntentCount=0`。
+  - 删除同一订单后变为 `canceled / enabled=false`，原有订单 `id=4` 保持 `pending / enabled=false`。
+  - 测试后 TDS 运行时配置已恢复为 `enabled=false / mode=simulate`。
+  - 报告：`data/execution/fdv-limit-api-hot-read-trigger-broadcast-20260520-150958-summary.json`，`data/execution/fdv-limit-api-hot-read-nontrigger-broadcast-20260520-150958-summary.json`。
 - 当前边界：
   - 真实广播仍受原有 CLI/env、独立 execution RPC、active fuse、simulation 和 receipt 保护。
   - `100x` 适合完整窗口烟测；如果需要人工在前端中途改参并观察下一 tick 热加载，应使用 `20x` 或脚本暂停检查点。

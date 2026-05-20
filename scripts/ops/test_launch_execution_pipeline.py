@@ -673,6 +673,85 @@ def test_launch_strategy_runtime_config_rejects_invalid_without_mutating() -> No
             storage.close()
 
 
+def test_launch_fdv_limit_order_storage() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = Storage(str(Path(tmp) / "fdv-limit-orders.db"))
+        try:
+            project = storage.upsert_managed_project(
+                project_id=None,
+                name="LMT",
+                signalhub_project_id="lmt-1",
+                detail_url="https://app.virtuals.io/virtuals/4",
+                token_addr=None,
+                internal_pool_addr=None,
+                start_at=1000,
+                signalhub_end_at=None,
+                manual_end_at=2000,
+                resolved_end_at=2000,
+                is_watched=True,
+                collect_enabled=True,
+                backfill_enabled=True,
+                status="scheduled",
+                source="manual",
+            )
+            rows = storage.upsert_launch_fdv_limit_orders(
+                project_row=project,
+                payload={
+                    "orders": [
+                        {"enabled": True, "triggerFdvWanUsd": "300", "buyV": "25", "sortOrder": 0},
+                        {"enabled": True, "triggerFdvWanUsd": "250", "buyV": "50", "sortOrder": 1},
+                    ]
+                },
+                operator_user_id=None,
+            )
+            assert_eq(len(rows), 2, "fdv limit order count")
+            assert_eq(rows[0]["trigger_fdv_wan_usd"], "300.000000", "fdv limit trigger")
+            assert_eq(rows[0]["buy_v"], "25.000000", "fdv limit buy v")
+
+            first_id = int(rows[0]["id"])
+            claimed = storage.mark_launch_fdv_limit_order_triggering(first_id)
+            assert_eq(claimed["status"], "triggering", "fdv limit triggering")
+            broadcast = storage.mark_launch_fdv_limit_order_broadcast_sent(
+                first_id,
+                tx_hash="0x" + "1" * 64,
+                ledger_intent_id="limit-intent-1",
+            )
+            assert_eq(broadcast["status"], "broadcast_sent", "fdv limit broadcast")
+            assert_eq(broadcast["broadcast_tx_hash"], "0x" + "1" * 64, "fdv limit tx")
+            filled = storage.mark_launch_fdv_limit_order_receipt(first_id, ok=True)
+            assert_eq(filled["status"], "filled", "fdv limit filled")
+
+            editable = storage.upsert_launch_fdv_limit_orders(
+                project_row=project,
+                payload={"orders": [{"id": int(rows[1]["id"]), "enabled": False, "triggerFdvWanUsd": "250", "buyV": "50"}]},
+                operator_user_id=None,
+            )
+            statuses = {int(row["id"]): row["status"] for row in editable}
+            enabled_flags = {int(row["id"]): int(row["enabled"]) for row in editable}
+            assert_eq(statuses[first_id], "filled", "filled order remains immutable")
+            assert_eq(statuses[int(rows[1]["id"])], "pending", "disabled pending order remains pending")
+            assert_eq(enabled_flags[int(rows[1]["id"])], 0, "disabled pending order stops participating")
+
+            second_id = int(rows[1]["id"])
+            updated = storage.upsert_launch_fdv_limit_orders(
+                project_row=project,
+                payload={"orders": [{"id": second_id, "enabled": True, "triggerFdvWanUsd": "280", "buyV": "60"}]},
+                operator_user_id=None,
+            )
+            updated_by_id = {int(row["id"]): row for row in updated}
+            assert_eq(updated_by_id[second_id]["enabled"], 1, "updated order participates immediately")
+            assert_eq(updated_by_id[second_id]["trigger_fdv_wan_usd"], "280.000000", "updated trigger persists")
+            assert_eq(updated_by_id[second_id]["buy_v"], "60.000000", "updated buy size persists")
+
+            deleted = storage.upsert_launch_fdv_limit_orders(project_row=project, payload={"orders": []}, operator_user_id=None)
+            deleted_by_id = {int(row["id"]): row for row in deleted}
+            assert_eq(deleted_by_id[first_id]["status"], "filled", "filled order is not deleted by editable save")
+            assert_eq(deleted_by_id[second_id]["status"], "canceled", "removed editable order becomes canceled")
+            assert_eq(deleted_by_id[second_id]["enabled"], 0, "removed editable order no longer participates")
+        finally:
+            storage.close()
+
+
 def test_runtime_hot_reload_next_intent_uses_new_buy_size() -> None:
     cases = [
         {
@@ -1086,6 +1165,7 @@ def main() -> None:
     test_launch_execution_ledger_storage()
     test_launch_strategy_runtime_config_storage()
     test_launch_strategy_runtime_config_rejects_invalid_without_mutating()
+    test_launch_fdv_limit_order_storage()
     test_runtime_hot_reload_next_intent_uses_new_buy_size()
     test_dynamic_buy_fdv_limit_blocks_then_allows()
     test_launch_sell_runtime_config_storage()

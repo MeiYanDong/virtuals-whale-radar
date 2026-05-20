@@ -70,7 +70,14 @@ from live_strategy_dry_run import (  # noqa: E402
     utc_iso,
 )
 from native_launch_replay import build_sample  # noqa: E402
-from virtuals_bot import RPCClient, VirtualsBot, load_config, redact_rpc_url  # noqa: E402
+from virtuals_bot import (  # noqa: E402
+    DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+    DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+    RPCClient,
+    VirtualsBot,
+    load_config,
+    redact_rpc_url,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,8 +142,6 @@ def decimal_value(value: Any, default: Decimal = Decimal("0")) -> Decimal:
 def runtime_dynamic_config(row: dict[str, Any] | None) -> DynamicExecutionConfig:
     if not row:
         return DynamicExecutionConfig()
-    fdv_limit_enabled = bool(int(row.get("fdv_limit_enabled") or 0))
-    fdv_limit_wan_usd = decimal_value(row.get("fdv_limit_wan_usd"), Decimal("0")) if fdv_limit_enabled else None
     return DynamicExecutionConfig(
         name=str(row.get("strategy") or DynamicExecutionConfig().name),
         base_buy_v=decimal_value(row.get("base_buy_v"), DynamicExecutionConfig().base_buy_v),
@@ -146,8 +151,8 @@ def runtime_dynamic_config(row: dict[str, Any] | None) -> DynamicExecutionConfig
             DynamicExecutionConfig().dip_from_own_cost_pct,
         ),
         flat_pause_pct=decimal_value(row.get("flat_pause_pct"), DynamicExecutionConfig().flat_pause_pct),
-        fdv_limit_enabled=fdv_limit_enabled,
-        fdv_limit_wan_usd=fdv_limit_wan_usd,
+        fdv_limit_enabled=False,
+        fdv_limit_wan_usd=None,
         pause_after_buy_count=DynamicExecutionConfig().pause_after_buy_count,
         one_buy_per_tax_rate=DynamicExecutionConfig().one_buy_per_tax_rate,
     )
@@ -188,8 +193,8 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
         "dipBuyV": str(row.get("dip_buy_v") or ""),
         "dipFromOwnCostPct": str(row.get("dip_from_own_cost_pct") or ""),
         "flatPausePct": str(row.get("flat_pause_pct") or ""),
-        "fdvLimitEnabled": bool(int(row.get("fdv_limit_enabled") or 0)),
-        "fdvLimitWanUsd": str(row.get("fdv_limit_wan_usd") or ""),
+        "fdvLimitEnabled": False,
+        "fdvLimitWanUsd": "",
         "maxBuyV": str(row.get("max_buy_v") or ""),
         "maxProjectV": str(row.get("max_project_v") or ""),
         "updatedAt": int(row.get("updated_at") or 0),
@@ -417,6 +422,87 @@ def compact_strategy_state(state: StrategyState) -> dict[str, Any]:
     }
 
 
+def sample_tax_fdv_wan(sample: dict[str, Any]) -> Decimal | None:
+    value = decimal_value(sample.get("estimatedFdvWanUsdWithTax"))
+    return value if value > 0 else None
+
+
+def compact_fdv_limit_order(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row.get("id") or 0),
+        "enabled": bool(int(row.get("enabled") or 0)),
+        "status": str(row.get("status") or ""),
+        "triggerFdvWanUsd": str(row.get("trigger_fdv_wan_usd") or ""),
+        "buyV": str(row.get("buy_v") or ""),
+        "attemptCount": int(row.get("attempt_count") or 0),
+        "txHash": str(row.get("broadcast_tx_hash") or ""),
+        "ledgerIntentId": str(row.get("ledger_intent_id") or ""),
+    }
+
+
+def eligible_fdv_limit_orders(
+    rows: list[dict[str, Any]],
+    *,
+    tax_fdv_wan_usd: Decimal | None,
+    project_status: str,
+) -> list[dict[str, Any]]:
+    if str(project_status or "").lower() != "live":
+        return []
+    if tax_fdv_wan_usd is None:
+        return []
+    eligible: list[dict[str, Any]] = []
+    for row in rows:
+        if not bool(int(row.get("enabled") or 0)):
+            continue
+        if str(row.get("status") or "") != "pending":
+            continue
+        trigger = decimal_value(row.get("trigger_fdv_wan_usd"))
+        buy_v = decimal_value(row.get("buy_v"))
+        if trigger <= 0 or buy_v <= 0:
+            continue
+        if tax_fdv_wan_usd <= trigger:
+            eligible.append(row)
+    return sorted(
+        eligible,
+        key=lambda row: (
+            -decimal_value(row.get("trigger_fdv_wan_usd")),
+            int(row.get("sort_order") or 0),
+            int(row.get("id") or 0),
+        ),
+    )
+
+
+def fdv_limit_order_intent(
+    *,
+    row: dict[str, Any],
+    project_name: str,
+    sample: dict[str, Any],
+    sample_index: int,
+) -> dict[str, Any]:
+    entry = sample_tax_fdv_wan(sample) or Decimal("0")
+    buy_v = decimal_value(row.get("buy_v"))
+    return {
+        "project": project_name,
+        "index": sample_index,
+        "timestamp": int(sample.get("simTimestamp") or 0),
+        "tax_rate": str(sample.get("buyTaxRate") or ""),
+        "buy_size_v": str(buy_v),
+        "entry_tax_fdv_wan_usd": str(entry),
+        "entry_spot_fdv_wan_usd": str(sample.get("liveFdvUsd") or ""),
+        "own_weighted_cost_before_wan_usd": None,
+        "own_weighted_cost_after_wan_usd": str(entry),
+        "board_spent_v": str(sample.get("boardSpentV") or ""),
+        "board_cost_wan_usd": str(sample.get("boardCostWanUsd") or ""),
+        "cost_rows": int(sample.get("costRows") or 0),
+        "whale_rows": int(sample.get("whaleRows") or 0),
+        "trigger_types": ["fdv_limit_order"],
+        "reason": "tax_fdv_limit_order_triggered",
+        "fdvLimitOrderId": int(row.get("id") or 0),
+        "fdvLimitTriggerWanUsd": str(row.get("trigger_fdv_wan_usd") or ""),
+        "speedPriority": True,
+    }
+
+
 def receipt_summary(receipt: dict[str, Any] | None, receipt_deltas: dict[str, Any] | None) -> dict[str, Any] | None:
     if not receipt and not receipt_deltas:
         return None
@@ -441,6 +527,9 @@ async def prewarm_intent(
     sample: dict[str, Any],
     sample_index: int,
     intent: dict[str, Any],
+    nonce_override: int | None = None,
+    skip_tax_rate_guard: bool = False,
+    force_no_wait_receipt: bool = False,
 ) -> dict[str, Any]:
     mode = executor_mode(args)
     ledger_record = make_ledger_record(
@@ -534,7 +623,7 @@ async def prewarm_intent(
             )
             return payload
 
-        if tax_rate_already_sent(
+        if not skip_tax_rate_guard and tax_rate_already_sent(
             bot,
             project_name=project_name,
             strategy_name=strategy_name,
@@ -714,9 +803,10 @@ async def prewarm_intent(
         timings["feeSuggestMs"] = elapsed_ms(start)
         gas_estimate = int(simulation["checks"]["estimateGas"]["gas"])
         gas = gas_estimate * (10_000 + int(args.gas_buffer_bps)) // 10_000
+        nonce_to_use = int(nonce_override) if nonce_override is not None else int(simulation["checks"]["nonce"]["pendingNonce"])
         tx = replace(
             bound.tx,
-            nonce=int(simulation["checks"]["nonce"]["pendingNonce"]),
+            nonce=nonce_to_use,
             gas=gas,
             max_fee_per_gas=str(fees["maxFeePerGas"]),
             max_priority_fee_per_gas=str(fees["maxPriorityFeePerGas"]),
@@ -790,7 +880,8 @@ async def prewarm_intent(
             broadcast_enabled=True,
         )
 
-        if args.no_wait_receipt:
+        skip_receipt_wait = bool(args.no_wait_receipt or force_no_wait_receipt)
+        if skip_receipt_wait:
             payload["receiptSkipped"] = True
             payload["reason"] = "receipt_wait_skipped"
             update_ledger_stage(
@@ -907,6 +998,97 @@ async def prewarm_intent(
         return payload
 
 
+async def reconcile_fdv_limit_order_receipts(
+    *,
+    args: argparse.Namespace,
+    cfg: Any,
+    bot: VirtualsBot,
+    rpc: RPCClient,
+    project_row: dict[str, Any],
+    project_name: str,
+) -> list[dict[str, Any]]:
+    rows = bot.storage.list_launch_fdv_limit_orders(
+        project_id=int(project_row.get("id") or 0),
+        statuses=["broadcast_sent"],
+        limit=50,
+    )
+    token_addr = str(project_row.get("token_addr") or "").strip()
+    reconciled: list[dict[str, Any]] = []
+    for row in rows:
+        tx_hash = str(row.get("broadcast_tx_hash") or "").strip()
+        intent_id = str(row.get("ledger_intent_id") or "").strip()
+        if not tx_hash or not intent_id:
+            continue
+        try:
+            receipt = await rpc.call("eth_getTransactionReceipt", [tx_hash])
+        except Exception as exc:
+            reconciled.append(
+                {
+                    "order": compact_fdv_limit_order(row),
+                    "status": "receipt_lookup_failed",
+                    "error": str(exc),
+                }
+            )
+            continue
+        if not receipt:
+            continue
+
+        receipt_status = str(receipt.get("status") or "")
+        receipt_ok = receipt_status in {"0x1", "1"}
+        receipt_deltas = receipt_transfer_deltas(
+            receipt,
+            owner=args.from_address,
+            virtual_token=cfg.virtual_token_addr,
+            target_token=token_addr,
+        )
+        receipt_payload = receipt_summary(receipt, receipt_deltas)
+        reason = "receipt_observed" if receipt_ok else "receipt_failed"
+        update_ledger_stage(
+            bot,
+            intent_id=intent_id,
+            project_name=project_name,
+            strategy_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+            rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+            mode=executor_mode(args),
+            status="receipt_success" if receipt_ok else "receipt_failed",
+            reason=reason,
+            receipt=receipt_payload,
+            broadcast_tx_hash=tx_hash,
+            failure_stage=None if receipt_ok else "receipt",
+            failure_reason=None if receipt_ok else "receipt_failed",
+            trade_sent=True,
+            broadcast_enabled=True,
+        )
+        bot.storage.mark_launch_fdv_limit_order_receipt(
+            int(row.get("id") or 0),
+            ok=receipt_ok,
+            error="" if receipt_ok else "receipt_failed",
+        )
+        if not receipt_ok:
+            fuse = trigger_fuse(
+                bot,
+                project_name=project_name,
+                strategy_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                intent_id=intent_id,
+                failure_stage="receipt",
+                failure_reason="receipt_failed",
+                details={"txHash": tx_hash, "receipt": receipt_payload},
+            )
+            active_fuse = compact_fuse(fuse)
+        else:
+            active_fuse = None
+        reconciled.append(
+            {
+                "order": compact_fdv_limit_order(row),
+                "status": "receipt_success" if receipt_ok else "receipt_failed",
+                "receipt": receipt_payload,
+                "activeFuse": active_fuse,
+            }
+        )
+    return reconciled
+
+
 async def async_main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
@@ -955,7 +1137,7 @@ async def async_main() -> None:
     previous_fingerprint: tuple[Any, ...] | None = None
     last_logged_heartbeat = 0.0
     sample_count = 0
-    counts = {"would_buy": 0, "prewarm": 0, "pause": 0, "skip": 0}
+    counts = {"would_buy": 0, "prewarm": 0, "fdv_limit_order": 0, "pause": 0, "skip": 0}
 
     async with VirtualsBot(cfg, role="backfill") as bot:
         project_row = find_project(bot, str(args.project))
@@ -1011,6 +1193,30 @@ async def async_main() -> None:
                     sample = await build_sample(bot, project_row, clock)
                     sample["triggerTypes"] = derive_trigger_types(previous_sample, sample)
                     current_fingerprint = fingerprint(sample)
+                    reconciled_limit_orders = await reconcile_fdv_limit_order_receipts(
+                        args=effective_args if "effective_args" in locals() else args,
+                        cfg=cfg,
+                        bot=bot,
+                        rpc=rpc,
+                        project_row=project_row,
+                        project_name=project_name,
+                    )
+                    if reconciled_limit_orders:
+                        receipt_payload = {
+                            "event": "fdv_limit_order_receipts",
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                            "strategy": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                            "mode": executor_mode(args),
+                            "readOnly": args.mode != "broadcast",
+                            "tradeSent": False,
+                            "broadcastEnabled": broadcast_enabled(args),
+                            "orders": reconciled_limit_orders,
+                        }
+                        append_jsonl(output_jsonl, receipt_payload)
+                        print(json.dumps(receipt_payload, ensure_ascii=False), flush=True)
                     latest_runtime_config = bot.storage.get_launch_strategy_runtime_config_by_project(project_name)
                     latest_runtime_version = int(latest_runtime_config.get("version") or 0) if latest_runtime_config else 0
                     if latest_runtime_version != runtime_config_version:
@@ -1046,6 +1252,80 @@ async def async_main() -> None:
                         and str(runtime_config_row.get("mode") or "simulate") != "broadcast"
                     ):
                         runtime_block_reason = "runtime_config_mode_not_broadcast"
+
+                    if not runtime_block_reason:
+                        open_limit_orders = bot.storage.list_launch_fdv_limit_orders(
+                            project_id=int(project_row.get("id") or 0),
+                            statuses=["pending"],
+                            limit=100,
+                        )
+                        limit_orders = eligible_fdv_limit_orders(
+                            open_limit_orders,
+                            tax_fdv_wan_usd=sample_tax_fdv_wan(sample),
+                            project_status=str(sample.get("projectStatus") or ""),
+                        )
+                        next_nonce_override: int | None = None
+                        for limit_order in limit_orders:
+                            claimed = bot.storage.mark_launch_fdv_limit_order_triggering(int(limit_order.get("id") or 0))
+                            if not claimed or str(claimed.get("status") or "") != "triggering":
+                                continue
+                            counts["fdv_limit_order"] = counts.get("fdv_limit_order", 0) + 1
+                            fdv_args = copy.copy(effective_args)
+                            order_buy_v = decimal_value(claimed.get("buy_v"))
+                            if fdv_args.max_buy_v is None or Decimal(fdv_args.max_buy_v) < order_buy_v:
+                                fdv_args.max_buy_v = order_buy_v
+                            limit_payload = await prewarm_intent(
+                                args=fdv_args,
+                                cfg=cfg,
+                                bot=bot,
+                                rpc=rpc,
+                                project_row=project_row,
+                                project_name=project_name,
+                                rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                                strategy_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                                sample=sample,
+                                sample_index=sample_count - 1,
+                                intent=fdv_limit_order_intent(
+                                    row=claimed,
+                                    project_name=project_name,
+                                    sample=sample,
+                                    sample_index=sample_count - 1,
+                                ),
+                                nonce_override=next_nonce_override,
+                                skip_tax_rate_guard=True,
+                                force_no_wait_receipt=True,
+                            )
+                            limit_payload["fdvLimitOrder"] = compact_fdv_limit_order(claimed)
+                            if limit_payload.get("tradeSent"):
+                                bot.storage.mark_launch_fdv_limit_order_broadcast_sent(
+                                    int(claimed.get("id") or 0),
+                                    tx_hash=str(limit_payload.get("txHash") or ""),
+                                    ledger_intent_id=str(limit_payload.get("ledgerIntentId") or ""),
+                                )
+                                with contextlib.suppress(Exception):
+                                    next_nonce_override = int((limit_payload.get("signedSummary") or {}).get("nonce")) + 1
+                            else:
+                                reason = str(limit_payload.get("reason") or limit_payload.get("event") or "")
+                                if args.mode != "broadcast" or reason in {
+                                    "simulate_mode_no_sign",
+                                    "signed_no_raw_tx_persisted",
+                                    "wallet_balance_and_allowance_not_ready",
+                                    "wallet_balance_not_ready",
+                                    "wallet_allowance_not_ready",
+                                    "missing_cli_or_env_broadcast_gate",
+                                    "active_fuse",
+                                }:
+                                    bot.storage.mark_launch_fdv_limit_order_retryable(
+                                        int(claimed.get("id") or 0),
+                                        error=reason,
+                                    )
+                                else:
+                                    bot.storage.mark_launch_fdv_limit_order_failed(
+                                        int(claimed.get("id") or 0),
+                                        error=reason,
+                                    )
+                            append_jsonl(output_jsonl, limit_payload)
+                            print(json.dumps(limit_payload, ensure_ascii=False), flush=True)
 
                     should_log = False
                     if runtime_block_reason:

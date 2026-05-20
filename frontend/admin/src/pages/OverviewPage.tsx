@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
 import type {
+  LaunchFdvLimitOrdersResponse,
   LaunchSellCustomRule,
   LaunchSellRuntimeConfigResponse,
   LaunchStrategyRuntimeConfigResponse,
@@ -196,6 +197,17 @@ type LaunchStrategyFormState = {
   updatedReason: string;
 };
 
+type FdvLimitOrderDraft = {
+  id?: number | null;
+  enabled: boolean;
+  triggerFdvWanUsd: string;
+  buyV: string;
+  sortOrder: number;
+  status?: string;
+  txHash?: string;
+  lastError?: string;
+};
+
 type LaunchSellFormState = {
   enabled: boolean;
   mode: "simulate" | "broadcast";
@@ -244,7 +256,6 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
   const baseBuyV = formatEditableNumber(item?.baseBuyV ?? "25");
   const dipBuyV = formatEditableNumber(item?.dipBuyV ?? "50");
   const rawMaxBuyV = formatEditableNumber(item?.maxBuyV ?? "50");
-  const rawFdvLimitWanUsd = String(item?.fdvLimitWanUsd ?? "").trim();
   const baseBuy = parseStrategyInputNumber(baseBuyV);
   const dipBuy = parseStrategyInputNumber(dipBuyV);
   const maxBuy = parseStrategyInputNumber(rawMaxBuyV);
@@ -260,11 +271,38 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
     dipBuyV,
     dipFromOwnCostPct: formatEditableNumber(item?.dipFromOwnCostPct ?? "20", 0),
     flatPausePct: formatEditableNumber(item?.flatPausePct ?? "10", 0),
-    fdvLimitEnabled: item?.fdvLimitEnabled ?? false,
-    fdvLimitWanUsd: rawFdvLimitWanUsd ? formatEditableNumber(rawFdvLimitWanUsd, 2) : "",
+    fdvLimitEnabled: false,
+    fdvLimitWanUsd: "",
     maxBuyV,
     maxProjectV: formatEditableNumber(item?.maxProjectV ?? "150"),
     updatedReason: "",
+  };
+}
+
+function fdvLimitOrderDraftsFromResponse(data?: LaunchFdvLimitOrdersResponse): FdvLimitOrderDraft[] {
+  const editable = (data?.items ?? []).filter(
+    (item) => !["filled", "broadcast_sent", "triggering", "canceled"].includes(String(item.status || "")),
+  );
+  return editable.map((item, index) => ({
+    id: item.id,
+    enabled: item.enabled,
+    triggerFdvWanUsd: formatEditableNumber(item.triggerFdvWanUsd || "", 2),
+    buyV: formatEditableNumber(item.buyV || "", 4),
+    sortOrder: item.sortOrder ?? index,
+    status: item.status,
+    txHash: item.broadcastTxHash,
+    lastError: item.lastError,
+  }));
+}
+
+function createFdvLimitOrderDraft(index: number): FdvLimitOrderDraft {
+  return {
+    id: null,
+    enabled: true,
+    triggerFdvWanUsd: "",
+    buyV: "25",
+    sortOrder: index,
+    status: "pending",
   };
 }
 
@@ -452,9 +490,8 @@ function normalizeLaunchStrategyFormForSubmit(form: LaunchStrategyFormState): La
     const requiredMaxBuy = Math.max(baseBuy, dipBuy, maxBuy);
     next.maxBuyV = formatStrategyInputNumber(requiredMaxBuy);
   }
-  if (!next.fdvLimitEnabled && String(next.fdvLimitWanUsd || "").trim() === "0") {
-    next.fdvLimitWanUsd = "";
-  }
+  next.fdvLimitEnabled = false;
+  next.fdvLimitWanUsd = "";
 
   return next;
 }
@@ -552,9 +589,6 @@ function friendlyLaunchStrategyError(error: Error) {
   if (normalized.includes("maxprojectv") && normalized.includes("already sent")) {
     return "项目预算不能低于已买入金额。";
   }
-  if (normalized.includes("fdvlimitwanusd") || message.includes("估算市值限价")) {
-    return "启用估算市值限价时，最高估算市值必须大于 0。";
-  }
   if (normalized.includes("must be positive")) {
     return "买入金额和预算必须大于 0。";
   }
@@ -568,6 +602,20 @@ function friendlyLaunchStrategyError(error: Error) {
     return "自动买入配置保存失败，请检查参数。";
   }
   return message || "自动买入配置保存失败。";
+}
+
+function friendlyFdvLimitOrderError(error: Error) {
+  const message = error.message || "";
+  if (message.includes("FDV") || message.includes("限价")) {
+    return "限价 FDV 和买入数量都必须大于 0。";
+  }
+  if (message.includes("buyV") || message.includes("买入数量")) {
+    return "限价单买入数量必须大于 0。";
+  }
+  if (error instanceof ApiError) {
+    return "限价单保存失败，请检查参数。";
+  }
+  return message || "限价单保存失败。";
 }
 
 function friendlyLaunchSellError(error: Error) {
@@ -790,52 +838,6 @@ function LaunchStrategyControlPanel({
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
-              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 md:col-span-2">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1">
-                    <div className={strategyLabelClass}>估算市值限价</div>
-                    <div className="text-sm leading-6 text-muted-foreground">
-                      可选保险条件。开启后，只有当前含税估算 FDV 不高于设定值时才允许买入。
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    aria-pressed={form.fdvLimitEnabled}
-                    className={[
-                      "inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border px-4 text-sm font-semibold transition",
-                      form.fdvLimitEnabled
-                        ? "border-primary/40 bg-primary text-primary-foreground shadow-[0_14px_34px_rgba(45,151,153,0.24)]"
-                        : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                    ].join(" ")}
-                    onClick={() => onChange({ fdvLimitEnabled: !form.fdvLimitEnabled })}
-                  >
-                    {form.fdvLimitEnabled ? "已开启" : "未开启"}
-                  </button>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                  <div className={strategyFieldClass}>
-                    <StrategyFieldLabel
-                      label="最高含税 FDV"
-                      unit="万 USD"
-                      hint="开启后，自动买入仍必须先满足固定入场门槛；这里额外限制当前含税估算 FDV 不能高于该数值。关闭时该数值不参与判断。"
-                    />
-                    <Input
-                      className={strategyInputClass}
-                      inputMode="decimal"
-                      aria-label="最高含税估算 FDV，单位万 USD"
-                      placeholder="例如 300"
-                      value={form.fdvLimitWanUsd}
-                      onChange={(event) => onChange({ fdvLimitWanUsd: event.target.value })}
-                    />
-                  </div>
-                  <div className="rounded-[18px] border border-border/70 bg-background/60 px-3 py-3 text-xs leading-5 text-muted-foreground sm:w-64">
-                    {form.fdvLimitEnabled
-                      ? "保存后执行器热加载该上限；高于上限时跳过买入。"
-                      : "当前关闭，保存后不会改变原策略触发逻辑。"}
-                  </div>
-                </div>
-              </div>
-
               <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div className={strategyLabelClass}>买入金额</div>
@@ -950,6 +952,155 @@ function LaunchStrategyControlPanel({
             </div>
           ) : null}
         </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function FdvLimitOrdersPanel({
+  data,
+  orders,
+  pending,
+  onChange,
+  onSave,
+}: {
+  data?: LaunchFdvLimitOrdersResponse;
+  orders: FdvLimitOrderDraft[];
+  pending: boolean;
+  onChange: (orders: FdvLimitOrderDraft[]) => void;
+  onSave: () => void;
+}) {
+  const immutableOrders = (data?.items ?? []).filter((item) =>
+    ["triggering", "broadcast_sent", "filled"].includes(String(item.status || "")),
+  );
+  const hasOrders = orders.length > 0;
+
+  const patchOrder = (index: number, patch: Partial<FdvLimitOrderDraft>) => {
+    onChange(orders.map((order, i) => (i === index ? { ...order, ...patch } : order)));
+  };
+
+  const removeOrder = (index: number) => {
+    onChange(orders.filter((_, i) => i !== index).map((order, i) => ({ ...order, sortOrder: i })));
+  };
+
+  return (
+    <SectionCard
+      className="launch-strategy-panel overflow-hidden border-primary/20"
+      title="含税估算 FDV 限价单"
+      description="独立买入策略。达到限价后快速连续广播；热路径不等待成交确认，后续循环补查成交结果。仍受自动买入总开关保护。"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="success">速度优先</Badge>
+          <Badge variant="secondary">多单并列触发</Badge>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm leading-6 text-muted-foreground">
+            每条订单左侧状态只控制该订单是否参与触发；保存订单列表后写入后端。多个订单同时满足时按限价从高到低快速顺序发送。
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className={strategyActionClass}
+              onClick={() => onChange([...orders, createFdvLimitOrderDraft(orders.length)])}
+            >
+              <Plus className="size-4" />
+              添加限价单
+            </Button>
+            <Button
+              type="button"
+              className="launch-strategy-action launch-strategy-action-primary"
+              onClick={onSave}
+              disabled={pending}
+            >
+              保存订单列表
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          {hasOrders ? (
+            orders.map((order, index) => (
+              <div
+                key={order.id ?? `new_${index}`}
+                className="launch-strategy-rule-card grid gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,0.8fr)_auto] lg:items-end"
+              >
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs font-semibold tracking-[0.18em] text-muted-foreground">订单状态</span>
+                  <button
+                    type="button"
+                    aria-pressed={order.enabled}
+                    aria-label={order.enabled ? "当前订单参与触发，点击后暂停触发" : "当前订单暂停触发，点击后参与触发"}
+                    className={[
+                      "inline-flex min-h-11 min-w-[7.25rem] items-center justify-center rounded-full border px-4 text-sm font-semibold transition",
+                      order.enabled
+                        ? "border-primary/40 bg-primary text-primary-foreground shadow-[0_14px_34px_rgba(45,151,153,0.24)]"
+                        : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                    ].join(" ")}
+                    onClick={() => patchOrder(index, { enabled: !order.enabled })}
+                  >
+                    {order.enabled ? "参与触发" : "暂停触发"}
+                  </button>
+                </div>
+                <div className={strategyFieldClass}>
+                  <StrategyFieldLabel
+                    label="含税估算 FDV 不高于"
+                    unit="万 USD"
+                    hint="这里是独立限价单的触发价，不依赖大户榜单成本。当前含税估算 FDV 小于或等于该数值时触发。"
+                  />
+                  <Input
+                    className={strategyInputClass}
+                    inputMode="decimal"
+                    placeholder="例如 300"
+                    value={order.triggerFdvWanUsd}
+                    onChange={(event) => patchOrder(index, { triggerFdvWanUsd: event.target.value })}
+                  />
+                </div>
+                <div className={strategyFieldClass}>
+                  <StrategyFieldLabel label="买入" unit="VIRTUAL" />
+                  <Input
+                    className={strategyInputClass}
+                    inputMode="decimal"
+                    placeholder="例如 25"
+                    value={order.buyV}
+                    onChange={(event) => patchOrder(index, { buyV: event.target.value })}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="justify-self-start text-[color:var(--danger-foreground)] hover:bg-[color:var(--danger-soft)] lg:justify-self-end"
+                  onClick={() => removeOrder(index)}
+                >
+                  <Trash2 className="size-4" />
+                  删除
+                </Button>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-[24px] border border-dashed border-border bg-[color:var(--surface-soft)] px-4 py-6 text-sm text-muted-foreground">
+              当前没有限价单。添加后保存，执行器会在下一轮热读取。
+            </div>
+          )}
+        </div>
+
+        {immutableOrders.length ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {immutableOrders.map((order) => (
+              <div key={order.id} className="rounded-[18px] border border-border bg-background/60 px-3 py-3 text-xs leading-5 text-muted-foreground">
+                <div className="font-semibold text-foreground">
+                  {order.status === "filled" ? "已成交" : order.status === "broadcast_sent" ? "已广播" : "执行中"} · FDV ≤ {formatEditableNumber(order.triggerFdvWanUsd, 2)} 万 USD，买入 {formatEditableNumber(order.buyV, 4)} V
+                </div>
+                {order.broadcastTxHash ? (
+                  <div className="mt-1 break-all">链上交易 {order.broadcastTxHash.slice(0, 10)}...{order.broadcastTxHash.slice(-8)}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </SectionCard>
   );
@@ -1477,6 +1628,7 @@ export function OverviewPage() {
   const targetProjectId = detailProjectId ?? lockedProject?.id ?? 0;
   const currentProjectName = overviewQuery.data?.item?.name ?? lockedProject?.name ?? "";
   const [launchStrategyDraft, setLaunchStrategyDraft] = useState<Partial<LaunchStrategyFormState>>({});
+  const [fdvLimitOrdersDraft, setFdvLimitOrdersDraft] = useState<FdvLimitOrderDraft[] | null>(null);
   const [launchSellDraft, setLaunchSellDraft] = useState<Partial<LaunchSellFormState>>({});
 
   const launchStrategyConfigQuery = useQuery({
@@ -1488,6 +1640,13 @@ export function OverviewPage() {
   const launchSellConfigQuery = useQuery({
     queryKey: detailProjectId ? queryKeys.adminLaunchSellConfig(detailProjectId) : ["admin-launch-sell-config", 0],
     queryFn: () => dashboardApi.admin.getLaunchSellConfig(detailProjectId || 0),
+    enabled: viewer === "admin" && isProjectDetailView && detailProjectId !== null,
+    refetchInterval: 5_000,
+  });
+
+  const fdvLimitOrdersQuery = useQuery({
+    queryKey: detailProjectId ? queryKeys.adminLaunchFdvLimitOrders(detailProjectId) : ["admin-launch-fdv-limit-orders", 0],
+    queryFn: () => dashboardApi.admin.getLaunchFdvLimitOrders(detailProjectId || 0),
     enabled: viewer === "admin" && isProjectDetailView && detailProjectId !== null,
     refetchInterval: 5_000,
   });
@@ -1506,6 +1665,11 @@ export function OverviewPage() {
       ...launchSellDraft,
     }),
     [launchSellConfigQuery.data, launchSellDraft],
+  );
+
+  const fdvLimitOrdersForm = useMemo(
+    () => fdvLimitOrdersDraft ?? fdvLimitOrderDraftsFromResponse(fdvLimitOrdersQuery.data),
+    [fdvLimitOrdersDraft, fdvLimitOrdersQuery.data],
   );
 
   const launchStrategyConfigMutation = useMutation({
@@ -1540,6 +1704,31 @@ export function OverviewPage() {
       }
     },
     onError: (error: Error) => toast.error(friendlyLaunchSellError(error)),
+  });
+
+  const fdvLimitOrdersMutation = useMutation({
+    mutationFn: async (orders: FdvLimitOrderDraft[]) => {
+      if (!detailProjectId) {
+        throw new Error("当前没有可配置的项目。");
+      }
+      return dashboardApi.admin.setLaunchFdvLimitOrders(detailProjectId, {
+        orders: orders.map((order, index) => ({
+          id: order.id ?? null,
+          enabled: order.enabled,
+          triggerFdvWanUsd: order.triggerFdvWanUsd,
+          buyV: order.buyV,
+          sortOrder: index,
+        })),
+      });
+    },
+    onSuccess: async () => {
+      setFdvLimitOrdersDraft(null);
+      toast.success("含税估算 FDV 限价单已保存。");
+      if (detailProjectId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.adminLaunchFdvLimitOrders(detailProjectId) });
+      }
+    },
+    onError: (error: Error) => toast.error(friendlyFdvLimitOrderError(error)),
   });
 
   const saveLaunchStrategyConfig = (mode: "broadcast" | "disabled") => {
@@ -1586,6 +1775,16 @@ export function OverviewPage() {
       if (!window.confirm(message)) return;
     }
     launchSellConfigMutation.mutate(next);
+  };
+
+  const saveFdvLimitOrders = () => {
+    const enabledOrders = fdvLimitOrdersForm.filter((order) => order.enabled);
+    if (enabledOrders.length) {
+      const totalV = enabledOrders.reduce((sum, order) => sum + (Number(order.buyV) || 0), 0);
+      const message = `保存 ${enabledOrders.length} 个参与触发的含税估算 FDV 限价单，合计买入 ${formatConfigValue(totalV, " V", 4)}。触发后会速度优先连续广播。确认继续？`;
+      if (!window.confirm(message)) return;
+    }
+    fdvLimitOrdersMutation.mutate(fdvLimitOrdersForm);
   };
 
   const teamOverrideMutation = useMutation({
@@ -2007,6 +2206,13 @@ export function OverviewPage() {
               pending={launchStrategyConfigMutation.isPending}
               onChange={(patch) => setLaunchStrategyDraft((prev) => ({ ...prev, ...patch }))}
               onSave={saveLaunchStrategyConfig}
+            />
+            <FdvLimitOrdersPanel
+              data={fdvLimitOrdersQuery.data}
+              orders={fdvLimitOrdersForm}
+              pending={fdvLimitOrdersMutation.isPending}
+              onChange={setFdvLimitOrdersDraft}
+              onSave={saveFdvLimitOrders}
             />
             <LaunchSellControlPanel
               data={launchSellConfigQuery.data}

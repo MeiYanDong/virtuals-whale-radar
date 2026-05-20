@@ -16,6 +16,7 @@ import type {
   EventDelayRow,
   HealthResponse,
   LaunchConfig,
+  LaunchFdvLimitOrdersResponse,
   LaunchSellRuntimeConfigResponse,
   LaunchStrategyRuntimeConfigResponse,
   LegacyApisResponse,
@@ -269,6 +270,31 @@ export const dashboardApi = {
     getLaunchStrategyConfig(projectId: number) {
       return requestJson<LaunchStrategyRuntimeConfigResponse>(
         `/api/admin/projects/${projectId}/launch-strategy-config`,
+      );
+    },
+    getLaunchFdvLimitOrders(projectId: number) {
+      return requestJson<LaunchFdvLimitOrdersResponse>(
+        `/api/admin/projects/${projectId}/launch-fdv-limit-orders`,
+      );
+    },
+    setLaunchFdvLimitOrders(
+      projectId: number,
+      payload: {
+        orders: Array<{
+          id?: number | null;
+          enabled: boolean;
+          triggerFdvWanUsd: string;
+          buyV: string;
+          sortOrder: number;
+        }>;
+      },
+    ) {
+      return requestJson<LaunchFdvLimitOrdersResponse>(
+        `/api/admin/projects/${projectId}/launch-fdv-limit-orders`,
+        {
+          method: "POST",
+          body: payload,
+        },
       );
     },
     setLaunchStrategyConfig(

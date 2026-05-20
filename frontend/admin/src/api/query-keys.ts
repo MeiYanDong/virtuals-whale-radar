@@ -34,6 +34,7 @@ export const queryKeys = {
   adminProjectOverview: (projectId: number) => ["admin-project-overview", projectId] as const,
   adminProjectMarket: (projectId: number) => ["admin-project-market", projectId] as const,
   adminLaunchStrategyConfig: (projectId: number) => ["admin-launch-strategy-config", projectId] as const,
+  adminLaunchFdvLimitOrders: (projectId: number) => ["admin-launch-fdv-limit-orders", projectId] as const,
   adminLaunchSellConfig: (projectId: number) => ["admin-launch-sell-config", projectId] as const,
   appOverviewActive: (project: string) => ["app-overview-active", project] as const,
   scanJob: (jobId: string) => ["scan-job", jobId] as const,

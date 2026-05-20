@@ -17,9 +17,12 @@ if str(OPS_DIR) not in sys.path:
 
 from launch_prewarm_executor import (  # noqa: E402
     compact_runtime_config,
+    eligible_fdv_limit_orders,
+    fdv_limit_order_intent,
     rebuild_strategy_state_from_sent_rows,
     runtime_dynamic_config,
     runtime_effective_args,
+    sample_tax_fdv_wan,
 )
 
 
@@ -90,8 +93,8 @@ def test_runtime_config_helpers() -> None:
     assert_eq(config.dip_buy_v, Decimal("200"), "runtime dip")
     assert_eq(config.dip_from_own_cost_pct, Decimal("25"), "runtime dip threshold")
     assert_eq(config.flat_pause_pct, Decimal("12"), "runtime flat threshold")
-    assert_eq(config.fdv_limit_enabled, True, "runtime fdv limit enabled")
-    assert_eq(config.fdv_limit_wan_usd, Decimal("300"), "runtime fdv limit")
+    assert_eq(config.fdv_limit_enabled, False, "legacy fdv cap ignored by executor")
+    assert_eq(config.fdv_limit_wan_usd, None, "legacy fdv cap value ignored by executor")
 
     args = Namespace(max_buy_v=Decimal("50"), max_project_v=Decimal("150"), mode="broadcast")
     effective = runtime_effective_args(args, row)
@@ -103,13 +106,45 @@ def test_runtime_config_helpers() -> None:
     assert_eq(compact["hasOverride"], True, "compact override")
     assert_eq(compact["version"], 3, "compact version")
     assert_eq(compact["baseBuyV"], "100", "compact base")
-    assert_eq(compact["fdvLimitEnabled"], True, "compact fdv limit enabled")
-    assert_eq(compact["fdvLimitWanUsd"], "300", "compact fdv limit")
+    assert_eq(compact["fdvLimitEnabled"], False, "compact fdv cap hidden")
+    assert_eq(compact["fdvLimitWanUsd"], "", "compact fdv cap value hidden")
+
+
+def test_fdv_limit_order_helpers() -> None:
+    sample = {
+        "simTimestamp": 123,
+        "buyTaxRate": "91",
+        "estimatedFdvWanUsdWithTax": "280",
+        "liveFdvUsd": "2700000",
+        "boardSpentV": "6000",
+        "boardCostWanUsd": "310",
+        "costRows": 5,
+        "whaleRows": 20,
+    }
+    rows = [
+        {"id": 1, "enabled": 1, "status": "pending", "trigger_fdv_wan_usd": "300", "buy_v": "25", "sort_order": 0},
+        {"id": 2, "enabled": 1, "status": "pending", "trigger_fdv_wan_usd": "250", "buy_v": "25", "sort_order": 1},
+        {"id": 3, "enabled": 0, "status": "pending", "trigger_fdv_wan_usd": "500", "buy_v": "25", "sort_order": 2},
+        {"id": 4, "enabled": 1, "status": "filled", "trigger_fdv_wan_usd": "500", "buy_v": "25", "sort_order": 3},
+    ]
+    assert_eq(sample_tax_fdv_wan(sample), Decimal("280"), "sample tax fdv")
+    assert_eq(
+        eligible_fdv_limit_orders(rows, tax_fdv_wan_usd=sample_tax_fdv_wan(sample), project_status="ended"),
+        [],
+        "fdv limit orders require live status",
+    )
+    eligible = eligible_fdv_limit_orders(rows, tax_fdv_wan_usd=sample_tax_fdv_wan(sample), project_status="live")
+    assert_eq([row["id"] for row in eligible], [1], "eligible fdv limit orders")
+    intent = fdv_limit_order_intent(row=eligible[0], project_name="LMT", sample=sample, sample_index=7)
+    assert_eq(intent["reason"], "tax_fdv_limit_order_triggered", "fdv order intent reason")
+    assert_eq(intent["buy_size_v"], "25", "fdv order buy size")
+    assert_eq(intent["fdvLimitOrderId"], 1, "fdv order id")
 
 
 def main() -> None:
     test_rebuild_strategy_state_from_sent_rows()
     test_runtime_config_helpers()
+    test_fdv_limit_order_helpers()
     print("launch_prewarm_executor tests ok")
 
 
