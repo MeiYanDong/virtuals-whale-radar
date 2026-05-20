@@ -1094,7 +1094,7 @@
 - [x] 真实 live 项目窗口内验证 SellIntent -> approval/simulation/broadcast/receipt 的完整路径：2026-05-15 复核 ROO 生产账本与链上 receipt，2 笔真实卖出均 `receipt_success / status=0x1`，包含精确 approve 后卖出。
 - [ ] 如需真正买满 ROO 150V 项目预算，需要把足够 VIRTUAL 转入 burner；授权已到 300V，服务上限已收紧为 150V。
 - [ ] 生产预热热路径：提前维护 nonce、fee、gas、allowance、balance，tick 到达时只做本地判断和广播。
-- [ ] 生产机运行 RPC 压力观察：以 `/etc/virtuals-whale-radar/execution-rpc.env` 注入独立 execution RPC，确认 `executionRpcSharedWithMain=false`。
+- [x] 2026-05-20 生产机 RPC 压力观察通过：以 `/etc/virtuals-whale-radar/execution-rpc.env` 注入独立 execution RPC，TDS 只读 probe `green=true`、`executionRpcSharedWithMain=false`、execution p90 `153.5ms`，报告 `data/backtests/phase-061-rpc-pressure-TDS-20260520.json`。
 
 ## Phase 54：大户榜单团队地址过滤与管理员纠偏
 
@@ -1272,4 +1272,5 @@
 - [x] 梳理当前 operator 实盘工作流：项目发现、发射前配置、执行服务启动、实时观察、自动买入、自动卖出、归档、复盘；见 `docs/phases/phase-061-operator-profit-workflow.md`。
 - [x] 设计下一次真实 live 项目的操作清单：需要提前设置的项目、timer、runtime 参数、资金、RPC、fuse 和回滚动作。
 - [x] 将真实窗口复盘标准化为一页报告：买入原因、买入条件、成交税率/FDV、卖出触发、最终 PnL、失败点、下一次策略调整。
-- [ ] 优先修实盘链路短板，而不是继续优化欢迎页、登录页和 Billing。
+- [x] 完成第一项实盘链路短板收口：生产 execution RPC 压力观察通过，确认执行 RPC 与主采集 RPC 分离。
+- [ ] 下一步等待或选择一个真实 live 项目，按 Phase 061 runbook 创建启动与归档 timer，并在窗口后完成一页复盘。
