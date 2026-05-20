@@ -1273,4 +1273,7 @@
 - [x] 设计下一次真实 live 项目的操作清单：需要提前设置的项目、timer、runtime 参数、资金、RPC、fuse 和回滚动作。
 - [x] 将真实窗口复盘标准化为一页报告：买入原因、买入条件、成交税率/FDV、卖出触发、最终 PnL、失败点、下一次策略调整。
 - [x] 完成第一项实盘链路短板收口：生产 execution RPC 压力观察通过，确认执行 RPC 与主采集 RPC 分离。
-- [ ] 下一步等待或选择一个真实 live 项目，按 Phase 061 runbook 创建启动与归档 timer，并在窗口后完成一页复盘。
+- [x] 2026-05-20 从生产 SignalHub upcoming feed 选出 `PROFIT` / `MTR` 候选，并记录到 `docs/phases/phase-061-live-candidates-2026-05-20.md`。
+- [x] 对 `PROFIT` / `MTR` 完成非广播 prewarmed buy 模拟：均未广播、未发送交易；当前 direct buy 在发射前 revert，25 V 预算还需要提前提高 VIRTUAL 授权。
+- [ ] 选择 `MTR` 或其他更强候选作为第一次完整 runbook 演练对象；真实广播前必须确认预算、授权、自动买入/自动卖出 timer 范围。
+- [ ] 下一次真实 live 项目按 Phase 061 runbook 创建启动与归档 timer，并在窗口后完成一页复盘。

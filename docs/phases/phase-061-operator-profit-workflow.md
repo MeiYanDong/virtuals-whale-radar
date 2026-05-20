@@ -265,7 +265,8 @@ python3 scripts/ops/recalc_dual_sell_strategy.py \
 
 ## 当前已知缺口
 
-- 生产机仍需定期运行 `launch_rpc_pressure_probe.py`，确认 execution RPC 和 main RPC 不共享。
+- 2026-05-20 生产机已完成一次 `launch_rpc_pressure_probe.py`，确认 execution RPC 和 main RPC 不共享；后续仍需在每个真实窗口前复跑。
 - 下一次真实 live 项目必须用 `schedule_launch_services.py` 创建 timer，而不是手工临时启动四个服务。
+- 当前候选记录见 `docs/phases/phase-061-live-candidates-2026-05-20.md`；`PROFIT` 和 `MTR` 均已完成非广播模拟，发射前 direct buy 仍 revert，需要窗口前复跑 readiness。
 - 归档必须成为每次窗口的默认产物；没有 archive 的实盘窗口，不算完成闭环。
 - 页面优化优先级低于执行失败率、真实 PnL 和复盘质量。
