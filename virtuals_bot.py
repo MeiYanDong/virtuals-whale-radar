@@ -446,6 +446,10 @@ AUTH_RESEND_IP_WINDOW_SEC = 60 * 60
 AUTH_RESEND_IP_MAX_ATTEMPTS = 5
 AUTH_LOGIN_FAIL_IP_WINDOW_SEC = 15 * 60
 AUTH_LOGIN_FAIL_IP_MAX_ATTEMPTS = 10
+AUTH_WALLET_CHALLENGE_IP_WINDOW_SEC = 15 * 60
+AUTH_WALLET_CHALLENGE_IP_MAX_ATTEMPTS = 30
+AUTH_WALLET_CHALLENGE_WALLET_WINDOW_SEC = 15 * 60
+AUTH_WALLET_CHALLENGE_WALLET_MAX_ATTEMPTS = 8
 DEFAULT_BILLING_CONTACT_QR_URL = "/admin/brand/contact-qr-wechat.png"
 DEFAULT_BILLING_CONTACT_HINT = "钱包支付失败、重复付款或积分未到账时，扫码联系运营处理。"
 DEFAULT_BILLING_REFERRAL_NOTICE = "如果你还没有 Virtuals 账号，可以先用邀请码完成注册；这里的积分只用于解锁 Whale Radar 项目看板。"
@@ -7463,6 +7467,8 @@ class VirtualsBot:
         token_addr = normalize_address(str(intent.get("token_addr") or ""))
         receiver = normalize_address(str(intent.get("receiver") or ""))
         payer_hint = normalize_optional_address(intent.get("payer_wallet"))
+        if not payer_hint:
+            raise ValueError("支付订单缺少付款钱包，请重新发起钱包支付。")
         amount_required = int(str(intent.get("amount_raw") or "0"))
         if amount_required <= 0:
             raise ValueError("payment intent amount is invalid")
@@ -7487,7 +7493,7 @@ class VirtualsBot:
                 continue
             if to_addr != receiver:
                 continue
-            if payer_hint and payer != payer_hint:
+            if payer != payer_hint:
                 continue
             if amount_raw < amount_required:
                 continue
@@ -7912,6 +7918,24 @@ class VirtualsBot:
             code="login_rate_limited",
         )
 
+    def ensure_wallet_challenge_allowed(self, client_ip: str, wallet: str) -> None:
+        self.enforce_rate_limit(
+            event_type="wallet_challenge_ip",
+            subject=client_ip,
+            window_sec=AUTH_WALLET_CHALLENGE_IP_WINDOW_SEC,
+            max_attempts=AUTH_WALLET_CHALLENGE_IP_MAX_ATTEMPTS,
+            message="钱包登录请求过于频繁，请稍后再试。",
+            code="wallet_challenge_rate_limited",
+        )
+        self.enforce_rate_limit(
+            event_type="wallet_challenge_wallet",
+            subject=normalize_address(wallet),
+            window_sec=AUTH_WALLET_CHALLENGE_WALLET_WINDOW_SEC,
+            max_attempts=AUTH_WALLET_CHALLENGE_WALLET_MAX_ATTEMPTS,
+            message="这个钱包的登录请求过于频繁，请稍后再试。",
+            code="wallet_challenge_wallet_limited",
+        )
+
     def ensure_allowed_registration_email(self, email: str) -> None:
         domain = extract_email_domain(email)
         if domain in DISPOSABLE_EMAIL_DOMAINS:
@@ -8096,6 +8120,7 @@ class VirtualsBot:
     ) -> Dict[str, Any]:
         normalized_wallet = normalize_address(wallet)
         source_value = normalize_wallet_auth_source(source)
+        client_ip = self.request_client_ip(request)
         user = self.storage.get_user_by_auth_wallet(normalized_wallet)
         if not user:
             for candidate_source in ("base_wallet", "okx_wallet", "injected_wallet"):
@@ -8103,6 +8128,8 @@ class VirtualsBot:
                 if user:
                     break
         if not user:
+            self.ensure_register_ip_allowed(client_ip)
+            self.record_auth_attempt("register_ip", client_ip)
             now = int(time.time())
             user = self.storage.create_user(
                 nickname=display_wallet_name(normalized_wallet, source_value),
@@ -8113,7 +8140,7 @@ class VirtualsBot:
                 source=source_value,
                 signup_bonus_credits=DEFAULT_SIGNUP_BONUS_CREDITS,
                 email_verified_at=now,
-                signup_ip=self.request_client_ip(request),
+                signup_ip=client_ip,
                 signup_device_fingerprint=source_value.replace("_", "-"),
                 signup_bonus_granted_at=now,
             )
@@ -11742,9 +11769,13 @@ class VirtualsBot:
             payload = await request.json()
         except Exception:
             return web.json_response({"error": "invalid json body"}, status=400)
+        client_ip = self.request_client_ip(request)
         try:
             wallet = normalize_address(require_nonempty_text(payload.get("wallet"), "wallet"))
             source = normalize_wallet_auth_source(payload.get("source") or default_source)
+            self.ensure_wallet_challenge_allowed(client_ip, wallet)
+            self.record_auth_attempt("wallet_challenge_ip", client_ip)
+            self.record_auth_attempt("wallet_challenge_wallet", wallet)
             nonce = secrets.token_hex(16)
             now = int(time.time())
             expires_at = now + BASE_WALLET_AUTH_TTL_SEC
@@ -11780,6 +11811,11 @@ class VirtualsBot:
                     "message": message,
                     "expires_at": expires_at,
                 }
+            )
+        except RateLimitExceeded as e:
+            return web.json_response(
+                {"error": e.message, "code": e.code, "retry_after_sec": e.retry_after_sec},
+                status=429,
             )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
@@ -12052,7 +12088,9 @@ class VirtualsBot:
             amount_raw = decimal_to_atomic_units(amount_usdc, BASE_USDC_DECIMALS)
             if amount_raw <= 0:
                 raise ValueError("billing plan has invalid USDC price")
-            payer_wallet = normalize_optional_address(payload.get("payer_wallet")) or ""
+            payer_wallet = normalize_optional_address(payload.get("payer_wallet"))
+            if not payer_wallet:
+                raise ValueError("请先连接钱包后再创建 Base USDC 支付订单。")
             expires_at = int(time.time()) + ONCHAIN_CREDIT_PAYMENT_TTL_SEC
             item = self.storage.create_onchain_credit_payment_intent(
                 user_id=int(user["id"]),

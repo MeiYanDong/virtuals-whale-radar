@@ -605,7 +605,7 @@ export const dashboardApi = {
         },
       );
     },
-    createOnchainPaymentIntent(payload: { plan_id: string; payer_wallet?: string }) {
+    createOnchainPaymentIntent(payload: { plan_id: string; payer_wallet: string }) {
       return requestJson<OnchainPaymentIntentResponse>("/api/app/billing/onchain-intents", {
         method: "POST",
         body: payload,
