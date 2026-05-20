@@ -70,4 +70,6 @@
 - [x] 2026-05-20 速度优先优化：生产 autobuy systemd 模板默认启用 `--no-wait-receipt`，并将 live poll 调整到 `0.1s`。
 - [x] 2026-05-20 速度优先优化验证：`py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 本地通过；`test_launch_prewarm_executor.py` 新增普通买入 no-wait receipt 后台补查单测。
 - [x] 2026-05-20 预签候选交易池本地验证：`py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 通过；新增候选 key 归一化、单次命中和同批清空单测。
-- [ ] 预签候选交易池生产小额 canary 通过后，再决定是否写入 production autobuy systemd 模板默认参数。
+- [x] 2026-05-20 预签候选交易池生产 sign-ready canary 通过：真实 execution RPC、真实 burner key、TDS internal market，命中 `signed_candidate_cache_hit_no_raw_tx_persisted`，未广播。
+- [x] 2026-05-20 预签候选交易池生产小额 broadcast canary 通过：`0.001 VIRTUAL` 买入 tx `0xe3d385a3079f621c490c76173e6dd774cfb8acb5170fc761d02f52299dddc2fb` receipt `0x1`，`triggerToSendAckMs=246.2ms`；测试仓位已卖回，TDS 余额与授权均为 `0`，active fuse 为 `0`。
+- [x] 2026-05-20 production autobuy systemd 模板启用预签候选缓存参数：`--enable-signed-candidate-cache --signed-candidate-ttl-sec 5 --signed-candidate-refresh-min-sec 0.5 --signed-candidate-max-count 1`；MTR autobuy 服务仍未启动。

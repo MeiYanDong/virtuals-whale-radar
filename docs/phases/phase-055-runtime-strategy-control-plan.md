@@ -205,18 +205,31 @@
    - 普通自动买入广播后不等待 receipt，先释放热路径；后续循环后台补查 receipt，并把账本更新为 `receipt_success` 或 `receipt_failed`。
    - 目的：把热路径从“等待区块确认”改为“发送 ACK 即释放”，避免阻塞下一 tick。
    - 后台补查失败或 receipt 失败仍触发 fuse，不放松安全门禁。
-3. 可选预签候选交易池。
-   - 新增 `--enable-signed-candidate-cache`，默认关闭；当前生产 systemd 模板未启用。
+3. 预签候选交易池。
+   - 新增 `--enable-signed-candidate-cache`；生产小额 canary 通过后，`vwr-launch-autobuy@.service` 模板已启用。
    - 发射 `LIVE` 时，执行器可在后台按当前税率和候选买入金额提前完成 bind、simulate、fee、sign。
    - 触发普通买入或含税估算 FDV 限价单时，如果买入金额和税率命中候选，热路径直接 `eth_sendRawTransaction`。
    - raw tx 只保存在进程内存，不写 DB、不写 JSONL、不打印；日志只记录 signed tx hash、nonce、gas、候选年龄和耗时。
    - 为避免同一 pending nonce 被复用，候选命中一次后立即清空同批候选；未命中或过期自动回退原有稳定路径。
    - 限价单和普通策略仍共享原有广播门禁、独立 execution RPC、active fuse、余额/授权/eth_call/estimateGas 与预算风控。
+   - 模板参数限制为 `--signed-candidate-max-count 1`，降低 nonce 复用和 RPC 压力。
 
 仍不默认启用：
 
 - 税率档本地预测卡点广播。
 - 50ms 轮询默认化。
-- 预签候选交易池默认启用。
 
-预签候选交易池已具备代码能力，但需要单独小额 canary 后再写入生产模板。当前策略是“能力可部署，默认不开关”。
+预签候选交易池只在 `vwr-launch-autobuy@项目名` 被显式启动时生效；当前 MTR 自动买入服务仍为 inactive，未被启动或 armed。
+
+## 13. 预签候选交易池 canary（2026-05-20）
+
+- L4 sign-ready 通过：使用生产 execution RPC、burner key 和 TDS internal market，构造 `0.001 VIRTUAL` 候选交易，不广播。
+  - 结果：`signed_candidate_cache_hit_no_raw_tx_persisted`，`tradeSent=false`，`rpcSharedWithMain=false`。
+  - 候选年龄约 `1.1ms`，未打印或持久化 raw tx。
+- L5 小额真实广播通过：使用同一 TDS internal market，预签候选命中后广播 `0.001 VIRTUAL`。
+  - 买入 tx：`0xe3d385a3079f621c490c76173e6dd774cfb8acb5170fc761d02f52299dddc2fb`，receipt `status=0x1`。
+  - 热路径 `triggerToSendAckMs=246.2ms`，`sendRawMs=246.2ms`，候选命中时跳过 bind/simulate/fee/sign。
+  - 收到 `29.612124851179578816 TDS`。
+  - 测试仓位已卖回：精确授权 tx `0x4a7c32608bf2bf36a6c5f77017b1801944ec82af6ed28aeebdf3e83f0aa11288`，卖出 tx `0x6b952f49d2eb666ccd1544ed801188da60f7a2a1b8602f663d6d838c4be6ec23`，receipt `status=0x1`，收到 `0.0009801 VIRTUAL`。
+  - 收尾复核：TDS 余额 `0`，TDS 授权 `0`，active fuse `0`。
+- 结论：预签候选交易池可以写入生产 autobuy 模板，但不改变 MTR 当前 inactive 状态。
