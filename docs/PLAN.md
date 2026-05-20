@@ -2476,6 +2476,7 @@ Phase 052 执行结果：
   - UI 已从普通参数表重构为“买入策略卡”：买入触发条件只读展示，金额、节奏保护、抄底放大和风险上限分区编辑。
   - 买入触发条件展示当前后端策略事实，不支持前端修改，也不向后端提交新字段：`LIVE 中`、`税率 ≤ 95%`、`榜单 V ≥ 5,000`、`有效榜单 20 人 / 5 个成本样本`、`含税 FDV ≤ 榜单成本`。
   - `有效榜单 20 人 / 5 个成本样本` 用于避免误解：榜单人数表示大户广度，成本样本表示可参与榜单成本计算的有效地址数。
+  - 2026-05-20 新增可选“估算市值限价”：管理员可设置最高含税估算 FDV（万 USD），默认关闭；开启后作为原有入场门槛之后的额外保险条件，不会放宽买入。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动买入`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已买入 V、最近调整时间和 active fuse 提示。
 - 后端新增运行时配置能力：
@@ -2492,6 +2493,7 @@ Phase 052 执行结果：
   - Python `py_compile`。
   - `scripts/ops/test_launch_execution_pipeline.py`。
   - `scripts/ops/test_launch_prewarm_executor.py`。
+  - 2026-05-20 限价配置补测：高于限价跳过、等于限价继续买入；执行器热加载可读取 `fdv_limit_enabled / fdv_limit_wan_usd`。
   - 新增并验证 `scripts/ops/runtime_control_launch_simulator.py`。
   - 前端 `npm run build`。
   - 前端 `npm run lint`。

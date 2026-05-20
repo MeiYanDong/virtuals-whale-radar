@@ -512,6 +512,8 @@ def test_launch_strategy_runtime_config_storage() -> None:
             default_config = storage.default_launch_strategy_runtime_config(project)
             assert_eq(default_config["enabled"], 0, "default runtime config disabled")
             assert_eq(default_config["base_buy_v"], "25.000000", "default base buy")
+            assert_eq(default_config["fdv_limit_enabled"], 0, "default fdv limit disabled")
+            assert_eq(default_config["fdv_limit_wan_usd"], "", "default fdv limit empty")
 
             config = storage.upsert_launch_strategy_runtime_config(
                 project_row=project,
@@ -520,6 +522,8 @@ def test_launch_strategy_runtime_config_storage() -> None:
                     "mode": "broadcast",
                     "baseBuyV": "100",
                     "dipBuyV": "200",
+                    "fdvLimitEnabled": True,
+                    "fdvLimitWanUsd": "300",
                     "maxBuyV": "200",
                     "maxProjectV": "300",
                     "updatedReason": "hot project",
@@ -531,6 +535,8 @@ def test_launch_strategy_runtime_config_storage() -> None:
             assert_eq(config["mode"], "broadcast", "runtime config mode")
             assert_eq(config["base_buy_v"], "100.000000", "runtime config base")
             assert_eq(config["dip_buy_v"], "200.000000", "runtime config dip")
+            assert_eq(config["fdv_limit_enabled"], 1, "runtime config fdv limit enabled")
+            assert_eq(config["fdv_limit_wan_usd"], "300.000000", "runtime config fdv limit")
             assert_eq(len(storage.list_launch_strategy_runtime_config_audit(int(project["id"]))), 1, "runtime config audit")
 
             storage.upsert_launch_execution_record(
@@ -628,6 +634,16 @@ def test_launch_strategy_runtime_config_rejects_invalid_without_mutating() -> No
                     "baseBuyV": "25",
                     "dipBuyV": "50",
                     "flatPausePct": "101",
+                    "maxBuyV": "50",
+                    "maxProjectV": "150",
+                },
+                {
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "baseBuyV": "25",
+                    "dipBuyV": "50",
+                    "fdvLimitEnabled": True,
+                    "fdvLimitWanUsd": "",
                     "maxBuyV": "50",
                     "maxProjectV": "150",
                 },
@@ -734,6 +750,53 @@ def test_runtime_hot_reload_next_intent_uses_new_buy_size() -> None:
         assert_eq(first_dip_intent.buy_size_v, "25", f"{case['project']} first dip size before hot reload")
         assert_eq(next_dip_intent.buy_size_v, "200", f"{case['project']} dip size after hot reload")
         assert_eq(next_dip_intent.reason, "dip20_double", f"{case['project']} dip reason after hot reload")
+
+
+def test_dynamic_buy_fdv_limit_blocks_then_allows() -> None:
+    samples = load_samples(Path("data/replay-event-level/sr_event_replay-20260510T073102Z-samples.jsonl"))
+    base_evaluator = DynamicAfter1StrategyEvaluator(
+        project="SR_EVENT_REPLAY",
+        rule=resolve_rule("gate_5k_tax95_fdv_one_per_tax"),
+        config=DynamicExecutionConfig(base_buy_v=Decimal("25"), dip_buy_v=Decimal("50")),
+    )
+    first_signal: tuple[int, dict, Decimal] | None = None
+    for index, row in enumerate(samples):
+        decision = base_evaluator.evaluate(row, index=index)
+        if decision.intent is None:
+            continue
+        first_signal = (index, row, Decimal(decision.intent.entry_tax_fdv_wan_usd))
+        break
+    if first_signal is None:
+        raise AssertionError("SR replay did not produce a buy signal for fdv limit test")
+
+    index, row, entry = first_signal
+    blocked_evaluator = DynamicAfter1StrategyEvaluator(
+        project="SR_EVENT_REPLAY",
+        rule=resolve_rule("gate_5k_tax95_fdv_one_per_tax"),
+        config=DynamicExecutionConfig(
+            base_buy_v=Decimal("25"),
+            dip_buy_v=Decimal("50"),
+            fdv_limit_enabled=True,
+            fdv_limit_wan_usd=entry * Decimal("0.5"),
+        ),
+    )
+    blocked = blocked_evaluator.evaluate(row, index=index)
+    assert_eq(blocked.action, "skip", "fdv limit blocks action")
+    assert_eq(blocked.reason, "fdv_limit_not_met", "fdv limit blocks reason")
+
+    allowed_evaluator = DynamicAfter1StrategyEvaluator(
+        project="SR_EVENT_REPLAY",
+        rule=resolve_rule("gate_5k_tax95_fdv_one_per_tax"),
+        config=DynamicExecutionConfig(
+            base_buy_v=Decimal("25"),
+            dip_buy_v=Decimal("50"),
+            fdv_limit_enabled=True,
+            fdv_limit_wan_usd=entry,
+        ),
+    )
+    allowed = allowed_evaluator.evaluate(row, index=index)
+    assert_eq(allowed.action, "would_buy", "fdv limit allows action")
+    assert_eq(allowed.intent.buy_size_v if allowed.intent else None, "25", "fdv limit allows base size")
 
 
 def test_launch_sell_runtime_config_storage() -> None:
@@ -1024,6 +1087,7 @@ def main() -> None:
     test_launch_strategy_runtime_config_storage()
     test_launch_strategy_runtime_config_rejects_invalid_without_mutating()
     test_runtime_hot_reload_next_intent_uses_new_buy_size()
+    test_dynamic_buy_fdv_limit_blocks_then_allows()
     test_launch_sell_runtime_config_storage()
     test_route_metadata_storage_and_team_filter()
     asyncio.run(test_team_initialization_route_excludes_cost())

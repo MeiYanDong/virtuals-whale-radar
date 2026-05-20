@@ -79,6 +79,8 @@ def test_runtime_config_helpers() -> None:
         "dip_buy_v": "200",
         "dip_from_own_cost_pct": "25",
         "flat_pause_pct": "12",
+        "fdv_limit_enabled": 1,
+        "fdv_limit_wan_usd": "300",
         "max_buy_v": "200",
         "max_project_v": "500",
         "updated_at": 123,
@@ -88,6 +90,8 @@ def test_runtime_config_helpers() -> None:
     assert_eq(config.dip_buy_v, Decimal("200"), "runtime dip")
     assert_eq(config.dip_from_own_cost_pct, Decimal("25"), "runtime dip threshold")
     assert_eq(config.flat_pause_pct, Decimal("12"), "runtime flat threshold")
+    assert_eq(config.fdv_limit_enabled, True, "runtime fdv limit enabled")
+    assert_eq(config.fdv_limit_wan_usd, Decimal("300"), "runtime fdv limit")
 
     args = Namespace(max_buy_v=Decimal("50"), max_project_v=Decimal("150"), mode="broadcast")
     effective = runtime_effective_args(args, row)
@@ -99,6 +103,8 @@ def test_runtime_config_helpers() -> None:
     assert_eq(compact["hasOverride"], True, "compact override")
     assert_eq(compact["version"], 3, "compact version")
     assert_eq(compact["baseBuyV"], "100", "compact base")
+    assert_eq(compact["fdvLimitEnabled"], True, "compact fdv limit enabled")
+    assert_eq(compact["fdvLimitWanUsd"], "300", "compact fdv limit")
 
 
 def main() -> None:

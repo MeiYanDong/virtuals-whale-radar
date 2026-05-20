@@ -1883,6 +1883,8 @@ class Storage:
                 dip_buy_v TEXT NOT NULL DEFAULT '50',
                 dip_from_own_cost_pct TEXT NOT NULL DEFAULT '20',
                 flat_pause_pct TEXT NOT NULL DEFAULT '10',
+                fdv_limit_enabled INTEGER NOT NULL DEFAULT 0,
+                fdv_limit_wan_usd TEXT NOT NULL DEFAULT '',
                 max_buy_v TEXT NOT NULL DEFAULT '50',
                 max_project_v TEXT NOT NULL DEFAULT '150',
                 version INTEGER NOT NULL DEFAULT 1,
@@ -1982,6 +1984,8 @@ class Storage:
         self._ensure_column("events", "tx_to", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("events", "tx_selector", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("events", "calldata_bytes", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("launch_strategy_runtime_configs", "fdv_limit_enabled", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("launch_strategy_runtime_configs", "fdv_limit_wan_usd", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("launch_sell_runtime_configs", "custom_rules_json", "TEXT NOT NULL DEFAULT '[]'")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("billing_requests", "credited_credit_ledger_id", "INTEGER")
@@ -2483,6 +2487,8 @@ class Storage:
             "dip_buy_v": decimal_to_str(DEFAULT_LAUNCH_DIP_BUY_V, 6),
             "dip_from_own_cost_pct": decimal_to_str(DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT, 6),
             "flat_pause_pct": decimal_to_str(DEFAULT_LAUNCH_FLAT_PAUSE_PCT, 6),
+            "fdv_limit_enabled": 0,
+            "fdv_limit_wan_usd": "",
             "max_buy_v": decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6),
             "max_project_v": decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6),
             "version": 0,
@@ -2538,6 +2544,24 @@ class Storage:
             "flatPausePct",
             DEFAULT_LAUNCH_FLAT_PAUSE_PCT,
         )
+        fdv_limit_enabled = parse_named_bool(
+            payload.get(
+                "fdvLimitEnabled",
+                payload.get("fdv_limit_enabled", bool(int(baseline.get("fdv_limit_enabled") or 0))),
+            ),
+            "fdvLimitEnabled",
+        )
+        fdv_limit_raw = payload.get(
+            "fdvLimitWanUsd",
+            payload.get("fdv_limit_wan_usd", baseline.get("fdv_limit_wan_usd", "")),
+        )
+        fdv_limit_wan_usd: Optional[Decimal] = None
+        if fdv_limit_raw is not None and str(fdv_limit_raw).strip() != "":
+            fdv_limit_wan_usd = parse_strategy_decimal(fdv_limit_raw, "fdvLimitWanUsd")
+            if fdv_limit_wan_usd < 0:
+                raise ValueError("估算市值限价不能为负数")
+        if fdv_limit_enabled and (fdv_limit_wan_usd is None or fdv_limit_wan_usd <= 0):
+            raise ValueError("启用估算市值限价时，最高估算市值必须大于 0")
         max_buy_v = parse_strategy_decimal(
             payload.get("maxBuyV", payload.get("max_buy_v", baseline.get("max_buy_v"))),
             "maxBuyV",
@@ -2591,6 +2615,8 @@ class Storage:
             "dip_buy_v": decimal_to_str(dip_buy_v, 6),
             "dip_from_own_cost_pct": decimal_to_str(dip_from_own_cost_pct, 6),
             "flat_pause_pct": decimal_to_str(flat_pause_pct, 6),
+            "fdv_limit_enabled": 1 if fdv_limit_enabled else 0,
+            "fdv_limit_wan_usd": decimal_to_str(fdv_limit_wan_usd, 6) if fdv_limit_wan_usd is not None else "",
             "max_buy_v": decimal_to_str(max_buy_v, 6),
             "max_project_v": decimal_to_str(max_project_v, 6),
             "sent_project_v": decimal_to_str(sent_project_v, 6),
@@ -2633,13 +2659,13 @@ class Storage:
                 INSERT INTO launch_strategy_runtime_configs(
                     project_id, project, strategy, rule_name, enabled, mode,
                     base_buy_v, dip_buy_v, dip_from_own_cost_pct, flat_pause_pct,
-                    max_buy_v, max_project_v, version, updated_by_user_id,
-                    updated_reason, created_at, updated_at
+                    fdv_limit_enabled, fdv_limit_wan_usd, max_buy_v, max_project_v,
+                    version, updated_by_user_id, updated_reason, created_at, updated_at
                 ) VALUES (
                     :project_id, :project, :strategy, :rule_name, :enabled, :mode,
                     :base_buy_v, :dip_buy_v, :dip_from_own_cost_pct, :flat_pause_pct,
-                    :max_buy_v, :max_project_v, :version, :updated_by_user_id,
-                    :updated_reason, :created_at, :updated_at
+                    :fdv_limit_enabled, :fdv_limit_wan_usd, :max_buy_v, :max_project_v,
+                    :version, :updated_by_user_id, :updated_reason, :created_at, :updated_at
                 )
                 ON CONFLICT(project_id) DO UPDATE SET
                     project = excluded.project,
@@ -2651,6 +2677,8 @@ class Storage:
                     dip_buy_v = excluded.dip_buy_v,
                     dip_from_own_cost_pct = excluded.dip_from_own_cost_pct,
                     flat_pause_pct = excluded.flat_pause_pct,
+                    fdv_limit_enabled = excluded.fdv_limit_enabled,
+                    fdv_limit_wan_usd = excluded.fdv_limit_wan_usd,
                     max_buy_v = excluded.max_buy_v,
                     max_project_v = excluded.max_project_v,
                     version = excluded.version,
@@ -11241,6 +11269,8 @@ class VirtualsBot:
                     or decimal_to_str(DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT, 6)
                 ),
                 "flatPausePct": str(item.get("flat_pause_pct") or decimal_to_str(DEFAULT_LAUNCH_FLAT_PAUSE_PCT, 6)),
+                "fdvLimitEnabled": bool(int(item.get("fdv_limit_enabled") or 0)),
+                "fdvLimitWanUsd": str(item.get("fdv_limit_wan_usd") or ""),
                 "maxBuyV": str(item.get("max_buy_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6)),
                 "maxProjectV": str(item.get("max_project_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)),
                 "version": int(item.get("version") or 0),

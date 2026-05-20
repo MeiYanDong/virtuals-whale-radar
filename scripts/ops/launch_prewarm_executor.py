@@ -135,6 +135,8 @@ def decimal_value(value: Any, default: Decimal = Decimal("0")) -> Decimal:
 def runtime_dynamic_config(row: dict[str, Any] | None) -> DynamicExecutionConfig:
     if not row:
         return DynamicExecutionConfig()
+    fdv_limit_enabled = bool(int(row.get("fdv_limit_enabled") or 0))
+    fdv_limit_wan_usd = decimal_value(row.get("fdv_limit_wan_usd"), Decimal("0")) if fdv_limit_enabled else None
     return DynamicExecutionConfig(
         name=str(row.get("strategy") or DynamicExecutionConfig().name),
         base_buy_v=decimal_value(row.get("base_buy_v"), DynamicExecutionConfig().base_buy_v),
@@ -144,6 +146,8 @@ def runtime_dynamic_config(row: dict[str, Any] | None) -> DynamicExecutionConfig
             DynamicExecutionConfig().dip_from_own_cost_pct,
         ),
         flat_pause_pct=decimal_value(row.get("flat_pause_pct"), DynamicExecutionConfig().flat_pause_pct),
+        fdv_limit_enabled=fdv_limit_enabled,
+        fdv_limit_wan_usd=fdv_limit_wan_usd,
         pause_after_buy_count=DynamicExecutionConfig().pause_after_buy_count,
         one_buy_per_tax_rate=DynamicExecutionConfig().one_buy_per_tax_rate,
     )
@@ -168,6 +172,8 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
             "strategy": DynamicExecutionConfig().name,
             "baseBuyV": str(DynamicExecutionConfig().base_buy_v),
             "dipBuyV": str(DynamicExecutionConfig().dip_buy_v),
+            "fdvLimitEnabled": False,
+            "fdvLimitWanUsd": "",
             "maxBuyV": str(args.max_buy_v),
             "maxProjectV": str(args.max_project_v),
         }
@@ -182,6 +188,8 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
         "dipBuyV": str(row.get("dip_buy_v") or ""),
         "dipFromOwnCostPct": str(row.get("dip_from_own_cost_pct") or ""),
         "flatPausePct": str(row.get("flat_pause_pct") or ""),
+        "fdvLimitEnabled": bool(int(row.get("fdv_limit_enabled") or 0)),
+        "fdvLimitWanUsd": str(row.get("fdv_limit_wan_usd") or ""),
         "maxBuyV": str(row.get("max_buy_v") or ""),
         "maxProjectV": str(row.get("max_project_v") or ""),
         "updatedAt": int(row.get("updated_at") or 0),

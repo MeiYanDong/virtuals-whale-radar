@@ -189,6 +189,8 @@ type LaunchStrategyFormState = {
   dipBuyV: string;
   dipFromOwnCostPct: string;
   flatPausePct: string;
+  fdvLimitEnabled: boolean;
+  fdvLimitWanUsd: string;
   maxBuyV: string;
   maxProjectV: string;
   updatedReason: string;
@@ -242,6 +244,7 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
   const baseBuyV = formatEditableNumber(item?.baseBuyV ?? "25");
   const dipBuyV = formatEditableNumber(item?.dipBuyV ?? "50");
   const rawMaxBuyV = formatEditableNumber(item?.maxBuyV ?? "50");
+  const rawFdvLimitWanUsd = String(item?.fdvLimitWanUsd ?? "").trim();
   const baseBuy = parseStrategyInputNumber(baseBuyV);
   const dipBuy = parseStrategyInputNumber(dipBuyV);
   const maxBuy = parseStrategyInputNumber(rawMaxBuyV);
@@ -257,6 +260,8 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
     dipBuyV,
     dipFromOwnCostPct: formatEditableNumber(item?.dipFromOwnCostPct ?? "20", 0),
     flatPausePct: formatEditableNumber(item?.flatPausePct ?? "10", 0),
+    fdvLimitEnabled: item?.fdvLimitEnabled ?? false,
+    fdvLimitWanUsd: rawFdvLimitWanUsd ? formatEditableNumber(rawFdvLimitWanUsd, 2) : "",
     maxBuyV,
     maxProjectV: formatEditableNumber(item?.maxProjectV ?? "150"),
     updatedReason: "",
@@ -447,6 +452,9 @@ function normalizeLaunchStrategyFormForSubmit(form: LaunchStrategyFormState): La
     const requiredMaxBuy = Math.max(baseBuy, dipBuy, maxBuy);
     next.maxBuyV = formatStrategyInputNumber(requiredMaxBuy);
   }
+  if (!next.fdvLimitEnabled && String(next.fdvLimitWanUsd || "").trim() === "0") {
+    next.fdvLimitWanUsd = "";
+  }
 
   return next;
 }
@@ -544,6 +552,9 @@ function friendlyLaunchStrategyError(error: Error) {
   if (normalized.includes("maxprojectv") && normalized.includes("already sent")) {
     return "项目预算不能低于已买入金额。";
   }
+  if (normalized.includes("fdvlimitwanusd") || message.includes("估算市值限价")) {
+    return "启用估算市值限价时，最高估算市值必须大于 0。";
+  }
   if (normalized.includes("must be positive")) {
     return "买入金额和预算必须大于 0。";
   }
@@ -598,6 +609,8 @@ const defaultStrategyPatch: Partial<LaunchStrategyFormState> = {
   dipBuyV: "50",
   dipFromOwnCostPct: "20",
   flatPausePct: "10",
+  fdvLimitEnabled: false,
+  fdvLimitWanUsd: "",
   maxBuyV: "50",
   maxProjectV: "150",
 };
@@ -777,6 +790,52 @@ function LaunchStrategyControlPanel({
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
+              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4 md:col-span-2">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <div className={strategyLabelClass}>估算市值限价</div>
+                    <div className="text-sm leading-6 text-muted-foreground">
+                      可选保险条件。开启后，只有当前含税估算 FDV 不高于设定值时才允许买入。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    aria-pressed={form.fdvLimitEnabled}
+                    className={[
+                      "inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border px-4 text-sm font-semibold transition",
+                      form.fdvLimitEnabled
+                        ? "border-primary/40 bg-primary text-primary-foreground shadow-[0_14px_34px_rgba(45,151,153,0.24)]"
+                        : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                    ].join(" ")}
+                    onClick={() => onChange({ fdvLimitEnabled: !form.fdvLimitEnabled })}
+                  >
+                    {form.fdvLimitEnabled ? "已开启" : "未开启"}
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  <div className={strategyFieldClass}>
+                    <StrategyFieldLabel
+                      label="最高含税 FDV"
+                      unit="万 USD"
+                      hint="开启后，自动买入仍必须先满足固定入场门槛；这里额外限制当前含税估算 FDV 不能高于该数值。关闭时该数值不参与判断。"
+                    />
+                    <Input
+                      className={strategyInputClass}
+                      inputMode="decimal"
+                      aria-label="最高含税估算 FDV，单位万 USD"
+                      placeholder="例如 300"
+                      value={form.fdvLimitWanUsd}
+                      onChange={(event) => onChange({ fdvLimitWanUsd: event.target.value })}
+                    />
+                  </div>
+                  <div className="rounded-[18px] border border-border/70 bg-background/60 px-3 py-3 text-xs leading-5 text-muted-foreground sm:w-64">
+                    {form.fdvLimitEnabled
+                      ? "保存后执行器热加载该上限；高于上限时跳过买入。"
+                      : "当前关闭，保存后不会改变原策略触发逻辑。"}
+                  </div>
+                </div>
+              </div>
+
               <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div className={strategyLabelClass}>买入金额</div>

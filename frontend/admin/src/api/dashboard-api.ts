@@ -280,6 +280,8 @@ export const dashboardApi = {
         dipBuyV: string;
         dipFromOwnCostPct: string;
         flatPausePct: string;
+        fdvLimitEnabled: boolean;
+        fdvLimitWanUsd: string;
         maxBuyV: string;
         maxProjectV: string;
         updatedReason?: string;

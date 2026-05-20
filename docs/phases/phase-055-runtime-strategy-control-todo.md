@@ -25,6 +25,7 @@
 - [x] `enabled=false` 时不发出 BuyIntent。
 - [x] `mode=simulate` 时不真实广播。
 - [x] 配置版本变化时写入 `strategy_config_reloaded` 日志。
+- [x] 2026-05-20 新增含税估算 FDV 限价运行时配置：默认关闭，开启后作为原有入场条件之后的额外保险门槛。
 
 ## 4. 前端
 
@@ -38,6 +39,7 @@
 - [x] 参数默认显示去掉无意义小数。
 - [x] 把单位放回字段内展示，并为“抄底阈值”“横盘跳过”补充和成本位一致的信息图标解释。
 - [x] 保存/停用前自动保证单笔上限不低于基础买入和抄底买入，并把后端原生字段错误转成中文业务提示。
+- [x] 2026-05-20 前端新增“估算市值限价”卡片：管理员可输入最高含税 FDV（万 USD），并独立开启/关闭。
 
 ## 5. 验证
 
@@ -56,3 +58,4 @@
 - [x] 2026-05-18 TDS 100x 完整窗口模拟通过：99 个 tick 约 1 分钟跑完，产生 `0.1/0.2/0.1/0.2 VIRTUAL` 四次 paper buy intent，项目预算 `0.6 VIRTUAL` 生效后阻断后续意图。
 - [x] 2026-05-18 模拟完成后停用本地 TDS 自动买入，回读 `enabled=false / mode=simulate / version=23`。
 - [x] 2026-05-18 历史样本驱动真实 canary 通过：sample `30` 运行中改买入参数后记录 `strategy_config_reloaded`，sample `55` / tax `95%` 自动买入使用更新后的 `0.01 VIRTUAL`，tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，receipt `0x1`。
+- [x] 2026-05-20 限价配置本地验证通过：`py_compile`、`test_launch_execution_pipeline.py`、`test_launch_prewarm_executor.py`、前端 `npm run build`。

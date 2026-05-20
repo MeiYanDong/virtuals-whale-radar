@@ -128,6 +128,47 @@ Readiness：
 - 如果后续要按 `25V` 或 `50V` 买入，需要在发射前完成 VIRTUAL buy allowance 提升。
 - T-35 到 T-5 之间必须再次复跑 readiness；只有项目状态进入可交易窗口且 simulation 变绿，才讨论是否升级 `autobuy/autosell`。
 
+## 2026-05-20 11:42 CST 限价策略部署后复查
+
+本次复查发生在新增“含税估算 FDV 限价”策略代码同步生产并重启 `writer / realtime / backfill` 后。
+
+生产健康：
+
+- `vwr@writer`、`vwr@realtime`、`vwr@backfill`、`vwr-signalhub`、`nginx` 均为 `active`。
+- `/health ok=true`，`queueSize=0`，`pendingTx=0`，`runtimePaused=false`。
+- SignalHub `/healthz` 返回 `{"status":"ok"}`。
+- `launch_strategy_runtime_configs` 已包含 `fdv_limit_enabled / fdv_limit_wan_usd` 两列。
+
+MTR 状态：
+
+- MTR 生产项目 id 仍为 `16`，状态 `scheduled`。
+- MTR 当前没有 runtime config override；新增 FDV 限价默认关闭，不改变现有只读观察行为。
+- 当前没有 MTR active fuse。
+- `vwr-launch-mtr-start.timer` 与 `vwr-launch-mtr-archive.timer` 均仍 active。
+- `vwr-launch-dryrun@MTR`、`vwr-launch-prewarm@MTR`、`vwr-launch-autobuy@MTR`、`vwr-launch-autosell@MTR` 当前均为 `inactive`。
+- `vwr-launch-mtr-start.service` 仍只启动 `dryrun / prewarm`，不启动真钱 `autobuy / autosell`。
+
+Readiness：
+
+- 输出文件：`data/backtests/phase-061-MTR-readiness-20260520-post-fdv-limit.json`。
+- `ready=false`，`derivedStatus=scheduled`。
+- `coreWorkflowReady=true`，`eventQueueSize=0`，`activeFuseCount=0`，`rpcSharedWithMain=false`。
+- `25V / 50V` 当前仍失败：`allowance / ethCall / estimateGas`。
+
+Execution RPC 压力观察：
+
+- 输出文件：`data/backtests/phase-061-MTR-rpc-pressure-20260520-post-fdv-limit.json`。
+- `green=true`。
+- `executionRpcSharedWithMain=false`。
+- `executionRpcSource=VWR_EXEC_HTTP_RPC_URL`。
+- `mainP90Ms=116.6`，`executionP90Ms=133.9`，`marketP90Ms=128.0`。
+
+结论：
+
+- 新限价策略代码与前端已部署，生产健康正常。
+- 这不等于 MTR 已经进入真钱自动买入 ready：当前项目未进入可交易窗口，且 `25V / 50V` 授权不足。
+- 如果明天要从只读演练升级为真钱执行，仍必须在窗口前完成预算确认、授权提升、runtime config 保存启用，以及 `autobuy / autosell` timer 范围确认。
+
 ## 当前判断
 
 1. `PROFIT` 是今天的即时候选，但时间更紧，且只有 C / medium。

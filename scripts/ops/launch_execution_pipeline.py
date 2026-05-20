@@ -40,6 +40,8 @@ class DynamicExecutionConfig:
     dip_buy_v: Decimal = Decimal("50")
     dip_from_own_cost_pct: Decimal = Decimal("20")
     flat_pause_pct: Decimal = Decimal("10")
+    fdv_limit_enabled: bool = False
+    fdv_limit_wan_usd: Decimal | None = None
     pause_after_buy_count: int = 1
     one_buy_per_tax_rate: bool = True
 
@@ -865,6 +867,12 @@ class DynamicAfter1StrategyEvaluator:
         entry = parse_decimal(row.get("estimatedFdvWanUsdWithTax"))
         if entry is None or entry <= 0:
             return StrategyDecision("skip", "missing_entry_fdv")
+        if self.config.fdv_limit_enabled:
+            limit = self.config.fdv_limit_wan_usd
+            if limit is None or limit <= 0:
+                return StrategyDecision("skip", "fdv_limit_not_configured")
+            if entry > limit:
+                return StrategyDecision("skip", "fdv_limit_not_met")
 
         pending = self.state.pending_pause_buy
         if pending and is_next_tax_period(pending.get("taxRate"), tax_key):
