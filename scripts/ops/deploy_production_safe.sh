@@ -93,6 +93,8 @@ FILES=(
   docs/phases/phase-055-runtime-strategy-control-todo.md
   docs/phases/phase-056-runtime-autosell-control-plan.md
   docs/phases/phase-056-runtime-autosell-control-todo.md
+  docs/phases/phase-061-operator-profit-workflow.md
+  docs/phases/phase-061-live-candidates-2026-05-20.md
   scripts/ops/backup_runtime.sh
   scripts/ops/approve_erc20_spender.py
   scripts/ops/approve_virtual_spender.py
