@@ -186,3 +186,30 @@
   - 删除同一订单后，状态变为 `canceled / enabled=false`；原有未启用订单 `id=4` 保持 `pending / enabled=false`。
   - 模拟器遵守生产门禁，测试时需临时设置 `enabled=true / mode=broadcast`，但脚本仍为 `paperOnly=true`，不会发交易；测试后已恢复 `enabled=false / mode=simulate`。
   - 报告：`data/execution/fdv-limit-api-hot-read-trigger-broadcast-20260520-150958-summary.json`，`data/execution/fdv-limit-api-hot-read-nontrigger-broadcast-20260520-150958-summary.json`。
+
+## 12. 速度优先优化边界（2026-05-20）
+
+当前已验证延迟：
+
+- 生产 MTR RPC 探针：execution RPC 关键读约 `111-141ms`，market snapshot 约 `118ms`，execution RPC 与主采集 RPC 不共用。
+- 历史热路径真实广播：`triggerToSendAckMs` 约 `343-450ms`。
+- 冷路径完整构造到发送 ACK 历史记录约 `2.6s`。
+
+本轮落地两项低风险优化：
+
+1. 限价单优先级互斥。
+   - 同一 tick 内，若已有含税估算 FDV 限价单进入触发/广播流程，则普通自动买入不再在该 tick 继续触发。
+   - 目的：避免限价单和普通策略同时满足时重复买入、增加 nonce 压力或过快消耗项目预算。
+   - 仍保留多个限价单同 tick 并列触发，按限价从高到低快速顺序发送。
+2. 普通自动买入 no-wait receipt。
+   - 普通自动买入广播后不等待 receipt，先释放热路径；后续循环后台补查 receipt，并把账本更新为 `receipt_success` 或 `receipt_failed`。
+   - 目的：把热路径从“等待区块确认”改为“发送 ACK 即释放”，避免阻塞下一 tick。
+   - 后台补查失败或 receipt 失败仍触发 fuse，不放松安全门禁。
+
+暂不在本轮实现：
+
+- 预签候选交易池。
+- 税率档本地预测卡点广播。
+- 50ms 轮询默认化。
+
+这些需要单独压测和 canary，不能和本轮互斥/no-wait 改动混在一起。

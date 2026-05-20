@@ -13,7 +13,7 @@ Environment=VWR_ENABLE_AUTO_BUY_BROADCAST=1
 EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
 EnvironmentFile=-/etc/virtuals-whale-radar/execution-rpc.env
 EnvironmentFile=/etc/virtuals-whale-radar/burner-wallet.env
-ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/launch_prewarm_executor.py --config /opt/virtuals-whale-radar/config.json --project %i --from-address 0x4a371b9b1bf1e7bc0700dff666631f0fc5c96624 --secret-file /etc/virtuals-whale-radar/burner-wallet.env --rule gate_5k_tax95_fdv_one_per_tax --mode broadcast --enable-broadcast --max-buy-v 50 --max-project-v 150 --output-jsonl /opt/virtuals-whale-radar/data/execution/launch-autobuy-%i.jsonl --exit-after-end-sec 300
+ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/launch_prewarm_executor.py --config /opt/virtuals-whale-radar/config.json --project %i --from-address 0x4a371b9b1bf1e7bc0700dff666631f0fc5c96624 --secret-file /etc/virtuals-whale-radar/burner-wallet.env --rule gate_5k_tax95_fdv_one_per_tax --mode broadcast --enable-broadcast --max-buy-v 50 --max-project-v 150 --live-poll-sec 0.1 --min-poll-sec 0.05 --no-wait-receipt --output-jsonl /opt/virtuals-whale-radar/data/execution/launch-autobuy-%i.jsonl --exit-after-end-sec 300
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15

@@ -1089,6 +1089,105 @@ async def reconcile_fdv_limit_order_receipts(
     return reconciled
 
 
+async def reconcile_standard_buy_receipts(
+    *,
+    cfg: Any,
+    bot: VirtualsBot,
+    rpc: RPCClient,
+    project_row: dict[str, Any],
+    project_name: str,
+    from_address: str,
+) -> list[dict[str, Any]]:
+    rows = bot.storage.list_launch_execution_records(project_name, limit=500)
+    token_addr = str(project_row.get("token_addr") or "").strip()
+    reconciled: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("strategy") or "") == DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY:
+            continue
+        if str(row.get("action") or "") != "would_buy":
+            continue
+        if int(row.get("trade_sent") or 0) != 1:
+            continue
+        if str(row.get("status") or "") != "broadcast_sent_no_receipt_wait":
+            continue
+        if str(row.get("receipt_json") or "").strip():
+            continue
+        tx_hash = str(row.get("broadcast_tx_hash") or "").strip()
+        intent_id = str(row.get("intent_id") or "").strip()
+        strategy_name = str(row.get("strategy") or "").strip()
+        rule_name = str(row.get("rule_name") or "").strip()
+        mode = str(row.get("mode") or "prewarm_broadcast").strip()
+        if not tx_hash or not intent_id or not strategy_name or not rule_name:
+            continue
+        try:
+            receipt = await rpc.call("eth_getTransactionReceipt", [tx_hash])
+        except Exception as exc:
+            reconciled.append(
+                {
+                    "intentId": intent_id,
+                    "txHash": tx_hash,
+                    "status": "receipt_lookup_failed",
+                    "error": str(exc),
+                }
+            )
+            continue
+        if not receipt:
+            continue
+
+        receipt_status = str(receipt.get("status") or "")
+        receipt_ok = receipt_status in {"0x1", "1"}
+        receipt_deltas = receipt_transfer_deltas(
+            receipt,
+            owner=from_address,
+            virtual_token=cfg.virtual_token_addr,
+            target_token=token_addr,
+        )
+        receipt_payload = receipt_summary(receipt, receipt_deltas)
+        update_ledger_stage(
+            bot,
+            intent_id=intent_id,
+            project_name=project_name,
+            strategy_name=strategy_name,
+            rule_name=rule_name,
+            mode=mode,
+            status="receipt_success" if receipt_ok else "receipt_failed",
+            reason="receipt_observed" if receipt_ok else "receipt_failed",
+            simulation=json.loads(row.get("simulation_json") or "null"),
+            signed_tx_hash=str(row.get("signed_tx_hash") or "") or None,
+            broadcast_tx_hash=tx_hash,
+            receipt=receipt_payload,
+            failure_stage=None if receipt_ok else "receipt",
+            failure_reason=None if receipt_ok else "receipt_failed",
+            trade_sent=True,
+            broadcast_enabled=True,
+        )
+        active_fuse = None
+        if not receipt_ok:
+            fuse = trigger_fuse(
+                bot,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+                intent_id=intent_id,
+                failure_stage="receipt",
+                failure_reason="receipt_failed",
+                details={"txHash": tx_hash, "receipt": receipt_payload},
+            )
+            active_fuse = compact_fuse(fuse)
+        reconciled.append(
+            {
+                "intentId": intent_id,
+                "strategy": strategy_name,
+                "rule": rule_name,
+                "txHash": tx_hash,
+                "status": "receipt_success" if receipt_ok else "receipt_failed",
+                "receipt": receipt_payload,
+                "activeFuse": active_fuse,
+            }
+        )
+    return reconciled
+
+
 async def async_main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
@@ -1217,6 +1316,30 @@ async def async_main() -> None:
                         }
                         append_jsonl(output_jsonl, receipt_payload)
                         print(json.dumps(receipt_payload, ensure_ascii=False), flush=True)
+                    reconciled_standard_buys = await reconcile_standard_buy_receipts(
+                        cfg=cfg,
+                        bot=bot,
+                        rpc=rpc,
+                        project_row=project_row,
+                        project_name=project_name,
+                        from_address=args.from_address,
+                    )
+                    if reconciled_standard_buys:
+                        standard_receipt_payload = {
+                            "event": "standard_buy_receipts",
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": rule.name,
+                            "strategy": evaluator.config.name,
+                            "mode": executor_mode(args),
+                            "readOnly": args.mode != "broadcast",
+                            "tradeSent": False,
+                            "broadcastEnabled": broadcast_enabled(args),
+                            "receipts": reconciled_standard_buys,
+                        }
+                        append_jsonl(output_jsonl, standard_receipt_payload)
+                        print(json.dumps(standard_receipt_payload, ensure_ascii=False), flush=True)
                     latest_runtime_config = bot.storage.get_launch_strategy_runtime_config_by_project(project_name)
                     latest_runtime_version = int(latest_runtime_config.get("version") or 0) if latest_runtime_config else 0
                     if latest_runtime_version != runtime_config_version:
@@ -1253,6 +1376,7 @@ async def async_main() -> None:
                     ):
                         runtime_block_reason = "runtime_config_mode_not_broadcast"
 
+                    fdv_limit_order_attempted = False
                     if not runtime_block_reason:
                         open_limit_orders = bot.storage.list_launch_fdv_limit_orders(
                             project_id=int(project_row.get("id") or 0),
@@ -1269,6 +1393,7 @@ async def async_main() -> None:
                             claimed = bot.storage.mark_launch_fdv_limit_order_triggering(int(limit_order.get("id") or 0))
                             if not claimed or str(claimed.get("status") or "") != "triggering":
                                 continue
+                            fdv_limit_order_attempted = True
                             counts["fdv_limit_order"] = counts.get("fdv_limit_order", 0) + 1
                             fdv_args = copy.copy(effective_args)
                             order_buy_v = decimal_value(claimed.get("buy_v"))
@@ -1352,6 +1477,27 @@ async def async_main() -> None:
                             current_fingerprint != previous_fingerprint
                             or (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec)
                         )
+                    elif fdv_limit_order_attempted:
+                        counts["skip"] = counts.get("skip", 0) + 1
+                        payload = {
+                            "event": "standard_buy_skipped_after_fdv_limit_order",
+                            "reason": "fdv_limit_order_priority",
+                            "at": utc_iso(),
+                            "atCst": cst_iso(),
+                            "project": project_name,
+                            "rule": rule.name,
+                            "strategy": evaluator.config.name,
+                            "mode": executor_mode(args),
+                            "sampleIndex": sample_count - 1,
+                            "readOnly": args.mode != "broadcast",
+                            "tradeSent": False,
+                            "broadcastEnabled": broadcast_enabled(args),
+                            "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
+                            "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
+                            "executionRpcSource": rpc_selection.source,
+                            "sample": compact_sample(sample),
+                        }
+                        should_log = True
                     else:
                         state_before_decision = copy.deepcopy(evaluator.state) if args.mode == "broadcast" else None
                         decision = evaluator.evaluate(sample, index=sample_count - 1)

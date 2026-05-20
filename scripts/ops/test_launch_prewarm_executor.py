@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from argparse import Namespace
 from decimal import Decimal
@@ -20,6 +21,7 @@ from launch_prewarm_executor import (  # noqa: E402
     eligible_fdv_limit_orders,
     fdv_limit_order_intent,
     rebuild_strategy_state_from_sent_rows,
+    reconcile_standard_buy_receipts,
     runtime_dynamic_config,
     runtime_effective_args,
     sample_tax_fdv_wan,
@@ -141,10 +143,94 @@ def test_fdv_limit_order_helpers() -> None:
     assert_eq(intent["fdvLimitOrderId"], 1, "fdv order id")
 
 
+class FakeStorage:
+    def __init__(self) -> None:
+        self.updates = []
+        self.fuses = []
+
+    def list_launch_execution_records(self, project_name: str, limit: int = 500):
+        return [
+            {
+                "intent_id": "standard-1",
+                "project": project_name,
+                "strategy": "dynamic_25v_dip20_after1_flat10_no_cap",
+                "rule_name": "gate_5k_tax95_fdv_one_per_tax",
+                "mode": "prewarm_broadcast",
+                "status": "broadcast_sent_no_receipt_wait",
+                "action": "would_buy",
+                "trade_sent": 1,
+                "broadcast_tx_hash": "0xabc",
+                "signed_tx_hash": "0xdef",
+                "simulation_json": '{"green":true}',
+            },
+            {
+                "intent_id": "limit-1",
+                "project": project_name,
+                "strategy": "tax_fdv_limit_order",
+                "rule_name": "tax_fdv_limit_order",
+                "mode": "prewarm_broadcast",
+                "status": "broadcast_sent_no_receipt_wait",
+                "action": "would_buy",
+                "trade_sent": 1,
+                "broadcast_tx_hash": "0xlimit",
+                "simulation_json": '{"green":true}',
+            },
+        ]
+
+    def upsert_launch_execution_record(self, record):
+        self.updates.append(record)
+        return record
+
+    def trigger_launch_execution_fuse(self, **kwargs):
+        self.fuses.append(kwargs)
+        return {
+            "is_active": 1,
+            "project": kwargs.get("project"),
+            "strategy": kwargs.get("strategy"),
+            "rule_name": kwargs.get("rule_name"),
+            "failure_stage": kwargs.get("failure_stage"),
+            "failure_reason": kwargs.get("failure_reason"),
+        }
+
+
+class FakeBot:
+    def __init__(self) -> None:
+        self.storage = FakeStorage()
+
+
+class FakeRpc:
+    async def call(self, method, params):
+        assert_eq(method, "eth_getTransactionReceipt", "receipt lookup method")
+        assert_eq(params, ["0xabc"], "receipt lookup tx")
+        return {"status": "0x1", "blockNumber": "0x1", "gasUsed": "0x5208", "logs": []}
+
+
+def test_reconcile_standard_buy_receipts_updates_only_standard_buys() -> None:
+    bot = FakeBot()
+    cfg = Namespace(virtual_token_addr="0x" + "1" * 40)
+    rows = asyncio.run(
+        reconcile_standard_buy_receipts(
+            cfg=cfg,
+            bot=bot,  # type: ignore[arg-type]
+            rpc=FakeRpc(),  # type: ignore[arg-type]
+            project_row={"token_addr": "0x" + "2" * 40},
+            project_name="TST",
+            from_address="0x" + "3" * 40,
+        )
+    )
+    assert_eq(len(rows), 1, "standard receipt count")
+    assert_eq(rows[0]["status"], "receipt_success", "standard receipt status")
+    assert_eq(len(bot.storage.updates), 1, "ledger update count")
+    assert_eq(bot.storage.updates[0]["intent_id"], "standard-1", "standard receipt intent")
+    assert_eq(bot.storage.updates[0]["status"], "receipt_success", "standard ledger status")
+    assert_eq(bot.storage.fuses, [], "no fuse on successful receipt")
+
+
 def main() -> None:
     test_rebuild_strategy_state_from_sent_rows()
     test_runtime_config_helpers()
     test_fdv_limit_order_helpers()
+    test_reconcile_standard_buy_receipts_updates_only_standard_buys()
     print("launch_prewarm_executor tests ok")
 
 

@@ -64,3 +64,7 @@
 - [x] 2026-05-18 模拟完成后停用本地 TDS 自动买入，回读 `enabled=false / mode=simulate / version=23`。
 - [x] 2026-05-18 历史样本驱动真实 canary 通过：sample `30` 运行中改买入参数后记录 `strategy_config_reloaded`，sample `55` / tax `95%` 自动买入使用更新后的 `0.01 VIRTUAL`，tx `0x541481388328fb7a8181b05ed749518c0fffc605b05badada5b5a8db584062e5`，receipt `0x1`。
 - [x] 2026-05-20 限价配置本地验证通过：`py_compile`、`test_launch_execution_pipeline.py`、`test_launch_prewarm_executor.py`、前端 `npm run build`。
+- [x] 2026-05-20 速度优先优化：限价单触发后同 tick 跳过普通自动买入，避免双策略同时买入。
+- [x] 2026-05-20 速度优先优化：普通自动买入支持 no-wait receipt，并由后续循环后台补查 receipt 更新账本和 fuse。
+- [x] 2026-05-20 速度优先优化：生产 autobuy systemd 模板默认启用 `--no-wait-receipt`，并将 live poll 调整到 `0.1s`。
+- [x] 2026-05-20 速度优先优化验证：`py_compile`、`test_launch_prewarm_executor.py`、`test_launch_execution_pipeline.py` 本地通过；`test_launch_prewarm_executor.py` 新增普通买入 no-wait receipt 后台补查单测。
