@@ -444,6 +444,9 @@ export interface LaunchStrategyRuntimeConfigItem {
   flatPausePct: string;
   fdvLimitEnabled: boolean;
   fdvLimitWanUsd: string;
+  followEnabled: boolean;
+  followWallet: string;
+  followRatioPct: string;
   maxBuyV: string;
   maxProjectV: string;
   version: number;
@@ -602,6 +605,9 @@ export interface OverviewBoardItem {
   breakevenFdvV?: string | null;
   breakevenFdvUsd?: string | null;
   isTeamCandidate?: boolean;
+  hasBuyRouteData?: boolean;
+  hasVirtualBuy?: boolean;
+  hasNonVirtualBuy?: boolean;
   costExcluded?: boolean;
   costExclusionReason?: string | null;
   teamOverrideAction?: "include" | "exclude" | null;

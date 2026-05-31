@@ -262,6 +262,19 @@ StrategyEvaluator
 - 理想路径 `< 1s`。
 - receipt 单独记录，不用于判断是否满足第一买入速度。
 
+### 4.8.1 正常税率项目跟单策略
+
+2026-05-31 新增默认跟单策略，用于正常税率 live 窗口：
+
+- 跟单地址：`0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`。
+- 触发范围：仅目标项目 `live` 窗口内，该地址在同一项目的买入事件。
+- 买入金额：`floor(对方消耗 VIRTUAL / 4)`；结果小于 `1V` 时只记 skipped，不广播。
+- 管理员控制：`launch_strategy_runtime_configs` 保存 `follow_enabled / follow_wallet / follow_ratio_pct`；前端只展示当前地址，支持启用/停用和修改比例，默认 `25%`。
+- 优先级：普通大户榜单策略 > 跟单策略 > 含税估算 FDV 限价单。
+- 预算口径：`vwr-launch-autobuy@.service` 使用 `--project-cap-scope project`，普通大户策略、跟单策略、FDV 限价单共享同一个 `max_project_v`。
+- 防重复：同一 source tx hash 在跟单账本中只允许触发一次；跳过记录也会阻断重复处理。
+- 关闭方式：执行器支持 `--disable-follow-trade`，默认不关闭。
+
 ### 4.9 RPC Isolation
 
 采集 RPC 和自动买入 RPC 必须分层处理。
@@ -289,6 +302,71 @@ StrategyEvaluator
 - 触发时只允许走热路径广播。
 - 所有日志必须脱敏 RPC token。
 - 任意 RPC 异常必须记录并熔断当前自动执行，不影响主采集服务。
+
+### 4.10 无狙击税开盘秒买执行器
+
+2026-05-24 针对 ORION 这类 `BONDING_V5 + antiSniperTaxType=0` 项目，新增独立开盘秒买链路：
+
+- 执行器：`scripts/ops/launch_open_sniper_executor.py`。
+- 适用边界：只用于官方上下文确认无反狙击税的项目；broadcast 模式禁止跳过官方 no-tax 检查。
+- 触发方式：不等待固定开盘时刻单次发送，而是在开盘前进入探测窗口，持续对预构造交易做 `eth_call`；任一 probe 返回可买，立刻广播。
+- 阶段划分：
+  - T-600s：prepare，维护项目、税率、余额、授权、nonce/fee/gas、订单绑定和预签候选。
+  - T-300s：high probe，生产配置 `0.05s` poll，`2` workers。
+  - T-90s：ultra probe，生产配置 `0.02s` poll，`2` workers。
+- RPC 方式：
+  - `VWR_PROBE_HTTP_RPC_URLS` 用于并发探测。
+  - `VWR_BROADCAST_HTTP_RPC_URLS` 用于同一 signed raw tx fanout 广播。
+  - raw transaction 只签一次，同一 nonce 同一笔交易发到多个 provider，不并列签多笔交易。
+  - 日志只输出脱敏 label，不输出 endpoint token。
+- 预算边界：ORION 当前 systemd 模板为首笔 `100 VIRTUAL`，项目上限 `100 VIRTUAL`；首笔成功后，后续只保留独立含税 FDV 限价单。
+- 2026-05-26 复盘修正：
+  - ORION 官方 start time 后，链上首批成交实际出现在 `00:01:09 CST`，说明无税项目仍可能存在“官方时间已到但 direct buy 继续 revert”的延迟窗口。
+  - 旧版本在 high/ultra probe 阶段没有按 `presign_refresh_sec` 持续重签；如果开盘后价格被第一批买入推高，旧 `amountOutMin` 会卡住 `eth_call`，导致直到候选过期才重新签名。
+  - 执行器已改为 high/ultra 阶段也持续按 `presign_refresh_sec` 重签，生产模板降为 `0.5s`；并在开盘后遇到指定报价失效 selector 时立即重签并同轮复探。
+  - 2026-05-26 二次修正：无税开盘秒买不再绑定开盘前池子报价，不再读取 reserve 计算保护价；`open-sniper` 直接构造 `buy(amountIn, token, amountOutMin=1, deadline)`，用极低 `amountOutMin` 表达市价抢买。`eth_call` 只负责判断当前是否可买，避免旧报价在开盘瞬间失效。
+  - 生产实例若存在项目级 systemd drop-in，会覆盖模板 `ExecStart`；本次已同步修复 ORION drop-in，保留 `300V` 与 `5/6 gwei`，同时补齐 `--presign-refresh-sec 0.5` 和 `--requote-revert-selectors 0x850c6f76`。后续任意单项目覆盖必须同时核对热路径参数。
+  - 增加 `--post-trigger-direct-fire` 作为显式准点直发开关，但默认不启用；ORION 证明盲发可能在合约未开放窗口烧掉 nonce，应优先使用“热重签 + 探测成功即 fanout”的安全极速路径。
+  - 最优版热路径新增广播后短确认：首轮 raw tx fanout 后快速查 receipt/nonce；若同 nonce 未确认且交易未过 deadline，则同 nonce 提高 fee 后二次 fanout，减少 mempool 卡单风险。
+  - 无税项目的 follow-up 限价单可启用 `--require-open-sniper-before-fdv-limit`：首笔 open-sniper 未发出前，FDV 限价单只记录阻断状态，不抢开盘 nonce。
+  - `schedule_launch_services.py` 同时选择 `open-sniper,fdv-limit` 时会自动生成 `vwr-launch-fdv-limit@<PROJECT>.service.d/10-require-open-sniper.conf`，避免下次靠人工记忆配置 gate。
+  - 通用化入口：`schedule_launch_services.py --auto-profile` 会读取目标项目的 Virtuals 官方 `launchInfo`，复用 `resolve_buy_tax_schedule` 分类 profile。`no_tax_open_sniper` 自动调度 `open-sniper,fdv-limit,autosell`；`taxed_60s/taxed_98m/taxed_default` 自动调度正常 `dryrun,prewarm,autobuy,autosell`；`unknown_blocked` 直接失败，不生成真实调度。
+  - `--auto-profile` 若未传 `--start-at`，使用生产库 `managed_projects.start_at`；输出 JSON 会包含 `launchProfile` 证据，便于发射前人工核对官方字段。
+
+压测结论：
+
+- 本地 Base RPC smoke：Chainstack execution p50 约 `120ms`、p90 约 `139ms`；Ankr p50 约 `251ms`、p90 约 `291ms`。
+- 本地可买成功 race：`2` workers p50 约 `115ms`、p90 约 `149ms`；`64` workers p50 约 `287ms`，说明盲目加 worker 会变慢。
+- 远端 execution RPC smoke：Chainstack p50 约 `68ms`、p90 约 `72ms`；Ankr p50 约 `206ms`、p90 约 `228ms`。
+- 远端 ORION closed-probe 压测：`2` workers 约 `7.7 eth_call/s`、平均 `241ms`；`64` workers 可承受约 `160 eth_call/s`，但平均延迟约 `375ms`。
+- 生产选择：稳定不报错前提下，T-300/T-90 均使用 `2` workers；这是当前实测的最低延迟组合。
+
+2026-05-24 生产落地：
+
+- ORION 已加入生产 `managed_projects`，`signalhub_project_id=76475`，start time 为 `2026-05-26 00:00:54 CST`。
+- 官方 no-tax 校验通过：`factory=BONDING_V5`、`antiSniperTaxType=0`、`buyTaxRate=1`。
+- 已安装 systemd 模板：
+  - `deploy/systemd/vwr-launch-open-sniper@.service`
+  - `deploy/systemd/vwr-launch-fdv-limit@.service`
+- 已创建 timer：
+  - `vwr-launch-orion-start.timer`：`2026-05-25 23:30:54 CST` 拉起 `open-sniper` 和 `fdv-limit`。
+  - `vwr-launch-orion-archive.timer`：`2026-05-26 01:49:54 CST` 归档。
+- 核验状态：timer enabled；`vwr-launch-open-sniper@ORION.service` 和 `vwr-launch-fdv-limit@ORION.service` 当前 inactive，等待 timer；生产 `/health` 与 `/healthz` 正常。
+- 2026-05-24 15:49 CST preflight：
+  - core workflow ready，event queue `0`，pending tx `0`，active fuse `0`。
+  - execution RPC 与主采集分离，probe/broadcast RPC 池已配置。
+  - VIRTUAL allowance 已够 `300V`，Base ETH gas 充足。
+  - burner 当前 VIRTUAL 余额约 `1.67V`，不足首笔 `100V`；发射前必须转入足额 VIRTUAL，否则 open-sniper 会在 readiness 阶段阻断，不触发 active fuse。
+  - ORION 当前无含税 FDV 限价单；`fdv-limit` 服务会启动但没有订单可执行。
+- ORION 无狙击税自动卖出约定：
+  - 自动卖出默认关闭，由管理员在前端手动开启。
+  - `autosell` 服务随 ORION timer 一起启动，运行时配置 disabled 时只记录阻断，不真实卖出；这样管理员手动开启后执行器可以下一轮热加载生效。
+  - 不再单独设置“无税卖出窗口”；当前 `1%` 税率天然满足现有 `max_tax_rate=30` 安全门，真正卖出仍必须同时满足收益率与大单条件。
+  - ORION 配置使用 `dual_roi_large_buy_sell`，显式保持 `customRules=[]`，避免自定义多规则累加语义；卖出档位保持目标仓位 `30% / 50%`。
+  - 冷却时间 `10s`，大单回看窗口 `30s`。
+  - 2026-05-24 21:31 CST 已执行生产变更：`vwr-launch-orion-start.service` 现在同时启动 `vwr-launch-open-sniper@ORION.service`、`vwr-launch-fdv-limit@ORION.service` 和 `vwr-launch-autosell@ORION.service`。
+  - 2026-05-24 21:31 CST 已写入 ORION disabled 自动卖出配置：`enabled=0`、`mode=simulate`、`customRules=[]`、冷却 `10s`、大单回看 `30s`。
+  - 只读验证通过：autosell simulate once 读取到 disabled 配置并输出 `runtime_config_disabled`，不签名、不广播、不卖出。
 
 真实 canary 结果：
 
@@ -521,6 +599,7 @@ ROO 部署状态：
 - 问题：ROO 使用 `vwr-launch-roo-start.timer` 专用 timer，下一次项目不能继续手工复制 ROO 单项目启动文件。
 - 新增通用编排脚本：`scripts/ops/schedule_launch_services.py`。
   - 输入：`--project <SYMBOL>` 与 `--start-at "YYYY-MM-DD HH:MM:SS"`。
+  - 可选：`--auto-profile`，按官方 tax schedule 自动选择无税秒狙击或正常税率服务。
   - 默认在发射前 `35` 分钟启动 `dryrun / prewarm / autobuy / autosell`。
   - 默认按 `99` 分钟发射窗口 + `10` 分钟延迟创建归档 timer。
   - 默认只输出计划；只有显式 `--apply` 才写入 systemd unit 并执行 `systemctl daemon-reload / enable --now`。
@@ -573,6 +652,8 @@ ROO 部署状态：
 - 单项目白名单：通过 `--project` 指定，当前 ROO 单项目服务。
 - 单笔上限：`--max-buy-v`，ROO 当前为 `50V`。
 - 单项目上限：`--max-project-v`，ROO 当前为 `150V`。
+- 项目级预算：生产 autobuy 模板使用 `--project-cap-scope project`，同一项目里普通买入、跟单买入、FDV 限价单会共同计入项目上限。
+- 跟单策略：默认开启，仅 live 窗口生效；普通大户策略未出手时才评估跟单，跟单未出手时才进入 FDV 限价单。
 - 同一税率档最多一次：执行器会读取 `launch_execution_ledger.trade_sent=1` 记录阻断重复广播。
 - 重启恢复：执行器启动时从 `launch_execution_ledger.trade_sent=1` 重建已买税率、自有加权成本和上一税率买点，避免 systemd 重启后丢失 dip20 / 横盘暂停判断。
 - `sign-ready/broadcast` 下任意 simulation/sign/prewarm/broadcast/receipt 异常熔断；`simulate` 只读模式只记账不熔断，避免灰度观察误挡真实执行。

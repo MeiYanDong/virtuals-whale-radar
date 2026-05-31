@@ -111,8 +111,7 @@ def emit_output(args: argparse.Namespace, output: dict[str, Any]) -> None:
     )
 
 
-async def async_main() -> None:
-    args = parse_args()
+async def build_readiness_report(args: argparse.Namespace) -> dict[str, Any]:
     cfg = load_config(args.config)
     rpc_selection = resolve_execution_rpc_url(cfg)
     rpc_url = rpc_selection.rpc_url
@@ -145,8 +144,7 @@ async def async_main() -> None:
             output["reason"] = "managed_project_not_found"
             output["reasons"] = ["managed_project_not_found"]
             output["error"] = str(exc)
-            emit_output(args, output)
-            return
+            return output
         project_name = str(project_row.get("name") or args.project).strip()
         project_status = bot.derive_managed_project_status(project_row)
         token_addr = str(project_row.get("token_addr") or "").strip()
@@ -294,6 +292,12 @@ async def async_main() -> None:
                             reasons.append(f"{row.get('amountV')}V:{failed}")
                     output["reasons"] = reasons
 
+    return output
+
+
+async def async_main() -> None:
+    args = parse_args()
+    output = await build_readiness_report(args)
     emit_output(args, output)
 
 

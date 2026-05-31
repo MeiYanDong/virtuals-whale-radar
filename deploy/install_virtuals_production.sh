@@ -247,6 +247,18 @@ server {
 
     client_max_body_size 20m;
 
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+
+    location = /.well-known/security.txt {
+        default_type text/plain;
+        return 200 "Contact: mailto:noreply@mail.${DOMAIN}\nPreferred-Languages: zh, en\nCanonical: https://${DOMAIN}/.well-known/security.txt\n";
+    }
+
     location = / {
         return 302 /auth/login;
     }

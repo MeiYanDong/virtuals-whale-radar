@@ -1076,6 +1076,9 @@
 - [x] `broadcast` 模式下钱包 `balance / allowance` 不足只记录 `readiness_not_ready`，不触发 active fuse；未发出交易时回滚本次策略内存状态，避免稍后转入资金后被误判为已买。
 - [x] 修复 `launch_execution_ledger` 后续异常更新把已发送交易 `trade_sent=1 / broadcast_enabled=1` 覆盖回 `0` 的风险，保护同税率档防重和项目上限统计。
 - [x] 生产预热执行器已接入 active fuse 检查和 simulation/sign/prewarm/broadcast/receipt 异常熔断。
+- [x] 新增正常税率 live 窗口跟单策略：默认跟随 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，按 `floor(对方消耗 VIRTUAL / 4)` 买入；优先级为普通大户策略 > 跟单策略 > 含税估算 FDV 限价单。
+- [x] 跟单策略接入自动买入运行时控制：前端展示跟单买入，支持启用/停用和修改比例；执行器热加载 `followEnabled / followRatioPct`。
+- [x] 生产 autobuy 模板使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算上限。
 - [x] `prewarm_simulate` 模式下余额/授权不足记录为 `readiness_not_ready`，不触发 active fuse；`sign-ready` 仍会在 simulation 不绿时触发熔断。
 - [x] 本地 TDS ended 烟测通过：无 intent、无签名、无广播。
 - [x] 接入生产 systemd `simulate` 灰度服务：`vwr-launch-prewarm@ROO.service`，只读、不读取私钥、不签名、不广播。
@@ -1273,7 +1276,20 @@
 - [x] 新增通用 live 项目启动编排脚本：`scripts/ops/schedule_launch_services.py`。
 - [x] 新增本地 prewarm systemd 模板：`deploy/systemd/vwr-launch-prewarm@.service`。
 - [x] 新增通用启动编排测试：`scripts/ops/test_schedule_launch_services.py`。
-- [ ] 下一次真实 live 项目使用 `schedule_launch_services.py --project <SYMBOL> --start-at <SERVER_LOCAL_TIME> --apply` 创建启动与归档 timer。
+- [x] 2026-05-24 ORION 使用 `schedule_launch_services.py --project ORION --start-at "2026-05-26 00:00:54" --services open-sniper,fdv-limit --apply` 创建启动与归档 timer。
+- [x] 新增无狙击税开盘秒买执行器 `scripts/ops/launch_open_sniper_executor.py`，并完成本地/远端 smoke、压测和 no-tax 官方上下文核验。
+- [x] 新增生产模板 `deploy/systemd/vwr-launch-open-sniper@.service` 与 `deploy/systemd/vwr-launch-fdv-limit@.service`；ORION start timer 会在 `2026-05-25 23:30:54 CST` 拉起。
+- [x] ORION 生产核验：timer enabled，open-sniper/fdv-limit 服务当前 inactive 等待 timer，`/health` 与 `/healthz` 正常。
+- [x] 2026-05-24 15:49 CST ORION preflight：core workflow ready，execution RPC 分离，active fuse `0`，allowance `300V` 和 Base ETH gas 充足；当前 burner VIRTUAL 约 `1.67V`，不足首笔 `100V`，发射前必须转入足额 VIRTUAL。
+- [x] 2026-05-24 15:49 CST ORION 暂无含税 FDV 限价单；`fdv-limit` 服务会启动但无订单可执行。
+- [x] 明确 ORION 无税自动卖出：默认关闭、用户手动开启；`1%` 税率天然满足 `max_tax_rate=30`，不再单独设置 `tax<=5%`；配置保持 `dual_roi_large_buy_sell + customRules=[]`，冷却 `10s`、大单回看 `30s`、卖出目标仓位 `30%/50%`。
+- [x] 2026-05-24 21:31 CST 将 ORION timer 扩展到 `open-sniper,fdv-limit,autosell`，并写入 disabled 的 ORION 自动卖出运行时配置；只读 autosell 检查输出 `runtime_config_disabled`，生产健康正常。
+- [x] 2026-05-26 ORION open-sniper 复盘修复：high/ultra 阶段按 `presign_refresh_sec` 持续重签，生产模板 `10s -> 0.5s`；开盘后命中报价失效 selector 立即重签并同轮复探。
+- [x] 2026-05-26 二次修正 open-sniper 执行语义：无税开盘秒买不再绑定开盘前池子报价，改为 direct buy calldata，`amountOutMin=1`，用极低最小到账表达市价抢买；普通 taxed 策略和 FDV 限价单仍保留报价/限价保护。
+- [x] 2026-05-26 远端 ORION 项目级 drop-in 已同步修复：保留 `300V` 与 `5/6 gwei`，补齐 `--presign-refresh-sec 0.5` 和 `--requote-revert-selectors 0x850c6f76`，避免实例覆盖模板后继续走旧参数。
+- [x] 2026-05-26 open-sniper 增加显式准点直发开关 `--post-trigger-direct-fire`，默认关闭，避免官方时间到但链上仍关闭时烧 nonce。
+- [x] 2026-05-26 open-sniper 最优版热路径：广播后短窗口确认 receipt/nonce；未确认时同 nonce 自动提高手续费重新 fanout。FDV 限价单新增 `--require-open-sniper-before-fdv-limit`，无税项目可先等首笔 open-sniper 发出，再放开限价单；调度脚本同时选择 `open-sniper,fdv-limit` 时会自动生成 gate drop-in。
+- [x] 2026-05-26 通用无税秒狙击 profile：`schedule_launch_services.py --auto-profile` 读取官方 `launchInfo`，no-tax 自动选 `open-sniper,fdv-limit,autosell`，60s/98m 走正常服务，未知税率阻断；本地 TDS dry-run 验证识别为 `taxed_60s`。
 - [ ] 下一次真实 live 项目结束后，检查 archive `sampleCount/eventCount/ledgerCount`，并确认 `launch-samples-<SYMBOL>.jsonl` 正常增长。
 
 ## Phase 61：自用实盘盈利闭环
@@ -1289,5 +1305,6 @@
 - [x] 对 `PROFIT` / `MTR` 完成非广播 prewarmed buy 模拟：均未广播、未发送交易；当前 direct buy 在发射前 revert，25 V 预算还需要提前提高 VIRTUAL 授权。
 - [x] 选择 `MTR` 作为第一次只读 runbook 演练对象：已加入生产 managed/watch，并创建 `dryrun,prewarm` 启动 timer 与归档 timer。
 - [x] 2026-05-20 11:15 CST 复查 MTR：生产健康、timer、fuse 与 execution RPC 均正常；readiness 仍为 `ready=false`，5V 也因未到可交易状态 revert，25/50V 还需提高 allowance。
+- [x] 2026-05-21 修复聚合器买入漏解析：`ETH/WETH -> VIRTUAL -> 内盘买入` 路径旧 parser 因路由合约净 VIRTUAL 流出为 `0` 被误判为非买入；`parse_receipt_for_launch` 已按 launch outflow 兜底。已对当前生产库全部具备 `token_addr + internal_pool_addr` 的受管项目执行全窗口 replay，MTR `86 -> 319`、ROO `505 -> 938`、TDS `128 -> 265`、ISC `322 -> 513`、SR `602 -> 655`，所有项目 final audit 均 `green / repair=0`。
 - [ ] 若要把 MTR 从只读演练升级为真钱实盘，先确认预算、授权、自动买入/自动卖出 timer 范围。
 - [ ] 下一次真实 live 项目按 Phase 061 runbook 创建启动与归档 timer，并在窗口后完成一页复盘。

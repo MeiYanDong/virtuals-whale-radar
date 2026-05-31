@@ -18,15 +18,21 @@ if str(OPS_DIR) not in sys.path:
     sys.path.insert(0, str(OPS_DIR))
 
 from launch_prewarm_executor import (  # noqa: E402
+    DEFAULT_FOLLOW_TRADE_RULE,
+    DEFAULT_FOLLOW_TRADE_STRATEGY,
     SignedBuyCandidate,
     compact_runtime_config,
     eligible_fdv_limit_orders,
     fdv_limit_order_intent,
+    follow_trade_buy_size,
+    follow_trade_source_seen,
+    open_sniper_first_buy_sent,
     rebuild_strategy_state_from_sent_rows,
     reconcile_standard_buy_receipts,
     runtime_dynamic_config,
     runtime_effective_args,
     sample_tax_fdv_wan,
+    sent_project_v_all_strategies,
     signed_candidate_key,
     take_signed_candidate,
 )
@@ -90,6 +96,9 @@ def test_runtime_config_helpers() -> None:
         "flat_pause_pct": "12",
         "fdv_limit_enabled": 1,
         "fdv_limit_wan_usd": "300",
+        "follow_enabled": 1,
+        "follow_wallet": "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d",
+        "follow_ratio_pct": "50",
         "max_buy_v": "200",
         "max_project_v": "500",
         "updated_at": 123,
@@ -102,10 +111,19 @@ def test_runtime_config_helpers() -> None:
     assert_eq(config.fdv_limit_enabled, False, "legacy fdv cap ignored by executor")
     assert_eq(config.fdv_limit_wan_usd, None, "legacy fdv cap value ignored by executor")
 
-    args = Namespace(max_buy_v=Decimal("50"), max_project_v=Decimal("150"), mode="broadcast")
+    args = Namespace(
+        max_buy_v=Decimal("50"),
+        max_project_v=Decimal("150"),
+        mode="broadcast",
+        disable_follow_trade=False,
+        follow_wallet="0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d",
+        follow_divisor=Decimal("4"),
+    )
     effective = runtime_effective_args(args, row)
     assert_eq(effective.max_buy_v, Decimal("200"), "effective max buy")
     assert_eq(effective.max_project_v, Decimal("500"), "effective max project")
+    assert_eq(effective.disable_follow_trade, False, "effective follow enabled")
+    assert_eq(effective.follow_divisor, Decimal("2"), "effective follow divisor from ratio")
     assert_eq(args.max_buy_v, Decimal("50"), "original args unchanged")
 
     compact = compact_runtime_config(row, effective)
@@ -114,6 +132,13 @@ def test_runtime_config_helpers() -> None:
     assert_eq(compact["baseBuyV"], "100", "compact base")
     assert_eq(compact["fdvLimitEnabled"], False, "compact fdv cap hidden")
     assert_eq(compact["fdvLimitWanUsd"], "", "compact fdv cap value hidden")
+    assert_eq(compact["followEnabled"], True, "compact follow enabled")
+    assert_eq(compact["followRatioPct"], "50", "compact follow ratio")
+
+    disabled = dict(row)
+    disabled["follow_enabled"] = 0
+    disabled_effective = runtime_effective_args(args, disabled)
+    assert_eq(disabled_effective.disable_follow_trade, True, "effective follow disabled")
 
 
 def test_fdv_limit_order_helpers() -> None:
@@ -185,6 +210,113 @@ def test_signed_candidate_cache_take_once_and_clear_batch() -> None:
     assert_eq(taken, candidate, "candidate hit")
     assert_eq(cache, {}, "candidate batch cleared after hit")
     assert_eq(take_signed_candidate(cache, buy_size_v="25", tax_rate="92"), None, "candidate is single-use")
+
+
+def test_project_scope_cap_counts_all_sent_buys() -> None:
+    class Storage:
+        def list_launch_execution_records(self, project_name: str, limit: int = 500):
+            return [
+                {
+                    "project": project_name,
+                    "strategy": "open_sniper_no_tax",
+                    "rule_name": "open_second_first_buy",
+                    "status": "broadcast_sent_no_receipt_wait",
+                    "action": "would_buy",
+                    "trade_sent": 1,
+                    "buy_size_v": "100",
+                },
+                {
+                    "project": project_name,
+                    "strategy": "tax_fdv_limit_order",
+                    "rule_name": "tax_fdv_limit_order",
+                    "status": "broadcast_sent_no_receipt_wait",
+                    "action": "would_buy",
+                    "trade_sent": 1,
+                    "buy_size_v": "25",
+                },
+                {
+                    "project": project_name,
+                    "strategy": "tax_fdv_limit_order",
+                    "rule_name": "tax_fdv_limit_order",
+                    "status": "simulation_failed",
+                    "action": "would_buy",
+                    "trade_sent": 1,
+                    "buy_size_v": "999",
+                },
+            ]
+
+    bot = SimpleNamespace(storage=Storage())
+    assert_eq(sent_project_v_all_strategies(bot, project_name="ORION"), Decimal("125"), "global project cap V")
+    assert_eq(open_sniper_first_buy_sent(bot, project_name="ORION"), True, "open sniper gate sees first buy")
+
+    class FailedOnlyStorage:
+        def list_launch_execution_records(self, project_name: str, limit: int = 500):
+            return [
+                {
+                    "project": project_name,
+                    "strategy": "open_sniper_no_tax",
+                    "rule_name": "open_second_first_buy",
+                    "status": "broadcast_failed",
+                    "action": "would_buy",
+                    "trade_sent": 1,
+                    "buy_size_v": "100",
+                }
+            ]
+
+    failed_bot = SimpleNamespace(storage=FailedOnlyStorage())
+    assert_eq(open_sniper_first_buy_sent(failed_bot, project_name="ORION"), False, "failed first buy does not open gate")
+
+
+def test_follow_trade_buy_size_floor_and_project_cap() -> None:
+    buy_size, clamped, remaining = follow_trade_buy_size(
+        source_spent_v=Decimal("101.9"),
+        divisor=Decimal("4"),
+        sent_project_v=Decimal("0"),
+        max_project_v=Decimal("150"),
+    )
+    assert_eq(buy_size, Decimal("25"), "follow floor quarter")
+    assert_eq(clamped, False, "follow unclamped")
+    assert_eq(remaining, Decimal("150"), "follow remaining")
+
+    tiny, tiny_clamped, _ = follow_trade_buy_size(
+        source_spent_v=Decimal("3.99"),
+        divisor=Decimal("4"),
+        sent_project_v=Decimal("0"),
+        max_project_v=Decimal("150"),
+    )
+    assert_eq(tiny, Decimal("0"), "follow skips below 1V")
+    assert_eq(tiny_clamped, False, "tiny unclamped")
+
+    capped, capped_clamped, capped_remaining = follow_trade_buy_size(
+        source_spent_v=Decimal("400"),
+        divisor=Decimal("4"),
+        sent_project_v=Decimal("137.2"),
+        max_project_v=Decimal("150"),
+    )
+    assert_eq(capped, Decimal("12"), "follow clamps to integer remaining project cap")
+    assert_eq(capped_clamped, True, "follow cap clamp flag")
+    assert_eq(capped_remaining, Decimal("12"), "follow cap remaining")
+
+
+def test_follow_trade_source_tx_dedupes_from_ledger_intent() -> None:
+    class Storage:
+        def list_launch_execution_records(self, project_name: str, limit: int = 500):
+            return [
+                {
+                    "strategy": DEFAULT_FOLLOW_TRADE_STRATEGY,
+                    "rule_name": DEFAULT_FOLLOW_TRADE_RULE,
+                    "intent_json": '{"sourceTxHash":"0xabc"}',
+                },
+                {
+                    "strategy": "dynamic_25v_dip20_after1_flat10_no_cap",
+                    "rule_name": "gate_5k_tax95_fdv_one_per_tax",
+                    "intent_json": '{"sourceTxHash":"0xdef"}',
+                },
+            ]
+
+    bot = SimpleNamespace(storage=Storage())
+    assert_eq(follow_trade_source_seen(bot, project_name="EXY", source_tx_hash="0xABC"), True, "follow source seen")
+    assert_eq(follow_trade_source_seen(bot, project_name="EXY", source_tx_hash="0xdef"), False, "other strategy ignored")
 
 
 class FakeStorage:
@@ -275,6 +407,9 @@ def main() -> None:
     test_runtime_config_helpers()
     test_fdv_limit_order_helpers()
     test_signed_candidate_cache_take_once_and_clear_batch()
+    test_project_scope_cap_counts_all_sent_buys()
+    test_follow_trade_buy_size_floor_and_project_cap()
+    test_follow_trade_source_tx_dedupes_from_ledger_intent()
     test_reconcile_standard_buy_receipts_updates_only_standard_buys()
     print("launch_prewarm_executor tests ok")
 

@@ -134,6 +134,39 @@
 - [ ] 若要进一步降低延迟，再评估 Chainstack Trader node `lax1` 或多 RPC 同 raw transaction broadcast。
 - [ ] 灰度/真实窗口前在生产机运行 `launch_rpc_pressure_probe.py`，确认 `/etc/virtuals-whale-radar/execution-rpc.env` 下 `executionRpcSharedWithMain=false`，并同时观察采集健康、market latency、execution RPC 延迟。
 
+## 6.1.1.1 ORION 无狙击税开盘秒买
+
+- [x] 新增无狙击税开盘秒买执行器：`scripts/ops/launch_open_sniper_executor.py`。
+- [x] 新增执行器 smoke test：`scripts/ops/test_launch_open_sniper_executor.py`。
+- [x] 新增生产 systemd 模板：`deploy/systemd/vwr-launch-open-sniper@.service`。
+- [x] 新增限价单 follow-up systemd 模板：`deploy/systemd/vwr-launch-fdv-limit@.service`。
+- [x] `schedule_launch_services.py` 支持 `open-sniper` 与 `fdv-limit` 两类服务。
+- [x] `deploy_production_safe.sh` 白名单已纳入 open-sniper、fdv-limit、prewarm/scheduler 相关脚本和模板。
+- [x] 本地 `.env.local` 与本地 RPC skill/env 已补齐 Ankr Base probe/broadcast 变量；文档和代码不记录 endpoint 明文。
+- [x] 本地验证通过：`py_compile`、`test_launch_open_sniper_executor.py`、`test_launch_prewarm_executor.py`、`test_schedule_launch_services.py`。
+- [x] 本地压测结论：Chainstack execution p50 约 `120ms`，Ankr p50 约 `251ms`；可买成功 race 在 `2` workers 下 p90 约 `149ms`，高 worker 数不会更快。
+- [x] 远端验证通过：`py_compile`、open-sniper/prewarm/scheduler 测试均通过。
+- [x] 远端 RPC 压测结论：Chainstack execution p50 约 `68ms`，Ankr p50 约 `206ms`；ORION closed-probe `64` workers 可承受但延迟更高，生产采用 `2` workers。
+- [x] ORION 已写入生产 `managed_projects`：id `17`，`signalhub_project_id=76475`，start time `2026-05-26 00:00:54 CST`。
+- [x] ORION 官方 no-tax 校验通过：`BONDING_V5 + antiSniperTaxType=0`，执行器启动日志记录 `bonding_v5_anti_sniper_off`。
+- [x] ORION 已创建 `vwr-launch-orion-start.timer` 和 `vwr-launch-orion-archive.timer`；start timer 会在 `2026-05-25 23:30:54 CST` 拉起 `vwr-launch-open-sniper@ORION.service` 与 `vwr-launch-fdv-limit@ORION.service`。
+- [x] 生产核验：timer enabled；两个项目执行服务当前 inactive 等待 timer；`/health` 与 `/healthz` 正常。
+- [x] 2026-05-24 15:49 CST 生产只读 preflight：core workflow ready，execution RPC 与主采集分离，active fuse `0`，ORION timer enabled，服务仍 inactive 等待 timer。
+- [x] 2026-05-24 15:49 CST 钱包状态：VIRTUAL allowance 已够 `300V`，Base ETH gas 充足；当前 burner VIRTUAL 余额约 `1.67V`，不足 ORION 首笔 `100V`，需要发射前转入足额 VIRTUAL。
+- [x] 2026-05-24 15:49 CST ORION 当前没有启用的含税 FDV 限价单；`fdv-limit` 服务会随 timer 启动，但没有订单时不会执行后续买入。
+- [x] 明确 ORION 无狙击税自动卖出策略：默认关闭，用户前端手动开启；不单独设置 `tax <= 5%`，当前 `1%` 税率天然满足 `max_tax_rate=30` 安全门。
+- [x] ORION 自动卖出运行时参数：`dual_roi_large_buy_sell`、`customRules=[]`、冷却 `10s`、大单回看 `30s`、收益率/大单档位保持 `30%/5000V -> 30%` 与 `50%/8000V -> 50%` 的目标仓位语义。
+- [x] 生产执行：ORION timer 服务范围已扩展为 `open-sniper,fdv-limit,autosell`；`vwr-launch-orion-start.service` 会同时拉起三项服务。
+- [x] 生产执行：已写入 disabled 的 ORION 自动卖出运行时配置，`enabled=0`、`mode=simulate`、`customRules=[]`、冷却 `10s`、大单回看 `30s`。
+- [x] 2026-05-26 ORION open-sniper 复盘修复：high/ultra probe 阶段持续按 `presign_refresh_sec` 重签，生产模板 `10s -> 0.5s`；开盘后命中 `0x850c6f76` 这类报价失效 selector 时立即重签并同轮复探。
+- [x] 2026-05-26 二次修正 open-sniper 执行语义：无税开盘秒买不再绑定开盘前池子报价，改为 direct buy calldata，`amountOutMin=1`，用极低最小到账表达市价抢买；普通 taxed 策略和 FDV 限价单仍保留报价/限价保护。
+- [x] 2026-05-26 远端 ORION 项目级 drop-in 已同步修复：保留 `300V` 与 `5/6 gwei`，补齐 `--presign-refresh-sec 0.5` 和 `--requote-revert-selectors 0x850c6f76`，避免实例覆盖模板后继续走旧参数。
+- [x] 2026-05-26 open-sniper 增加显式 `--post-trigger-direct-fire` 开关；默认关闭，避免官方时间到但链上仍未开放时盲发烧 nonce。
+- [x] 2026-05-26 open-sniper 广播后新增短确认和同 nonce fee replacement；FDV 限价单新增 `--require-open-sniper-before-fdv-limit`，用于无税项目首笔 open-sniper 发出前阻断 follow-up 限价单。
+- [x] 2026-05-26 调度脚本自动化 gate：当 `schedule_launch_services.py --services open-sniper,fdv-limit` 时，自动生成该项目的 fdv-limit systemd drop-in，避免下次手动漏配。
+- [x] 2026-05-26 通用 profile 入口：`schedule_launch_services.py --auto-profile` 读取官方 `launchInfo`，no-tax 走 `open-sniper,fdv-limit,autosell`，60s/98m/default 走正常服务，unknown 直接阻断。
+- [x] 生产只读验证：`launch_sell_executor.py --mode simulate --once` 读取到 ORION disabled 配置并输出 `runtime_config_disabled`，`tradeSent=false`、`broadcastEnabled=false`；生产 `/health` 与 `/healthz` 正常。
+
 ## 6.1.2 生产预热执行器
 
 - [x] 新增 `scripts/ops/launch_prewarm_executor.py`。
@@ -210,6 +243,7 @@
 - [x] 2026-05-16 完成 ROO canonical 卖出回放：卖出 `1` 次，最终收益率 `+32.7369%`，相对纯持有提升 `+0.846%`。
 - [x] 2026-05-16 重新查链确认 ROO 2 笔买入与 2 笔卖出 receipt 均为 `status=0x1`。
 - [x] 新增通用 live 项目启动编排脚本：`scripts/ops/schedule_launch_services.py`，替代后续继续复制 `vwr-launch-roo-start.timer` 的手工流程。
+- [x] 通用启动脚本新增 `--auto-profile`：基于官方 tax schedule 自动选服务组合，降低新项目人工选错 taxed/no-tax 链路的风险。
 - [x] 新增本地 prewarm systemd 模板：`deploy/systemd/vwr-launch-prewarm@.service`。
 - [x] 新增通用启动编排测试：`scripts/ops/test_schedule_launch_services.py`。
 - [x] `deploy_production_safe.sh` 白名单加入通用启动脚本、prewarm 模板、测试脚本和 ROO 回归报告。

@@ -184,6 +184,8 @@ function ReplayControlPanel({
 }
 
 type LaunchStrategyFormState = {
+  expectedProjectId?: number;
+  expectedProject?: string;
   enabled: boolean;
   mode: "simulate" | "broadcast";
   baseBuyV: string;
@@ -192,6 +194,9 @@ type LaunchStrategyFormState = {
   flatPausePct: string;
   fdvLimitEnabled: boolean;
   fdvLimitWanUsd: string;
+  followEnabled: boolean;
+  followWallet: string;
+  followRatioPct: string;
   maxBuyV: string;
   maxProjectV: string;
   updatedReason: string;
@@ -246,6 +251,8 @@ type SellRuleDraft = {
 };
 
 type LaunchSellSubmitPayload = LaunchSellFormState & {
+  expectedProjectId?: number;
+  expectedProject?: string;
   strategy: string;
   ruleName: string;
   customRules: ReturnType<typeof buildLaunchSellCustomRules>;
@@ -273,6 +280,9 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
     flatPausePct: formatEditableNumber(item?.flatPausePct ?? "10", 0),
     fdvLimitEnabled: false,
     fdvLimitWanUsd: "",
+    followEnabled: item?.followEnabled ?? true,
+    followWallet: item?.followWallet ?? "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d",
+    followRatioPct: formatEditableNumber(item?.followRatioPct ?? "25", 0),
     maxBuyV,
     maxProjectV: formatEditableNumber(item?.maxProjectV ?? "150"),
     updatedReason: "",
@@ -492,6 +502,10 @@ function normalizeLaunchStrategyFormForSubmit(form: LaunchStrategyFormState): La
   }
   next.fdvLimitEnabled = false;
   next.fdvLimitWanUsd = "";
+  const followRatio = parseStrategyInputNumber(next.followRatioPct);
+  if (followRatio !== null) {
+    next.followRatioPct = formatEditableNumber(followRatio, 0);
+  }
 
   return next;
 }
@@ -589,6 +603,12 @@ function friendlyLaunchStrategyError(error: Error) {
   if (normalized.includes("maxprojectv") && normalized.includes("already sent")) {
     return "项目预算不能低于已买入金额。";
   }
+  if (normalized.includes("followwallet")) {
+    return "跟单地址格式不正确。";
+  }
+  if (normalized.includes("followratiopct")) {
+    return "跟单比例必须大于 0%，且不能超过 100%。";
+  }
   if (normalized.includes("must be positive")) {
     return "买入金额和预算必须大于 0。";
   }
@@ -659,6 +679,9 @@ const defaultStrategyPatch: Partial<LaunchStrategyFormState> = {
   flatPausePct: "10",
   fdvLimitEnabled: false,
   fdvLimitWanUsd: "",
+  followEnabled: true,
+  followWallet: "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d",
+  followRatioPct: "25",
   maxBuyV: "50",
   maxProjectV: "150",
 };
@@ -837,10 +860,10 @@ function LaunchStrategyControlPanel({
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className={strategyLabelClass}>买入金额</div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className={strategyLabelClass}>买入金额</div>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
                     VIRTUAL
                   </span>
@@ -866,12 +889,49 @@ function LaunchStrategyControlPanel({
                       onChange={(event) => onChange(applyLaunchStrategyPatch(form, { dipBuyV: event.target.value }))}
                     />
                   </div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className={strategyLabelClass}>节奏保护</div>
+                <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className={strategyLabelClass}>跟单买入</div>
+                    <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={form.followEnabled}
+                        onChange={(event) => onChange({ followEnabled: event.target.checked })}
+                      />
+                      {form.followEnabled ? "开启" : "关闭"}
+                    </label>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[0.9fr_1.1fr]">
+                    <div className={strategyFieldClass}>
+                      <StrategyFieldLabel
+                        label="跟单比例"
+                        unit="%"
+                        hint="仅在 live 窗口内生效；当跟单地址买入本项目时，本系统按该比例计算买入 VIRTUAL 数量，低于 1V 会跳过。"
+                      />
+                      <Input
+                        className={strategyInputClass}
+                        inputMode="numeric"
+                        aria-label="跟单比例，单位百分比"
+                        value={form.followRatioPct}
+                        onChange={(event) => onChange({ followRatioPct: event.target.value })}
+                        disabled={!form.followEnabled}
+                      />
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <div className={strategyLabelClass}>跟单地址</div>
+                      <div className="truncate rounded-[14px] border border-border bg-background/60 px-3 py-2 font-mono text-xs text-muted-foreground">
+                        {form.followWallet}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className={strategyLabelClass}>节奏保护</div>
                   <Badge variant="secondary">每档一次</Badge>
                 </div>
                 <div className={strategyFieldClass}>
@@ -1627,6 +1687,7 @@ export function OverviewPage() {
   const lockedProject = lockedDetails?.project ?? null;
   const targetProjectId = detailProjectId ?? lockedProject?.id ?? 0;
   const currentProjectName = overviewQuery.data?.item?.name ?? lockedProject?.name ?? "";
+  const expectedProjectName = selectedProject || currentProjectName;
   const [launchStrategyDraft, setLaunchStrategyDraft] = useState<Partial<LaunchStrategyFormState>>({});
   const [fdvLimitOrdersDraft, setFdvLimitOrdersDraft] = useState<FdvLimitOrderDraft[] | null>(null);
   const [launchSellDraft, setLaunchSellDraft] = useState<Partial<LaunchSellFormState>>({});
@@ -1712,6 +1773,8 @@ export function OverviewPage() {
         throw new Error("当前没有可配置的项目。");
       }
       return dashboardApi.admin.setLaunchFdvLimitOrders(detailProjectId, {
+        expectedProjectId: detailProjectId,
+        expectedProject: expectedProjectName,
         orders: orders.map((order, index) => ({
           id: order.id ?? null,
           enabled: order.enabled,
@@ -1734,6 +1797,8 @@ export function OverviewPage() {
   const saveLaunchStrategyConfig = (mode: "broadcast" | "disabled") => {
     const next: LaunchStrategyFormState = {
       ...normalizeLaunchStrategyFormForSubmit(launchStrategyForm),
+      expectedProjectId: detailProjectId ?? undefined,
+      expectedProject: expectedProjectName,
       enabled: mode !== "disabled",
       mode: mode === "broadcast" ? "broadcast" : "simulate",
       updatedReason:
@@ -1764,6 +1829,8 @@ export function OverviewPage() {
     };
     const next: LaunchSellSubmitPayload = {
       ...nextForm,
+      expectedProjectId: detailProjectId ?? undefined,
+      expectedProject: expectedProjectName,
       strategy: "custom_multi_sell",
       ruleName: "custom_multi_sell",
       customRules: buildLaunchSellCustomRules(nextForm),
@@ -2189,6 +2256,9 @@ export function OverviewPage() {
               <Badge variant={detailStatusVariant(detailItem.projectedStatus || detailItem.status)}>
                 {detailStatusLabel(detailItem.projectedStatus || detailItem.status)}
               </Badge>
+              <span className="self-center text-sm text-muted-foreground">
+                ID #{detailItem.id}
+              </span>
               <span className="self-center text-sm text-muted-foreground">
                 发射窗口 {formatDateTime(detailItem.startAt)} - {formatDateTime(detailItem.resolvedEndAt)}
               </span>

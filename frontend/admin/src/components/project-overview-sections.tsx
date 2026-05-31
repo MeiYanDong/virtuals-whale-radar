@@ -27,6 +27,9 @@ type BoardRow = {
   breakevenFdvV: number | null;
   breakevenFdvUsd: number | null;
   isTeamCandidate: boolean;
+  hasBuyRouteData: boolean;
+  hasVirtualBuy: boolean;
+  hasNonVirtualBuy: boolean;
   costExcluded: boolean;
   costExclusionReason?: string | null;
   teamOverrideAction?: "include" | "exclude" | null;
@@ -145,6 +148,39 @@ function InfoHint({ label }: { label: string }) {
       </span>
     </span>
   );
+}
+
+function debankProfileUrl(wallet: string) {
+  return `https://debank.com/profile/${wallet}`;
+}
+
+function buyRouteBadge(row: BoardRow) {
+  if (row.hasNonVirtualBuy) {
+    return {
+      label: "非 V 买入",
+      variant: "secondary" as const,
+      title: "该地址本项目内存在非标准 VIRTUAL 直接买入路径，可能通过 ETH/WETH/聚合器换入后参与买入。",
+    };
+  }
+  if (row.hasVirtualBuy) {
+    return {
+      label: "V 买入",
+      variant: "success" as const,
+      title: "该地址本项目内存在标准 VIRTUAL 直接买入路径。",
+    };
+  }
+  if (row.hasBuyRouteData) {
+    return {
+      label: "路径未知",
+      variant: "warning" as const,
+      title: "该地址有买入路径数据，但暂未归类为标准 VIRTUAL 直接买入或非 V 买入。",
+    };
+  }
+  return {
+    label: "路径未知",
+    variant: "secondary" as const,
+    title: "该地址缺少历史买入路径数据，无法确认是否为 VIRTUAL 直接买入。",
+  };
 }
 
 function MetricLabel({ children, hint }: { children: ReactNode; hint?: string }) {
@@ -278,10 +314,12 @@ function BoardTable({
   rows,
   emptyTitle,
   emptyDescription,
+  showWalletTools = false,
 }: {
   rows: BoardRow[];
   emptyTitle: string;
   emptyDescription: string;
+  showWalletTools?: boolean;
 }) {
   if (!rows.length) {
     return <EmptyState compact title={emptyTitle} description={emptyDescription} />;
@@ -320,8 +358,33 @@ function BoardTable({
                       手动纳入
                     </Badge>
                   ) : null}
+                  {showWalletTools ? (
+                    <Badge
+                      variant={buyRouteBadge(row).variant}
+                      className="shrink-0 px-2 py-0.5 text-[11px] font-semibold tracking-normal"
+                      title={buyRouteBadge(row).title}
+                    >
+                      {buyRouteBadge(row).label}
+                    </Badge>
+                  ) : null}
                 </div>
-                <div className="font-mono text-xs text-muted-foreground">{row.wallet}</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="truncate font-mono text-xs text-muted-foreground" title={row.wallet}>
+                    {row.wallet}
+                  </div>
+                  {showWalletTools ? (
+                    <a
+                      href={debankProfileUrl(row.wallet)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+                      title="在 DeBank 查看钱包资产"
+                      aria-label="在 DeBank 查看钱包资产"
+                    >
+                      <ExternalLink className="size-3.5" />
+                    </a>
+                  ) : null}
+                </div>
                 {row.costExcluded ? (
                   <div className="max-w-xl text-xs leading-5 text-muted-foreground">
                     已排除成本位：{row.costExclusionReason || "开盘极早期的大额低成本买入。"}
@@ -353,6 +416,9 @@ function toBoardRows(items: OverviewBoardItem[]) {
         ? null
         : toNumber(item.breakevenFdvUsd),
     isTeamCandidate: Boolean(item.isTeamCandidate),
+    hasBuyRouteData: Boolean(item.hasBuyRouteData),
+    hasVirtualBuy: Boolean(item.hasVirtualBuy),
+    hasNonVirtualBuy: Boolean(item.hasNonVirtualBuy),
     costExcluded: Boolean(item.costExcluded),
     costExclusionReason: item.costExclusionReason ?? null,
     teamOverrideAction: item.teamOverrideAction ?? null,
@@ -707,6 +773,7 @@ export function ProjectOverviewSections({
           rows={visibleWhaleRows}
           emptyTitle="当前还没有大户数据"
           emptyDescription="项目在这个时间窗口内还没有形成可展示的大户榜，或当前榜单地址都已被过滤。"
+          showWalletTools
         />
       </SectionCard>
 

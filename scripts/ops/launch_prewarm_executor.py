@@ -22,7 +22,7 @@ import signal
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +80,13 @@ from virtuals_bot import (  # noqa: E402
 )
 
 
+DEFAULT_FOLLOW_TRADE_WALLET = "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d"
+DEFAULT_FOLLOW_TRADE_DIVISOR = Decimal("4")
+DEFAULT_FOLLOW_TRADE_STRATEGY = "follow_wallet_v1"
+DEFAULT_FOLLOW_TRADE_RULE = "source_spent_v_quarter_floor"
+MIN_FOLLOW_TRADE_BUY_V = Decimal("1")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Realtime prewarm executor for one Virtuals project.")
     parser.add_argument("--config", default="config.json")
@@ -113,6 +120,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--signed-candidate-ttl-sec", type=float, default=2.0)
     parser.add_argument("--signed-candidate-refresh-min-sec", type=float, default=0.5)
     parser.add_argument("--signed-candidate-max-count", type=int, default=4)
+    parser.add_argument(
+        "--project-cap-scope",
+        choices=["strategy", "project"],
+        default="strategy",
+        help="Scope used by --max-project-v. 'strategy' preserves legacy behavior; 'project' counts all sent buys for this project.",
+    )
+    parser.add_argument(
+        "--fdv-limit-orders-only",
+        action="store_true",
+        help="Evaluate independent FDV limit orders, but never run the standard whale-board buy strategy.",
+    )
+    parser.add_argument(
+        "--require-open-sniper-before-fdv-limit",
+        action="store_true",
+        help="For no-tax launches, keep FDV limit orders read-only until the open-sniper first buy has been sent.",
+    )
+    parser.add_argument(
+        "--follow-wallet",
+        default=os.environ.get("VWR_FOLLOW_WALLET", DEFAULT_FOLLOW_TRADE_WALLET),
+        help="Wallet to copy during the live window. Default is the configured operator follow wallet.",
+    )
+    parser.add_argument(
+        "--follow-divisor",
+        type=Decimal,
+        default=Decimal(str(os.environ.get("VWR_FOLLOW_DIVISOR") or DEFAULT_FOLLOW_TRADE_DIVISOR)),
+        help="Buy floor(source spent V / divisor) when the follow wallet buys.",
+    )
+    parser.add_argument(
+        "--disable-follow-trade",
+        action="store_true",
+        help="Disable the default live-window follow-wallet strategy for this executor.",
+    )
     return parser.parse_args()
 
 
@@ -162,16 +201,42 @@ def runtime_dynamic_config(row: dict[str, Any] | None) -> DynamicExecutionConfig
     )
 
 
+def follow_ratio_pct_from_divisor(divisor: Any) -> Decimal:
+    value = decimal_value(divisor)
+    if value <= 0:
+        return Decimal("0")
+    return Decimal("100") / value
+
+
+def follow_divisor_from_ratio_pct(ratio_pct: Any, default_divisor: Decimal = DEFAULT_FOLLOW_TRADE_DIVISOR) -> Decimal:
+    value = decimal_value(ratio_pct)
+    if value <= 0:
+        return default_divisor
+    return Decimal("100") / value
+
+
 def runtime_effective_args(args: argparse.Namespace, row: dict[str, Any] | None) -> argparse.Namespace:
     if not row:
         return args
     out = copy.copy(args)
     out.max_buy_v = decimal_value(row.get("max_buy_v"), Decimal(str(args.max_buy_v or "0")))
     out.max_project_v = decimal_value(row.get("max_project_v"), Decimal(str(args.max_project_v or "0")))
+    follow_enabled = bool(int(row.get("follow_enabled") if row.get("follow_enabled") is not None else 1))
+    out.disable_follow_trade = bool(getattr(args, "disable_follow_trade", False)) or not follow_enabled
+    follow_wallet = str(row.get("follow_wallet") or getattr(args, "follow_wallet", DEFAULT_FOLLOW_TRADE_WALLET)).strip()
+    if follow_wallet:
+        out.follow_wallet = follow_wallet
+    out.follow_divisor = follow_divisor_from_ratio_pct(
+        row.get("follow_ratio_pct"),
+        Decimal(str(getattr(args, "follow_divisor", DEFAULT_FOLLOW_TRADE_DIVISOR))),
+    )
     return out
 
 
 def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace) -> dict[str, Any]:
+    follow_enabled = not bool(getattr(args, "disable_follow_trade", False))
+    follow_wallet = str(getattr(args, "follow_wallet", DEFAULT_FOLLOW_TRADE_WALLET) or "")
+    follow_ratio_pct = follow_ratio_pct_from_divisor(getattr(args, "follow_divisor", DEFAULT_FOLLOW_TRADE_DIVISOR))
     if not row:
         return {
             "hasOverride": False,
@@ -183,6 +248,9 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
             "dipBuyV": str(DynamicExecutionConfig().dip_buy_v),
             "fdvLimitEnabled": False,
             "fdvLimitWanUsd": "",
+            "followEnabled": follow_enabled,
+            "followWallet": follow_wallet,
+            "followRatioPct": format(follow_ratio_pct, "f"),
             "maxBuyV": str(args.max_buy_v),
             "maxProjectV": str(args.max_project_v),
         }
@@ -199,6 +267,9 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
         "flatPausePct": str(row.get("flat_pause_pct") or ""),
         "fdvLimitEnabled": False,
         "fdvLimitWanUsd": "",
+        "followEnabled": follow_enabled,
+        "followWallet": follow_wallet,
+        "followRatioPct": format(follow_ratio_pct, "f"),
         "maxBuyV": str(row.get("max_buy_v") or ""),
         "maxProjectV": str(row.get("max_project_v") or ""),
         "updatedAt": int(row.get("updated_at") or 0),
@@ -310,6 +381,17 @@ def compact_fuse(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "sourceIntentId": row.get("source_intent_id"),
         "updatedAt": row.get("updated_at"),
     }
+
+
+def open_sniper_first_buy_sent(bot: VirtualsBot, *, project_name: str) -> bool:
+    rows = bot.storage.list_launch_execution_records(project_name, limit=500)
+    return any(
+        str(row.get("strategy") or "") == "open_sniper_no_tax"
+        and str(row.get("rule_name") or "") == "open_second_first_buy"
+        and int(row.get("trade_sent") or 0) == 1
+        and str(row.get("status") or "") not in {"receipt_failed", "broadcast_failed", "simulation_failed"}
+        for row in rows
+    )
 
 
 def failed_simulation_checks(simulation: dict[str, Any]) -> list[str]:
@@ -428,6 +510,352 @@ def sent_project_v(
     for row in sent_records(bot, project_name=project_name, strategy_name=strategy_name, rule_name=rule_name):
         total += decimal_value(row.get("buy_size_v"))
     return total
+
+
+def sent_project_v_all_strategies(bot: VirtualsBot, *, project_name: str) -> Decimal:
+    total = Decimal("0")
+    for row in bot.storage.list_launch_execution_records(project_name, limit=500):
+        if int(row.get("trade_sent") or 0) != 1:
+            continue
+        if str(row.get("action") or "") not in {"would_buy", "buy"}:
+            continue
+        if str(row.get("status") or "") in {"receipt_failed", "prewarm_failed", "simulation_failed"}:
+            continue
+        total += decimal_value(row.get("buy_size_v"))
+    return total
+
+
+def normalize_address(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    return raw if raw.startswith("0x") else f"0x{raw}"
+
+
+def floor_v(value: Decimal) -> Decimal:
+    return Decimal(value).to_integral_value(rounding=ROUND_FLOOR)
+
+
+def compact_follow_trade_config(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "enabled": not bool(getattr(args, "disable_follow_trade", False)),
+        "wallet": normalize_address(getattr(args, "follow_wallet", "")),
+        "divisor": str(getattr(args, "follow_divisor", DEFAULT_FOLLOW_TRADE_DIVISOR)),
+        "minBuyV": str(MIN_FOLLOW_TRADE_BUY_V),
+        "strategy": DEFAULT_FOLLOW_TRADE_STRATEGY,
+        "ruleName": DEFAULT_FOLLOW_TRADE_RULE,
+    }
+
+
+def follow_trade_source_seen(
+    bot: VirtualsBot,
+    *,
+    project_name: str,
+    source_tx_hash: str,
+) -> bool:
+    target = str(source_tx_hash or "").strip().lower()
+    if not target:
+        return True
+    for row in bot.storage.list_launch_execution_records(project_name, limit=500):
+        if str(row.get("strategy") or "") != DEFAULT_FOLLOW_TRADE_STRATEGY:
+            continue
+        raw = str(row.get("intent_json") or "").strip()
+        if not raw:
+            continue
+        with contextlib.suppress(Exception):
+            intent = json.loads(raw)
+            if str(intent.get("sourceTxHash") or "").strip().lower() == target:
+                return True
+    return False
+
+
+def follow_trade_events(
+    bot: VirtualsBot,
+    *,
+    project_name: str,
+    source_wallet: str,
+    start_at: int,
+    end_at: int,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    wallet = normalize_address(source_wallet)
+    if not wallet:
+        return []
+    clauses = ["project = ?", "lower(buyer) = lower(?)"]
+    params: list[Any] = [project_name, wallet]
+    if int(start_at or 0) > 0:
+        clauses.append("block_timestamp >= ?")
+        params.append(int(start_at))
+    if int(end_at or 0) > 0:
+        clauses.append("block_timestamp <= ?")
+        params.append(int(end_at))
+    params.append(max(1, min(int(limit), 100)))
+    rows = bot.storage.conn.execute(
+        f"""
+        SELECT *
+        FROM events
+        WHERE {' AND '.join(clauses)}
+        ORDER BY block_number ASC, id ASC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def follow_trade_source_spent(row: dict[str, Any]) -> tuple[Decimal, str]:
+    for field in ("spent_v_actual", "spent_v_est"):
+        value = decimal_value(row.get(field))
+        if value > 0:
+            return value, field
+    return Decimal("0"), ""
+
+
+def follow_trade_buy_size(
+    *,
+    source_spent_v: Decimal,
+    divisor: Decimal,
+    sent_project_v: Decimal,
+    max_project_v: Decimal | None,
+) -> tuple[Decimal, bool, Decimal | None]:
+    if divisor <= 0:
+        return Decimal("0"), False, None
+    requested = floor_v(source_spent_v / divisor)
+    if requested < MIN_FOLLOW_TRADE_BUY_V:
+        return Decimal("0"), False, None
+    if max_project_v is None or max_project_v <= 0:
+        return requested, False, None
+    remaining = floor_v(max_project_v - sent_project_v)
+    if remaining < MIN_FOLLOW_TRADE_BUY_V:
+        return Decimal("0"), False, remaining
+    if requested > remaining:
+        return remaining, True, remaining
+    return requested, False, remaining
+
+
+def follow_trade_intent(
+    *,
+    row: dict[str, Any],
+    project_name: str,
+    sample: dict[str, Any],
+    sample_index: int,
+    source_spent_v: Decimal,
+    source_spent_field: str,
+    buy_size_v: Decimal,
+    divisor: Decimal,
+    clamped: bool,
+    remaining_project_v: Decimal | None,
+) -> dict[str, Any]:
+    return {
+        "project": project_name,
+        "index": sample_index,
+        "timestamp": int(sample.get("simTimestamp") or row.get("block_timestamp") or 0),
+        "tax_rate": str(sample.get("buyTaxRate") or ""),
+        "buy_size_v": format(buy_size_v, "f"),
+        "entry_tax_fdv_wan_usd": str(sample.get("estimatedFdvWanUsdWithTax") or ""),
+        "entry_spot_fdv_wan_usd": str(sample.get("spotFdvWanUsd") or ""),
+        "own_weighted_cost_before_wan_usd": None,
+        "own_weighted_cost_after_wan_usd": str(sample.get("estimatedFdvWanUsdWithTax") or ""),
+        "board_spent_v": str(sample.get("boardSpentV") or "0"),
+        "board_cost_wan_usd": str(sample.get("boardCostWanUsd") or ""),
+        "cost_rows": int(sample.get("costRows") or 0),
+        "whale_rows": int(sample.get("whaleRows") or 0),
+        "trigger_types": ["follow_wallet"],
+        "reason": "follow_wallet_source_spent_quarter_floor",
+        "sourceWallet": normalize_address(row.get("buyer")),
+        "sourceTxHash": str(row.get("tx_hash") or "").strip().lower(),
+        "sourceBlockNumber": int(row.get("block_number") or 0),
+        "sourceBlockTimestamp": int(row.get("block_timestamp") or 0),
+        "sourceSpentV": str(source_spent_v),
+        "sourceSpentField": source_spent_field,
+        "followDivisor": str(divisor),
+        "amountClampedByProjectCap": bool(clamped),
+        "remainingProjectVBefore": str(remaining_project_v) if remaining_project_v is not None else None,
+    }
+
+
+def follow_trade_skip_payload(
+    *,
+    bot: VirtualsBot,
+    project_row: dict[str, Any],
+    project_name: str,
+    sample: dict[str, Any],
+    sample_index: int,
+    row: dict[str, Any],
+    reason: str,
+    source_spent_v: Decimal,
+    divisor: Decimal,
+    effective_args: argparse.Namespace,
+    rpc_selection: Any,
+) -> dict[str, Any]:
+    intent = follow_trade_intent(
+        row=row,
+        project_name=project_name,
+        sample=sample,
+        sample_index=sample_index,
+        source_spent_v=source_spent_v,
+        source_spent_field="",
+        buy_size_v=Decimal("0"),
+        divisor=divisor,
+        clamped=False,
+        remaining_project_v=None,
+    )
+    record = make_ledger_record(
+        project_row=project_row,
+        project_name=project_name,
+        rule_name=DEFAULT_FOLLOW_TRADE_RULE,
+        strategy_name=DEFAULT_FOLLOW_TRADE_STRATEGY,
+        action="would_buy",
+        reason=reason,
+        sample_index=sample_index,
+        sample=sample,
+        intent=intent,
+        pause=None,
+    )
+    record.update({"status": "skipped", "failure_stage": "strategy", "failure_reason": reason})
+    bot.storage.upsert_launch_execution_record(record)
+    return {
+        "event": "follow_trade_skipped",
+        "reason": reason,
+        "at": utc_iso(),
+        "atCst": cst_iso(),
+        "project": project_name,
+        "rule": DEFAULT_FOLLOW_TRADE_RULE,
+        "strategy": DEFAULT_FOLLOW_TRADE_STRATEGY,
+        "mode": executor_mode(effective_args),
+        "sampleIndex": sample_index,
+        "readOnly": True,
+        "tradeSent": False,
+        "broadcastEnabled": False,
+        "runtimeStrategyConfig": compact_runtime_config(None, effective_args),
+        "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
+        "executionRpcSource": rpc_selection.source,
+        "followTrade": {
+            "sourceWallet": normalize_address(row.get("buyer")),
+            "sourceTxHash": str(row.get("tx_hash") or "").strip().lower(),
+            "sourceSpentV": str(source_spent_v),
+            "divisor": str(divisor),
+            "buySizeV": "0",
+        },
+        "sample": compact_sample(sample),
+    }
+
+
+async def attempt_follow_trades(
+    *,
+    args: argparse.Namespace,
+    effective_args: argparse.Namespace,
+    cfg: Any,
+    bot: VirtualsBot,
+    rpc: RPCClient,
+    project_row: dict[str, Any],
+    project_name: str,
+    sample: dict[str, Any],
+    sample_index: int,
+    rpc_selection: Any,
+) -> tuple[bool, list[dict[str, Any]]]:
+    if bool(getattr(args, "disable_follow_trade", False)):
+        return False, []
+    if str(sample.get("projectStatus") or "").lower() != "live":
+        return False, []
+    divisor = Decimal(str(getattr(args, "follow_divisor", DEFAULT_FOLLOW_TRADE_DIVISOR)))
+    if divisor <= 0:
+        return False, []
+    events = follow_trade_events(
+        bot,
+        project_name=project_name,
+        source_wallet=str(getattr(args, "follow_wallet", DEFAULT_FOLLOW_TRADE_WALLET)),
+        start_at=int(project_row.get("start_at") or 0),
+        end_at=int(project_row.get("resolved_end_at") or 0),
+    )
+    payloads: list[dict[str, Any]] = []
+    attempted_trade = False
+    next_nonce_override: int | None = None
+    for row in events:
+        source_tx_hash = str(row.get("tx_hash") or "").strip().lower()
+        if not source_tx_hash or follow_trade_source_seen(
+            bot,
+            project_name=project_name,
+            source_tx_hash=source_tx_hash,
+        ):
+            continue
+        source_spent_v, source_spent_field = follow_trade_source_spent(row)
+        sent_v = sent_project_v_all_strategies(bot, project_name=project_name)
+        max_project_v = Decimal(str(effective_args.max_project_v)) if effective_args.max_project_v is not None else None
+        buy_size_v, clamped, remaining_project_v = follow_trade_buy_size(
+            source_spent_v=source_spent_v,
+            divisor=divisor,
+            sent_project_v=sent_v,
+            max_project_v=max_project_v,
+        )
+        if buy_size_v < MIN_FOLLOW_TRADE_BUY_V:
+            reason = "follow_buy_size_below_1v" if source_spent_v > 0 else "follow_source_spent_missing"
+            if remaining_project_v is not None and remaining_project_v < MIN_FOLLOW_TRADE_BUY_V:
+                reason = "project_cap_exhausted"
+            payloads.append(
+                follow_trade_skip_payload(
+                    bot=bot,
+                    project_row=project_row,
+                    project_name=project_name,
+                    sample=sample,
+                    sample_index=sample_index,
+                    row=row,
+                    reason=reason,
+                    source_spent_v=source_spent_v,
+                    divisor=divisor,
+                    effective_args=effective_args,
+                    rpc_selection=rpc_selection,
+                )
+            )
+            continue
+        attempted_trade = True
+        follow_args = copy.copy(effective_args)
+        follow_args.max_buy_v = buy_size_v
+        follow_args.project_cap_scope = "project"
+        intent = follow_trade_intent(
+            row=row,
+            project_name=project_name,
+            sample=sample,
+            sample_index=sample_index,
+            source_spent_v=source_spent_v,
+            source_spent_field=source_spent_field,
+            buy_size_v=buy_size_v,
+            divisor=divisor,
+            clamped=clamped,
+            remaining_project_v=remaining_project_v,
+        )
+        payload = await prewarm_intent(
+            args=follow_args,
+            cfg=cfg,
+            bot=bot,
+            rpc=rpc,
+            project_row=project_row,
+            project_name=project_name,
+            rule_name=DEFAULT_FOLLOW_TRADE_RULE,
+            strategy_name=DEFAULT_FOLLOW_TRADE_STRATEGY,
+            sample=sample,
+            sample_index=sample_index,
+            intent=intent,
+            nonce_override=next_nonce_override,
+            skip_tax_rate_guard=True,
+            force_no_wait_receipt=True,
+            signed_candidate=None,
+        )
+        payload["followTrade"] = {
+            "sourceWallet": normalize_address(row.get("buyer")),
+            "sourceTxHash": source_tx_hash,
+            "sourceSpentV": str(source_spent_v),
+            "sourceSpentField": source_spent_field,
+            "divisor": str(divisor),
+            "buySizeV": str(buy_size_v),
+            "clampedByProjectCap": bool(clamped),
+            "remainingProjectVBefore": str(remaining_project_v) if remaining_project_v is not None else None,
+        }
+        payloads.append(payload)
+        if payload.get("tradeSent"):
+            with contextlib.suppress(Exception):
+                next_nonce_override = int((payload.get("signedSummary") or {}).get("nonce")) + 1
+    return attempted_trade, payloads
 
 
 def tax_rate_already_sent(
@@ -877,12 +1305,15 @@ async def prewarm_intent(
             )
             return payload
 
-        existing_project_v = sent_project_v(
-            bot,
-            project_name=project_name,
-            strategy_name=strategy_name,
-            rule_name=rule_name,
-        )
+        if str(getattr(args, "project_cap_scope", "strategy")) == "project":
+            existing_project_v = sent_project_v_all_strategies(bot, project_name=project_name)
+        else:
+            existing_project_v = sent_project_v(
+                bot,
+                project_name=project_name,
+                strategy_name=strategy_name,
+                rule_name=rule_name,
+            )
         projected_project_v = existing_project_v + buy_size
         if (
             args.max_project_v is not None
@@ -1813,93 +2244,10 @@ async def async_main() -> None:
                     ):
                         runtime_block_reason = "runtime_config_mode_not_broadcast"
 
-                    fdv_limit_order_attempted = False
                     open_limit_orders: list[dict[str, Any]] = []
-                    if not runtime_block_reason:
-                        open_limit_orders = bot.storage.list_launch_fdv_limit_orders(
-                            project_id=int(project_row.get("id") or 0),
-                            statuses=["pending"],
-                            limit=100,
-                        )
-                        limit_orders = eligible_fdv_limit_orders(
-                            open_limit_orders,
-                            tax_fdv_wan_usd=sample_tax_fdv_wan(sample),
-                            project_status=str(sample.get("projectStatus") or ""),
-                        )
-                        next_nonce_override: int | None = None
-                        for limit_order in limit_orders:
-                            claimed = bot.storage.mark_launch_fdv_limit_order_triggering(int(limit_order.get("id") or 0))
-                            if not claimed or str(claimed.get("status") or "") != "triggering":
-                                continue
-                            fdv_limit_order_attempted = True
-                            counts["fdv_limit_order"] = counts.get("fdv_limit_order", 0) + 1
-                            fdv_args = copy.copy(effective_args)
-                            order_buy_v = decimal_value(claimed.get("buy_v"))
-                            if fdv_args.max_buy_v is None or Decimal(fdv_args.max_buy_v) < order_buy_v:
-                                fdv_args.max_buy_v = order_buy_v
-                            limit_payload = await prewarm_intent(
-                                args=fdv_args,
-                                cfg=cfg,
-                                bot=bot,
-                                rpc=rpc,
-                                project_row=project_row,
-                                project_name=project_name,
-                                rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
-                                strategy_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
-                                sample=sample,
-                                sample_index=sample_count - 1,
-                                intent=fdv_limit_order_intent(
-                                    row=claimed,
-                                    project_name=project_name,
-                                    sample=sample,
-                                    sample_index=sample_count - 1,
-                                ),
-                                nonce_override=next_nonce_override,
-                                skip_tax_rate_guard=True,
-                                force_no_wait_receipt=True,
-                                signed_candidate=(
-                                    None
-                                    if next_nonce_override is not None
-                                    else take_signed_candidate(
-                                        signed_candidate_cache,
-                                        buy_size_v=claimed.get("buy_v"),
-                                        tax_rate=sample.get("buyTaxRate"),
-                                    )
-                                ),
-                            )
-                            limit_payload["fdvLimitOrder"] = compact_fdv_limit_order(claimed)
-                            if limit_payload.get("tradeSent"):
-                                bot.storage.mark_launch_fdv_limit_order_broadcast_sent(
-                                    int(claimed.get("id") or 0),
-                                    tx_hash=str(limit_payload.get("txHash") or ""),
-                                    ledger_intent_id=str(limit_payload.get("ledgerIntentId") or ""),
-                                )
-                                with contextlib.suppress(Exception):
-                                    next_nonce_override = int((limit_payload.get("signedSummary") or {}).get("nonce")) + 1
-                            else:
-                                reason = str(limit_payload.get("reason") or limit_payload.get("event") or "")
-                                if args.mode != "broadcast" or reason in {
-                                    "simulate_mode_no_sign",
-                                    "signed_no_raw_tx_persisted",
-                                    "wallet_balance_and_allowance_not_ready",
-                                    "wallet_balance_not_ready",
-                                    "wallet_allowance_not_ready",
-                                    "missing_cli_or_env_broadcast_gate",
-                                    "active_fuse",
-                                }:
-                                    bot.storage.mark_launch_fdv_limit_order_retryable(
-                                        int(claimed.get("id") or 0),
-                                        error=reason,
-                                    )
-                                else:
-                                    bot.storage.mark_launch_fdv_limit_order_failed(
-                                        int(claimed.get("id") or 0),
-                                        error=reason,
-                                    )
-                            append_jsonl(output_jsonl, limit_payload)
-                            print(json.dumps(limit_payload, ensure_ascii=False), flush=True)
-
                     should_log = False
+                    standard_buy_attempted = False
+                    follow_trade_attempted = False
                     if runtime_block_reason:
                         counts["skip"] = counts.get("skip", 0) + 1
                         payload = {
@@ -1924,11 +2272,11 @@ async def async_main() -> None:
                             current_fingerprint != previous_fingerprint
                             or (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec)
                         )
-                    elif fdv_limit_order_attempted:
+                    elif bool(args.fdv_limit_orders_only):
                         counts["skip"] = counts.get("skip", 0) + 1
                         payload = {
-                            "event": "standard_buy_skipped_after_fdv_limit_order",
-                            "reason": "fdv_limit_order_priority",
+                            "event": "standard_buy_skipped_fdv_limit_orders_only",
+                            "reason": "fdv_limit_orders_only",
                             "at": utc_iso(),
                             "atCst": cst_iso(),
                             "project": project_name,
@@ -1944,7 +2292,10 @@ async def async_main() -> None:
                             "executionRpcSource": rpc_selection.source,
                             "sample": compact_sample(sample),
                         }
-                        should_log = True
+                        should_log = (
+                            current_fingerprint != previous_fingerprint
+                            or (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec)
+                        )
                     else:
                         state_before_decision = copy.deepcopy(evaluator.state) if args.mode == "broadcast" else None
                         decision = evaluator.evaluate(sample, index=sample_count - 1)
@@ -1969,6 +2320,7 @@ async def async_main() -> None:
                             "sample": compact_sample(sample),
                         }
                         if decision.intent is not None:
+                            standard_buy_attempted = True
                             counts["prewarm"] = counts.get("prewarm", 0) + 1
                             payload = await prewarm_intent(
                                 args=effective_args,
@@ -2001,6 +2353,143 @@ async def async_main() -> None:
                         elif (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec):
                             payload["event"] = "heartbeat"
                             should_log = True
+
+                    if not runtime_block_reason and not standard_buy_attempted and not bool(args.fdv_limit_orders_only):
+                        follow_trade_attempted, follow_payloads = await attempt_follow_trades(
+                            args=args,
+                            effective_args=effective_args,
+                            cfg=cfg,
+                            bot=bot,
+                            rpc=rpc,
+                            project_row=project_row,
+                            project_name=project_name,
+                            sample=sample,
+                            sample_index=sample_count - 1,
+                            rpc_selection=rpc_selection,
+                        )
+                        for follow_payload in follow_payloads:
+                            if follow_payload.get("event") != "follow_trade_skipped":
+                                counts["follow_trade"] = counts.get("follow_trade", 0) + 1
+                            append_jsonl(output_jsonl, follow_payload)
+                            print(json.dumps(follow_payload, ensure_ascii=False), flush=True)
+
+                    if not runtime_block_reason and not standard_buy_attempted and not follow_trade_attempted:
+                        fdv_limit_gate_reason = ""
+                        if (
+                            bool(args.require_open_sniper_before_fdv_limit)
+                            and not open_sniper_first_buy_sent(bot, project_name=project_name)
+                        ):
+                            fdv_limit_gate_reason = "open_sniper_first_buy_not_sent"
+                        if fdv_limit_gate_reason:
+                            counts["skip"] = counts.get("skip", 0) + 1
+                            fdv_gate_payload = {
+                                "event": "fdv_limit_order_blocked_by_open_sniper_gate",
+                                "reason": fdv_limit_gate_reason,
+                                "at": utc_iso(),
+                                "atCst": cst_iso(),
+                                "project": project_name,
+                                "rule": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                                "strategy": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                                "mode": executor_mode(args),
+                                "sampleIndex": sample_count - 1,
+                                "readOnly": True,
+                                "tradeSent": False,
+                                "broadcastEnabled": False,
+                                "runtimeStrategyConfig": compact_runtime_config(runtime_config_row, effective_args),
+                                "rpcSharedWithMain": rpc_selection.rpc_shared_with_main,
+                                "executionRpcSource": rpc_selection.source,
+                                "openLimitOrderCount": len(open_limit_orders),
+                                "sample": compact_sample(sample),
+                            }
+                            if (
+                                current_fingerprint != previous_fingerprint
+                                or (time.monotonic() - last_logged_heartbeat) >= float(args.heartbeat_log_sec)
+                            ):
+                                append_jsonl(output_jsonl, fdv_gate_payload)
+                                print(json.dumps(fdv_gate_payload, ensure_ascii=False), flush=True)
+                        else:
+                            open_limit_orders = bot.storage.list_launch_fdv_limit_orders(
+                                project_id=int(project_row.get("id") or 0),
+                                statuses=["pending"],
+                                limit=100,
+                            )
+                            limit_orders = eligible_fdv_limit_orders(
+                                open_limit_orders,
+                                tax_fdv_wan_usd=sample_tax_fdv_wan(sample),
+                                project_status=str(sample.get("projectStatus") or ""),
+                            )
+                            next_nonce_override: int | None = None
+                            for limit_order in limit_orders:
+                                claimed = bot.storage.mark_launch_fdv_limit_order_triggering(int(limit_order.get("id") or 0))
+                                if not claimed or str(claimed.get("status") or "") != "triggering":
+                                    continue
+                                counts["fdv_limit_order"] = counts.get("fdv_limit_order", 0) + 1
+                                fdv_args = copy.copy(effective_args)
+                                fdv_args.project_cap_scope = "project"
+                                order_buy_v = decimal_value(claimed.get("buy_v"))
+                                if fdv_args.max_buy_v is None or Decimal(fdv_args.max_buy_v) < order_buy_v:
+                                    fdv_args.max_buy_v = order_buy_v
+                                limit_payload = await prewarm_intent(
+                                    args=fdv_args,
+                                    cfg=cfg,
+                                    bot=bot,
+                                    rpc=rpc,
+                                    project_row=project_row,
+                                    project_name=project_name,
+                                    rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                                    strategy_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                                    sample=sample,
+                                    sample_index=sample_count - 1,
+                                    intent=fdv_limit_order_intent(
+                                        row=claimed,
+                                        project_name=project_name,
+                                        sample=sample,
+                                        sample_index=sample_count - 1,
+                                    ),
+                                    nonce_override=next_nonce_override,
+                                    skip_tax_rate_guard=True,
+                                    force_no_wait_receipt=True,
+                                    signed_candidate=(
+                                        None
+                                        if next_nonce_override is not None
+                                        else take_signed_candidate(
+                                            signed_candidate_cache,
+                                            buy_size_v=claimed.get("buy_v"),
+                                            tax_rate=sample.get("buyTaxRate"),
+                                        )
+                                    ),
+                                )
+                                limit_payload["fdvLimitOrder"] = compact_fdv_limit_order(claimed)
+                                if limit_payload.get("tradeSent"):
+                                    bot.storage.mark_launch_fdv_limit_order_broadcast_sent(
+                                        int(claimed.get("id") or 0),
+                                        tx_hash=str(limit_payload.get("txHash") or ""),
+                                        ledger_intent_id=str(limit_payload.get("ledgerIntentId") or ""),
+                                    )
+                                    with contextlib.suppress(Exception):
+                                        next_nonce_override = int((limit_payload.get("signedSummary") or {}).get("nonce")) + 1
+                                else:
+                                    reason = str(limit_payload.get("reason") or limit_payload.get("event") or "")
+                                    if args.mode != "broadcast" or reason in {
+                                        "simulate_mode_no_sign",
+                                        "signed_no_raw_tx_persisted",
+                                        "wallet_balance_and_allowance_not_ready",
+                                        "wallet_balance_not_ready",
+                                        "wallet_allowance_not_ready",
+                                        "missing_cli_or_env_broadcast_gate",
+                                        "active_fuse",
+                                    }:
+                                        bot.storage.mark_launch_fdv_limit_order_retryable(
+                                            int(claimed.get("id") or 0),
+                                            error=reason,
+                                        )
+                                    else:
+                                        bot.storage.mark_launch_fdv_limit_order_failed(
+                                            int(claimed.get("id") or 0),
+                                            error=reason,
+                                        )
+                                append_jsonl(output_jsonl, limit_payload)
+                                print(json.dumps(limit_payload, ensure_ascii=False), flush=True)
 
                     if should_log:
                         append_jsonl(output_jsonl, payload)

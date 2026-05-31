@@ -386,6 +386,7 @@ EVENT_DECIMAL_FIELDS = {
 EVENT_INT_FIELDS = {"block_number", "block_timestamp"}
 EVENT_BOOL_FIELDS = {"is_my_wallet", "anomaly", "is_price_stale"}
 VIRTUALS_DIRECT_BUY_ROUTER = "0x1a540088125d00dd3990f9da45ca0859af4d3b01"
+VIRTUALS_DIRECT_BUY_SELECTOR = "0x706910ff"
 VIRTUALS_TEAM_INITIALIZATION_SELECTOR = "0x214013ca"
 DEFAULT_LAUNCH_BUY_STRATEGY = "dynamic_25v_dip20_after1_flat10_no_cap"
 DEFAULT_LAUNCH_BUY_RULE = "gate_5k_tax95_fdv_one_per_tax"
@@ -395,6 +396,8 @@ DEFAULT_LAUNCH_DIP_FROM_OWN_COST_PCT = Decimal("20")
 DEFAULT_LAUNCH_FLAT_PAUSE_PCT = Decimal("10")
 DEFAULT_LAUNCH_MAX_BUY_V = Decimal("50")
 DEFAULT_LAUNCH_MAX_PROJECT_V = Decimal("150")
+DEFAULT_LAUNCH_FOLLOW_WALLET = "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d"
+DEFAULT_LAUNCH_FOLLOW_RATIO_PCT = Decimal("25")
 DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY = "tax_fdv_limit_order"
 DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE = "tax_fdv_limit_order"
 DEFAULT_LAUNCH_SELL_STRATEGY = "dual_roi_large_buy_sell"
@@ -1431,6 +1434,9 @@ class Storage:
             CREATE INDEX IF NOT EXISTS idx_events_project_time
                 ON events(project, block_timestamp);
 
+            CREATE INDEX IF NOT EXISTS idx_events_project_buyer_time
+                ON events(project, buyer, block_timestamp);
+
             CREATE TABLE IF NOT EXISTS wallet_positions (
                 project TEXT NOT NULL,
                 wallet TEXT NOT NULL,
@@ -1887,6 +1893,9 @@ class Storage:
                 flat_pause_pct TEXT NOT NULL DEFAULT '10',
                 fdv_limit_enabled INTEGER NOT NULL DEFAULT 0,
                 fdv_limit_wan_usd TEXT NOT NULL DEFAULT '',
+                follow_enabled INTEGER NOT NULL DEFAULT 1,
+                follow_wallet TEXT NOT NULL DEFAULT '0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d',
+                follow_ratio_pct TEXT NOT NULL DEFAULT '25',
                 max_buy_v TEXT NOT NULL DEFAULT '50',
                 max_project_v TEXT NOT NULL DEFAULT '150',
                 version INTEGER NOT NULL DEFAULT 1,
@@ -2016,6 +2025,17 @@ class Storage:
         self._ensure_column("events", "calldata_bytes", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("launch_strategy_runtime_configs", "fdv_limit_enabled", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("launch_strategy_runtime_configs", "fdv_limit_wan_usd", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("launch_strategy_runtime_configs", "follow_enabled", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column(
+            "launch_strategy_runtime_configs",
+            "follow_wallet",
+            f"TEXT NOT NULL DEFAULT '{DEFAULT_LAUNCH_FOLLOW_WALLET}'",
+        )
+        self._ensure_column(
+            "launch_strategy_runtime_configs",
+            "follow_ratio_pct",
+            f"TEXT NOT NULL DEFAULT '{decimal_to_str(DEFAULT_LAUNCH_FOLLOW_RATIO_PCT, 6)}'",
+        )
         self._ensure_column("launch_sell_runtime_configs", "custom_rules_json", "TEXT NOT NULL DEFAULT '[]'")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("billing_requests", "credited_credit_ledger_id", "INTEGER")
@@ -2504,6 +2524,24 @@ class Storage:
                 total += Decimal(str(row["buy_size_v"] or "0"))
         return total
 
+    def sum_launch_execution_sent_buy_v_all_strategies(self, *, project: str) -> Decimal:
+        rows = self.conn.execute(
+            """
+            SELECT buy_size_v
+            FROM launch_execution_ledger
+            WHERE project = ?
+              AND action = 'would_buy'
+              AND trade_sent = 1
+              AND status NOT IN ('receipt_failed', 'prewarm_failed', 'simulation_failed')
+            """,
+            (str(project or "").strip(),),
+        ).fetchall()
+        total = Decimal("0")
+        for row in rows:
+            with contextlib.suppress(Exception):
+                total += Decimal(str(row["buy_size_v"] or "0"))
+        return total
+
     def list_launch_fdv_limit_orders(
         self,
         *,
@@ -2799,6 +2837,9 @@ class Storage:
             "flat_pause_pct": decimal_to_str(DEFAULT_LAUNCH_FLAT_PAUSE_PCT, 6),
             "fdv_limit_enabled": 0,
             "fdv_limit_wan_usd": "",
+            "follow_enabled": 1,
+            "follow_wallet": DEFAULT_LAUNCH_FOLLOW_WALLET,
+            "follow_ratio_pct": decimal_to_str(DEFAULT_LAUNCH_FOLLOW_RATIO_PCT, 6),
             "max_buy_v": decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6),
             "max_project_v": decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6),
             "version": 0,
@@ -2872,6 +2913,26 @@ class Storage:
                 raise ValueError("含税估算 FDV 上限不能为负数")
         if fdv_limit_enabled and (fdv_limit_wan_usd is None or fdv_limit_wan_usd <= 0):
             raise ValueError("启用含税估算 FDV 上限时，上限必须大于 0")
+        follow_enabled = parse_named_bool(
+            payload.get(
+                "followEnabled",
+                payload.get("follow_enabled", bool(int(baseline.get("follow_enabled") or 0))),
+            ),
+            "followEnabled",
+        )
+        follow_wallet_raw = payload.get("followWallet", payload.get("follow_wallet", baseline.get("follow_wallet")))
+        try:
+            follow_wallet = normalize_address(str(follow_wallet_raw or DEFAULT_LAUNCH_FOLLOW_WALLET))
+        except Exception as exc:
+            raise ValueError("followWallet must be a valid address") from exc
+        follow_ratio_pct = parse_strategy_decimal(
+            payload.get(
+                "followRatioPct",
+                payload.get("follow_ratio_pct", baseline.get("follow_ratio_pct")),
+            ),
+            "followRatioPct",
+            DEFAULT_LAUNCH_FOLLOW_RATIO_PCT,
+        )
         max_buy_v = parse_strategy_decimal(
             payload.get("maxBuyV", payload.get("max_buy_v", baseline.get("max_buy_v"))),
             "maxBuyV",
@@ -2888,6 +2949,7 @@ class Storage:
             "dipBuyV": dip_buy_v,
             "dipFromOwnCostPct": dip_from_own_cost_pct,
             "flatPausePct": flat_pause_pct,
+            "followRatioPct": follow_ratio_pct,
             "maxBuyV": max_buy_v,
             "maxProjectV": max_project_v,
         }
@@ -2901,16 +2963,16 @@ class Storage:
             raise ValueError("dipFromOwnCostPct cannot exceed 100")
         if flat_pause_pct > 100:
             raise ValueError("flatPausePct cannot exceed 100")
+        if follow_ratio_pct <= 0:
+            raise ValueError("followRatioPct must be positive")
+        if follow_ratio_pct > 100:
+            raise ValueError("followRatioPct cannot exceed 100")
         if base_buy_v > max_buy_v:
             raise ValueError("baseBuyV cannot exceed maxBuyV")
         if dip_buy_v > max_buy_v:
             raise ValueError("dipBuyV cannot exceed maxBuyV")
 
-        sent_project_v = self.sum_launch_execution_sent_buy_v(
-            project=str(project_row.get("name") or ""),
-            strategy=strategy,
-            rule_name=rule_name,
-        )
+        sent_project_v = self.sum_launch_execution_sent_buy_v_all_strategies(project=str(project_row.get("name") or ""))
         if max_project_v < sent_project_v:
             raise ValueError("maxProjectV cannot be lower than already sent project V")
 
@@ -2927,6 +2989,9 @@ class Storage:
             "flat_pause_pct": decimal_to_str(flat_pause_pct, 6),
             "fdv_limit_enabled": 1 if fdv_limit_enabled else 0,
             "fdv_limit_wan_usd": decimal_to_str(fdv_limit_wan_usd, 6) if fdv_limit_wan_usd is not None else "",
+            "follow_enabled": 1 if follow_enabled else 0,
+            "follow_wallet": follow_wallet,
+            "follow_ratio_pct": decimal_to_str(follow_ratio_pct, 6),
             "max_buy_v": decimal_to_str(max_buy_v, 6),
             "max_project_v": decimal_to_str(max_project_v, 6),
             "sent_project_v": decimal_to_str(sent_project_v, 6),
@@ -2969,12 +3034,14 @@ class Storage:
                 INSERT INTO launch_strategy_runtime_configs(
                     project_id, project, strategy, rule_name, enabled, mode,
                     base_buy_v, dip_buy_v, dip_from_own_cost_pct, flat_pause_pct,
-                    fdv_limit_enabled, fdv_limit_wan_usd, max_buy_v, max_project_v,
+                    fdv_limit_enabled, fdv_limit_wan_usd, follow_enabled, follow_wallet, follow_ratio_pct,
+                    max_buy_v, max_project_v,
                     version, updated_by_user_id, updated_reason, created_at, updated_at
                 ) VALUES (
                     :project_id, :project, :strategy, :rule_name, :enabled, :mode,
                     :base_buy_v, :dip_buy_v, :dip_from_own_cost_pct, :flat_pause_pct,
-                    :fdv_limit_enabled, :fdv_limit_wan_usd, :max_buy_v, :max_project_v,
+                    :fdv_limit_enabled, :fdv_limit_wan_usd, :follow_enabled, :follow_wallet, :follow_ratio_pct,
+                    :max_buy_v, :max_project_v,
                     :version, :updated_by_user_id, :updated_reason, :created_at, :updated_at
                 )
                 ON CONFLICT(project_id) DO UPDATE SET
@@ -2989,6 +3056,9 @@ class Storage:
                     flat_pause_pct = excluded.flat_pause_pct,
                     fdv_limit_enabled = excluded.fdv_limit_enabled,
                     fdv_limit_wan_usd = excluded.fdv_limit_wan_usd,
+                    follow_enabled = excluded.follow_enabled,
+                    follow_wallet = excluded.follow_wallet,
+                    follow_ratio_pct = excluded.follow_ratio_pct,
                     max_buy_v = excluded.max_buy_v,
                     max_project_v = excluded.max_project_v,
                     version = excluded.version,
@@ -6393,7 +6463,91 @@ class Storage:
             """,
             (project, top_n),
         ).fetchall()
-        return [dict(r) for r in rows]
+        items = [dict(r) for r in rows]
+        if not items:
+            return items
+
+        buyers: List[str] = []
+        for item in items:
+            try:
+                buyer = normalize_address(str(item.get("buyer") or ""))
+            except ValueError:
+                continue
+            if buyer not in buyers:
+                buyers.append(buyer)
+        if not buyers:
+            return items
+
+        placeholders = ",".join("?" for _ in buyers)
+        route_rows = self.conn.execute(
+            f"""
+            SELECT
+                buyer,
+                SUM(
+                    CASE
+                        WHEN tx_to != '' AND tx_selector != ''
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS route_event_count,
+                MAX(
+                    CASE
+                        WHEN LOWER(tx_to) = ?
+                             AND LOWER(tx_selector) = ?
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS has_virtual_buy,
+                MAX(
+                    CASE
+                        WHEN tx_to != ''
+                             AND tx_selector != ''
+                             AND NOT (
+                                LOWER(tx_to) = ?
+                                AND LOWER(tx_selector) IN (?, ?)
+                             )
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS has_non_virtual_buy
+            FROM events
+            WHERE project = ? AND buyer IN ({placeholders})
+            GROUP BY buyer
+            """,
+            (
+                VIRTUALS_DIRECT_BUY_ROUTER,
+                VIRTUALS_DIRECT_BUY_SELECTOR,
+                VIRTUALS_DIRECT_BUY_ROUTER,
+                VIRTUALS_DIRECT_BUY_SELECTOR,
+                VIRTUALS_TEAM_INITIALIZATION_SELECTOR,
+                project,
+                *buyers,
+            ),
+        ).fetchall()
+        route_flags: Dict[str, Dict[str, bool]] = {}
+        for row in route_rows:
+            try:
+                wallet = normalize_address(str(row["buyer"] or ""))
+            except ValueError:
+                continue
+            route_flags[wallet] = {
+                "has_buy_route_data": int(row["route_event_count"] or 0) > 0,
+                "has_virtual_buy": bool(int(row["has_virtual_buy"] or 0)),
+                "has_non_virtual_buy": bool(int(row["has_non_virtual_buy"] or 0)),
+            }
+        for item in items:
+            try:
+                buyer = normalize_address(str(item.get("buyer") or ""))
+            except ValueError:
+                item["has_buy_route_data"] = False
+                item["has_virtual_buy"] = False
+                item["has_non_virtual_buy"] = False
+                continue
+            flags = route_flags.get(buyer) or {}
+            item["has_buy_route_data"] = bool(flags.get("has_buy_route_data"))
+            item["has_virtual_buy"] = bool(flags.get("has_virtual_buy"))
+            item["has_non_virtual_buy"] = bool(flags.get("has_non_virtual_buy"))
+        return items
 
     def list_team_address_overrides(self, project: str) -> List[Dict[str, Any]]:
         project_value = require_nonempty_text(project, "project")
@@ -9860,6 +10014,9 @@ class VirtualsBot:
                     "spentV": str(row.get("sum_spent_v_est") or "0"),
                     "tokenBought": str(row.get("sum_token_bought") or "0"),
                     "breakevenFdvUsd": row.get("breakeven_fdv_usd"),
+                    "hasBuyRouteData": bool(row.get("has_buy_route_data")),
+                    "hasVirtualBuy": bool(row.get("has_virtual_buy")),
+                    "hasNonVirtualBuy": bool(row.get("has_non_virtual_buy")),
                     "updatedAt": int(row.get("last_tx_time") or row.get("updated_at") or 0),
                 }
             )
@@ -10527,6 +10684,7 @@ class VirtualsBot:
         candidate_buyers: Set[str] = set()
         buyer_fee_raw: Dict[str, int] = defaultdict(int)
         buyer_tax_raw: Dict[str, int] = defaultdict(int)
+        buyer_launch_out_raw: Dict[str, int] = defaultdict(int)
         buyer_virtual_out_raw: Dict[str, int] = defaultdict(int)
         buyer_virtual_in_raw: Dict[str, int] = defaultdict(int)
         token_received_raw: Dict[Tuple[str, str], int] = defaultdict(int)
@@ -10547,6 +10705,7 @@ class VirtualsBot:
             if token == vaddr:
                 if to_addr in {launch.fee_addr, launch.tax_addr, launch.internal_pool_addr}:
                     candidate_buyers.add(from_addr)
+                    buyer_launch_out_raw[from_addr] += amount
                 if to_addr == launch.fee_addr:
                     buyer_fee_raw[from_addr] += amount
                 if to_addr == launch.tax_addr:
@@ -10600,6 +10759,13 @@ class VirtualsBot:
             virtual_out = raw_to_decimal(buyer_virtual_out_raw.get(buyer, 0), virtual_decimals)
             virtual_in = raw_to_decimal(buyer_virtual_in_raw.get(buyer, 0), virtual_decimals)
             spent_v_actual = virtual_out - virtual_in
+            launch_out = raw_to_decimal(buyer_launch_out_raw.get(buyer, 0), virtual_decimals)
+            if spent_v_actual <= 0 and launch_out > 0 and virtual_in > 0:
+                # Aggregator routes can receive VIRTUAL inside the same tx, then
+                # pass it into the launch pool/tax path and forward tokens to the
+                # user. Net outflow is near zero for the route contract, but the
+                # launch buy still consumed VIRTUAL and must count for the board.
+                spent_v_actual = max(launch_out, virtual_out)
             if spent_v_actual <= 0:
                 continue
 
@@ -11542,10 +11708,8 @@ class VirtualsBot:
         item = stored or self.storage.default_launch_strategy_runtime_config(project_row)
         strategy = str(item.get("strategy") or DEFAULT_LAUNCH_BUY_STRATEGY)
         rule_name = str(item.get("rule_name") or DEFAULT_LAUNCH_BUY_RULE)
-        sent_project_v = self.storage.sum_launch_execution_sent_buy_v(
-            project=str(project_row.get("name") or ""),
-            strategy=strategy,
-            rule_name=rule_name,
+        sent_project_v = self.storage.sum_launch_execution_sent_buy_v_all_strategies(
+            project=str(project_row.get("name") or "")
         )
         active_fuse = self.storage.get_active_launch_execution_fuse(
             project=str(project_row.get("name") or ""),
@@ -11581,6 +11745,11 @@ class VirtualsBot:
                 "flatPausePct": str(item.get("flat_pause_pct") or decimal_to_str(DEFAULT_LAUNCH_FLAT_PAUSE_PCT, 6)),
                 "fdvLimitEnabled": bool(int(item.get("fdv_limit_enabled") or 0)),
                 "fdvLimitWanUsd": str(item.get("fdv_limit_wan_usd") or ""),
+                "followEnabled": bool(int(item.get("follow_enabled") or 0)),
+                "followWallet": str(item.get("follow_wallet") or DEFAULT_LAUNCH_FOLLOW_WALLET),
+                "followRatioPct": str(
+                    item.get("follow_ratio_pct") or decimal_to_str(DEFAULT_LAUNCH_FOLLOW_RATIO_PCT, 6)
+                ),
                 "maxBuyV": str(item.get("max_buy_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6)),
                 "maxProjectV": str(item.get("max_project_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)),
                 "version": int(item.get("version") or 0),
@@ -11618,6 +11787,21 @@ class VirtualsBot:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
 
+    def validate_project_identity_payload(self, project_row: Dict[str, Any], payload: Dict[str, Any]) -> Optional[str]:
+        """Reject stale admin writes when the visible project and route project diverge."""
+        expected_id = payload.get("expectedProjectId")
+        if expected_id is not None:
+            try:
+                if int(expected_id) != int(project_row.get("id") or 0):
+                    return "当前页面项目已切换，请刷新后重新保存。"
+            except Exception:
+                return "当前页面项目信息无效，请刷新后重新保存。"
+
+        expected_project = str(payload.get("expectedProject") or payload.get("project") or "").strip()
+        if expected_project and expected_project.lower() != str(project_row.get("name") or "").strip().lower():
+            return "当前页面项目与保存目标不一致，请刷新后重新保存。"
+        return None
+
     async def launch_strategy_runtime_config_set_handler(self, request: web.Request) -> web.Response:
         user = self.require_admin(request)
         raw_project_id = str(request.match_info.get("project_id", "")).strip()
@@ -11631,6 +11815,9 @@ class VirtualsBot:
             project_row = self.storage.get_managed_project(int(raw_project_id))
             if not project_row:
                 return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            identity_error = self.validate_project_identity_payload(project_row, payload)
+            if identity_error:
+                return web.json_response({"error": identity_error}, status=409)
             self.storage.upsert_launch_strategy_runtime_config(
                 project_row=project_row,
                 payload=payload,
@@ -11709,6 +11896,9 @@ class VirtualsBot:
             project_row = self.storage.get_managed_project(int(raw_project_id))
             if not project_row:
                 return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            identity_error = self.validate_project_identity_payload(project_row, payload)
+            if identity_error:
+                return web.json_response({"error": identity_error}, status=409)
             self.storage.upsert_launch_fdv_limit_orders(
                 project_row=project_row,
                 payload=payload,
@@ -11817,6 +12007,9 @@ class VirtualsBot:
             project_row = self.storage.get_managed_project(int(raw_project_id))
             if not project_row:
                 return web.json_response({"error": f"managed project not found: {raw_project_id}"}, status=404)
+            identity_error = self.validate_project_identity_payload(project_row, payload)
+            if identity_error:
+                return web.json_response({"error": identity_error}, status=409)
             self.storage.upsert_launch_sell_runtime_config(
                 project_row=project_row,
                 payload=payload,

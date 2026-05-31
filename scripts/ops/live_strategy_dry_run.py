@@ -177,6 +177,11 @@ def make_ledger_intent_id(
         or (intent or pause or {}).get("taxFdvWanUsd"),
         "buySizeV": (intent or {}).get("buy_size_v"),
     }
+    extra = intent or pause or {}
+    for key in ("sourceTxHash", "fdvLimitOrderId", "sourceWallet"):
+        value = extra.get(key)
+        if value not in (None, ""):
+            payload[key] = value
     digest = hashlib.sha256(stable_json(payload).encode("utf-8")).hexdigest()[:24]
     return f"lexec_{digest}"
 

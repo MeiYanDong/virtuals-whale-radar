@@ -105,6 +105,7 @@ FILES=(
   scripts/ops/launch_execution_fuse.py
   scripts/ops/launch_execution_pipeline.py
   scripts/ops/launch_latency_probe.py
+  scripts/ops/launch_open_sniper_executor.py
   scripts/ops/launch_prewarm_executor.py
   scripts/ops/launch_readiness_check.py
   scripts/ops/launch_rpc_pressure_probe.py
@@ -131,6 +132,7 @@ FILES=(
   scripts/ops/test_execution_rpc.py
   scripts/ops/test_launch_execution_pipeline.py
   scripts/ops/test_launch_rpc_pressure_probe.py
+  scripts/ops/test_launch_open_sniper_executor.py
   scripts/ops/test_launch_prewarm_executor.py
   scripts/ops/test_schedule_launch_services.py
   scripts/ops/test_launch_sell_executor.py
@@ -145,6 +147,8 @@ FILES=(
   deploy/systemd/vwr-launch-prewarm@.service
   deploy/systemd/vwr-launch-autobuy@.service
   deploy/systemd/vwr-launch-autosell@.service
+  deploy/systemd/vwr-launch-open-sniper@.service
+  deploy/systemd/vwr-launch-fdv-limit@.service
   deploy/systemd/vwr-launch-roo-start.service
   deploy/systemd/vwr-launch-roo-start.timer
 )

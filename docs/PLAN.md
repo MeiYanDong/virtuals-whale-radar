@@ -2479,6 +2479,9 @@ Phase 052 执行结果：
   - `有效榜单 20 人 / 5 个成本样本` 用于避免误解：榜单人数表示大户广度，成本样本表示可参与榜单成本计算的有效地址数。
   - 2026-05-20 删除前端“含税估算 FDV 上限”卡片：该能力属于早期错误方向的兼容字段，不再作为管理员操作入口，也不再被自动买入执行器热路径读取。
   - 2026-05-20 新增独立“含税估算 FDV 限价单”：管理员可设置多个 `FDV <= X 万 USD，买入 Y VIRTUAL` 订单；限价单不使用“大户策略”语义，不依赖榜单成本。
+  - 2026-05-31 新增正常税率 live 窗口跟单策略：默认跟随 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，买入金额为 `floor(对方消耗 VIRTUAL / 4)`，小于 `1V` 不出手。
+  - 自动买入优先级固定为：普通大户榜单策略 > 跟单策略 > 含税估算 FDV 限价单。
+  - 2026-05-31 跟单策略接入管理员运行时控制：前端展示“跟单买入”卡片，支持启用/停用和修改跟单比例；默认 `25%`，当前跟单地址只展示不编辑。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动买入`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已买入 V、最近调整时间和 active fuse 提示。
 - 后端新增运行时配置能力：
@@ -2486,11 +2489,14 @@ Phase 052 执行结果：
   - `launch_strategy_runtime_config_audit` 保存每次修改的 before/after 审计。
   - 管理员 API：`GET/POST /api/admin/projects/{project_id}/launch-strategy-config`。
   - 静态风控校验：基础买入/抄底买入必须小于等于单笔上限；项目预算不能低于已发送买入 V。
+  - 2026-05-21 复盘 MTR 发射前操作后，新增项目身份硬校验：自动买入、自动卖出、含税估算 FDV 限价单保存时可携带 `expectedProjectId / expectedProject`，若页面选择项目与 URL route project 不一致，后端返回 409 并拒绝写入，避免管理员看着 MTR 实际保存到旧项目。
 - 自动买入执行器已接入热加载：
   - 无配置行时沿用 CLI/systemd 默认值，保持向后兼容。
   - 配置存在且 `enabled=false` 时不发出 BuyIntent。
   - `broadcast` 执行器遇到配置 `mode=simulate` 时阻断真实买入。
   - 配置版本变化时写入 `strategy_config_reloaded` 日志。
+  - 生产 `vwr-launch-autobuy@.service` 使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算。
+  - `followEnabled / followWallet / followRatioPct` 随 `launch_strategy_runtime_configs` 热加载；保存后下一轮执行器循环立即采用，无需重启服务。
 - 本地验证通过：
   - Python `py_compile`。
   - `scripts/ops/test_launch_execution_pipeline.py`。
@@ -2523,7 +2529,40 @@ Phase 052 执行结果：
   - 报告：`data/execution/fdv-limit-api-hot-read-trigger-broadcast-20260520-150958-summary.json`，`data/execution/fdv-limit-api-hot-read-nontrigger-broadcast-20260520-150958-summary.json`。
 - 当前边界：
   - 真实广播仍受原有 CLI/env、独立 execution RPC、active fuse、simulation 和 receipt 保护。
+
+## 46.5 Live 发射前硬闸与一键 Preflight（2026-05-21）
+
+- 新增生产 GO/NO-GO 脚本：`scripts/ops/launch_preflight_gate.py`。
+- 脚本只读，不签名、不授权、不广播、不修改配置。
+- 覆盖检查：
+  - 项目身份：`expectedProjectId / expectedProject` 与 `managed_projects` 一致。
+  - 生产健康：`/health ok`、队列和 pending tx 无异常。
+  - systemd：核心服务与项目 `autobuy/autosell` 服务 active；dryrun/prewarm 作为 warning。
+  - runtime：自动买入 enabled + broadcast；自动卖出 enabled + broadcast，除非显式 `--skip-sell`。
+  - fuse：目标项目 active fuse 为 0。
+  - readiness：复用 `launch_readiness_check.build_readiness_report`，默认读取当前 runtime 的 `baseBuyV / dipBuyV`，不再默认只测旧 `25/50`。
+  - execution RPC：继承 readiness 检查，要求不与主采集 RPC 共用。
+- 前端项目详情标题旁显示 `ID #<project_id>`，用于人工核对 URL 与管理项目身份。
+- Phase 061 runbook 已把“项目身份硬闸”和“一键 GO/NO-GO”放到发射前第 0 步。
   - `100x` 适合完整窗口烟测；如果需要人工在前端中途改参并观察下一 tick 热加载，应使用 `20x` 或脚本暂停检查点。
+
+## 46.6 ORION 无狙击税开盘秒买（2026-05-24）
+
+- 针对 `BONDING_V5 + antiSniperTaxType=0` 的无狙击税项目，新增开盘秒买执行器 `scripts/ops/launch_open_sniper_executor.py`。
+- 执行器只在官方 no-tax 校验通过后允许 broadcast；默认使用 `VWR_PROBE_HTTP_RPC_URLS` 做并发 `eth_call` 探测，使用 `VWR_BROADCAST_HTTP_RPC_URLS` 做同一 signed raw tx fanout 广播，日志只输出脱敏 provider label。
+- ORION 生产配置：首笔 `100 VIRTUAL`，项目上限 `100 VIRTUAL`；首笔成功后只保留独立含税 FDV 限价单。
+- 生产探测节奏：T-600s prepare，T-300s high probe `0.05s` poll，T-90s ultra probe `0.02s` poll，high/ultra 均为 `2` workers。
+- 实测结论：远端 Chainstack execution p50 约 `68ms`、p90 约 `72ms`；Ankr p50 约 `206ms`。高 worker 压测可承受，但 `2` workers 的可买 race 延迟最低，因此生产采用 `2` workers。
+- 生产落地：ORION 已写入 `managed_projects`，start time `2026-05-26 00:00:54 CST`；`vwr-launch-orion-start.timer` 会在 `2026-05-25 23:30:54 CST` 拉起 `open-sniper` 与 `fdv-limit`；archive timer 为 `2026-05-26 01:49:54 CST`。
+- 生产核验：timer enabled；`vwr-launch-open-sniper@ORION.service` 与 `vwr-launch-fdv-limit@ORION.service` 当前 inactive 等待 timer；`/health` 与 `/healthz` 正常。
+- 2026-05-24 15:49 CST preflight：core workflow ready，execution RPC 与主采集分离，active fuse `0`；VIRTUAL allowance 已够 `300V`，Base ETH gas 充足；burner 当前 VIRTUAL 余额约 `1.67V`，不足首笔 `100V`，发射前必须转入足额 VIRTUAL。
+- ORION 当前没有含税 FDV 限价单；`fdv-limit` 服务会随 timer 启动，但没有订单时不会执行后续买入。
+- ORION 无税自动卖出口径：默认关闭，用户前端手动开启；不单独设置 `tax<=5%`，当前 `1%` 税率天然满足 `max_tax_rate=30` 安全门；配置使用 `dual_roi_large_buy_sell + customRules=[]`，冷却 `10s`，大单回看 `30s`，保持目标仓位卖出档位 `30% / 50%`。
+- 为保证手动开启后立即生效，ORION timer 应同时拉起 `autosell`；disabled 配置下服务只记录 `runtime_config_disabled`，不真实卖出。
+- 2026-05-24 21:31 CST 已执行：ORION start timer 服务范围扩展为 `open-sniper,fdv-limit,autosell`；已写入 ORION disabled 自动卖出运行时配置；只读 autosell 检查确认配置被读取且不会卖出。
+- 2026-05-26 ORION 复盘修正：无税开盘秒买不能只依赖旧预签候选。执行器已改为 high/ultra 阶段持续按 `presign_refresh_sec` 重签，生产模板 `10s -> 0.5s`；开盘后遇到指定报价失效 selector 会立即重签并同轮复探。二次修正后，`open-sniper` 不再绑定开盘前池子报价，直接构造 `buy(amountIn, token, amountOutMin=1, deadline)`，用极低 `amountOutMin` 表达市价抢买；普通 taxed 策略和 FDV 限价单仍保留报价/限价保护。显式准点直发 `--post-trigger-direct-fire` 已加入但默认关闭，避免官方时间到而链上 direct buy 仍关闭时烧掉 nonce。远端 ORION 项目级 drop-in 已同步补齐 `--presign-refresh-sec 0.5` 与 `--requote-revert-selectors 0x850c6f76`，保留 `300V` 和 `5/6 gwei`；后续单项目覆盖必须同时核对热路径参数。
+- 2026-05-26 最优版热路径：`open-sniper` 广播后会做短窗口 receipt/nonce 确认；若同 nonce 未确认且未过 deadline，会自动用同 nonce 提高 EIP-1559 fee 重新 fanout，避免首笔卡在 mempool。无税项目可用 `--require-open-sniper-before-fdv-limit` 让 FDV 限价单在首笔 open-sniper 已发出前保持阻断，避免两个执行器抢同一个开盘 nonce；`schedule_launch_services.py` 在同时选择 `open-sniper,fdv-limit` 时会自动生成该项目的 fdv-limit gate drop-in。
+- 2026-05-26 通用化改良：`schedule_launch_services.py --auto-profile` 会读取目标 managed project 的 Virtuals 官方 `launchInfo`，复用 `resolve_buy_tax_schedule` 分类发射 profile。`antiSniperTaxType=0` 自动选择 `open-sniper,fdv-limit,autosell`，`60s/98m/default` 走原正常 `dryrun,prewarm,autobuy,autosell`，未知或缺失官方税率配置直接阻断，不创建真实 broadcast 调度。若不传 `--start-at`，脚本会使用 `managed_projects.start_at` 生成 timer。
 
 ## 45. 自动卖出运行时控制台（Phase 056，2026-05-15）
 
@@ -2594,6 +2633,7 @@ Phase 052 执行结果：
   - 脚本：`scripts/ops/schedule_launch_services.py`。
   - 默认 dry-run；只有显式 `--apply` 才写入 systemd 和启用 timer。
   - 输入 `--project <SYMBOL>` 与 `--start-at "YYYY-MM-DD HH:MM:SS"`。
+  - 支持 `--auto-profile`：从官方 launchInfo 自动选择无税秒狙击或正常税率策略，未知 profile 直接阻断。
   - 默认发射前 `35` 分钟启动 `dryrun / prewarm / autobuy / autosell`。
   - 默认发射窗口 `99` 分钟后再延迟 `10` 分钟自动归档。
   - 输出项目级 `start.service/start.timer/archive.service/archive.timer`。

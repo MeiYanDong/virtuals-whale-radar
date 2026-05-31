@@ -116,3 +116,14 @@
 - sample `700` 写入并启用自动卖出后，执行器记录 `sell_config_reloaded`。
 - sample `819` / tax `30%` 自动卖出本次 TDS 持仓，tx `0xce9d5637f82894ef2bfd2dc403664b6f143ba58b943ac3d0c7fc322fb8c47b0a`，receipt `0x1`。
 - 测试使用预授权 token allowance，卖出执行时 `autoApproveEnabled=false`，避免把授权延迟混入卖出触发延迟。
+
+## 10. 无狙击税项目口径（2026-05-24）
+
+- 无狙击税项目开局税率约 `1%`，天然满足现有 `max_tax_rate=30` 安全门；不要再单独表达“卖出窗口 tax <= 5%”。
+- 无狙击税项目默认关闭自动卖出，由管理员在前端手动开启。
+- 为保证手动开启后立即生效，生产可提前启动 `autosell` 服务；运行时配置 disabled 时执行器只记录阻断，不真实卖出。
+- ORION 采用 legacy `dual_roi_large_buy_sell` 目标仓位语义，不采用自定义多规则累加语义：
+  - `customRules=[]`。
+  - 收益率 `>=30%` 且单笔买入 `>=5000 VIRTUAL`，卖到原始仓位 `30%`。
+  - 收益率 `>=50%` 且单笔买入 `>=8000 VIRTUAL`，卖到原始仓位 `50%`。
+  - 冷却 `10s`，大单回看窗口 `30s`。

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { ArrowRight, KeyRound, Mail, MoonStar, SunMedium } from "lucide-react";
+import { ArrowRight, KeyRound, Mail, MoonStar, ShieldCheck, SunMedium } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -188,6 +188,16 @@ export function LoginPage() {
             <div className="text-3xl font-semibold tracking-[-0.05em]">登录或创建账号</div>
             <p className="text-sm leading-6 text-muted-foreground">
               推荐 Base 用户直接用钱包继续；已有邮箱账号也可以用密码登录。
+            </p>
+          </div>
+
+          <div className="rounded-[24px] border border-border/80 bg-[color:var(--surface-soft)] px-5 py-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <ShieldCheck className="size-4 text-primary" />
+              安全说明
+            </div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Virtuals Whale Radar 是独立数据分析工具，不是 Virtuals Protocol 官方网站。本站不会索要助记词或私钥；钱包签名只用于登录身份确认，不会授权或提交交易。
             </p>
           </div>
 

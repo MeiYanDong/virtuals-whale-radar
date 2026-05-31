@@ -18,7 +18,7 @@
 1. 项目发现：从 SignalHub / Virtuals 页面发现待发射项目，确认项目名称、SignalHub id、start time、token、internal pool、税率来源和是否纳入管理。
 2. 发射前配置：确认项目在生产库中字段完整，runtime pause 为 false，realtime/backfill fresh，execution RPC 独立，active fuse 为空。
 3. 资金与授权：确认 burner 钱包有足够 Base ETH、VIRTUAL balance、VIRTUAL buy allowance；卖出阶段只处理本系统买入后形成的仓位。
-4. 策略参数：确认自动买入 runtime config、自动卖出 runtime config、单笔上限、单项目上限、卖出规则和大额买入回看窗口。
+4. 策略参数：确认自动买入 runtime config、自动卖出 runtime config、单笔上限、单项目上限、跟单策略、卖出规则和大额买入回看窗口。
 5. T-35 启动：用 systemd timer 启动 dry-run recorder、prewarm simulate、autobuy broadcast、autosell broadcast，并设置窗口后归档 timer。
 6. 窗口中盯盘：只盯运行风险和交易事实，不做 UI 体验优化；重点是 sample 是否增长、ledger 是否写入、receipt 是否成功、fuse 是否触发。
 7. 结束归档：输出 samples、events、execution ledger、fuses、summary、archive.db。
@@ -27,6 +27,65 @@
 ## 下一次 Live 项目操作清单
 
 把 `<SYMBOL>`、`<START_AT_SERVER_LOCAL>` 和 `<BURNER_ADDRESS>` 替换为真实值。服务器时间按生产机本地时间填写。
+
+### 0. 项目身份硬闸
+
+在发射前，必须确认“页面看到的项目”和“后端实际保存/执行的项目”是同一个：
+
+- 管理员 URL 必须是 `/admin/projects/<PROJECT_ID>?project=<SYMBOL>`。
+- 页面标题旁显示的 `ID #<PROJECT_ID>` 必须与 URL 一致。
+- `managed_projects.id` / `managed_projects.name` 必须与 URL 和顶部当前项目一致。
+- 自动买入、自动卖出、含税估算 FDV 限价单保存时，后端会校验 `expectedProjectId / expectedProject`；如果页面项目和保存目标不一致，直接拒绝保存。
+- systemd 实例必须使用同一个 `<SYMBOL>`：`vwr-launch-autobuy@<SYMBOL>`、`vwr-launch-autosell@<SYMBOL>`。
+
+不满足时，不允许认为项目已准备好。
+
+### 0.5 一键 GO/NO-GO
+
+发射前优先跑统一 preflight gate，而不是分别看零散日志：
+
+```bash
+cd /opt/virtuals-whale-radar
+set -a
+. /etc/virtuals-whale-radar/rpc.env
+. /etc/virtuals-whale-radar/execution-rpc.env
+set +a
+.venv/bin/python scripts/ops/launch_preflight_gate.py \
+  --config config.json \
+  --project <SYMBOL> \
+  --expected-project-id <PROJECT_ID> \
+  --expected-project <SYMBOL> \
+  --from-address <BURNER_ADDRESS> \
+  --output-json data/backtests/launch-preflight-<SYMBOL>.json
+```
+
+通过条件：
+
+- 输出 `go=true`。
+- `blockers=[]`。
+- `readiness` 对当前真实买入金额全绿。
+- `buy_runtime_config` 为 enabled + broadcast。
+- `sell_runtime_config` 为 enabled + broadcast，除非本次明确跳过自动卖出。
+- `activeFuseCount=0`。
+- core 服务和项目自动买入/卖出服务均为 active。
+- `executionRpcSharedWithMain=false`。
+
+如果输出 `go=false`，先解决 blockers，不要靠口头判断继续实盘。
+
+新项目先用自动 profile 生成启动计划，先看 JSON 证据再 `--apply`：
+
+```bash
+.venv/bin/python scripts/ops/schedule_launch_services.py \
+  --config config.json \
+  --project <SYMBOL> \
+  --auto-profile \
+  --json
+```
+
+- `no_tax_open_sniper` 会选择 `open-sniper,fdv-limit,autosell`，并自动给 fdv-limit 加 open-sniper gate。
+- `taxed_60s / taxed_98m / taxed_default` 会选择正常 `dryrun,prewarm,autobuy,autosell`。
+- `unknown_blocked` 不允许真实调度，必须先解决官方税率配置证据。
+- 正常税率项目的 `autobuy` 默认包含跟单策略：普通大户榜单策略优先，其次跟单地址，最后才是含税估算 FDV 限价单。
 
 ### 1. 生产健康
 
@@ -94,8 +153,9 @@ set +a
   --config config.json \
   --project <SYMBOL> \
   --from-address <BURNER_ADDRESS> \
-  --amount-v 25 \
-  --amount-v 50 \
+  --amount-v <BASE_BUY_V> \
+  --amount-v <DIP_BUY_V> \
+  --slippage-bps 9999 \
   --output-json data/backtests/launch-readiness-<SYMBOL>.json
 ```
 
@@ -105,7 +165,7 @@ set +a
 - `coreWorkflowReady=true`。
 - `rpcSharedWithMain=false`。
 - active fuse 数为 `0`。
-- `25V` / `50V` simulation 绿灯。
+- 当前真实买入金额 simulation 绿灯。例如前端设置 `50 / 100`，这里必须检查 `50V / 100V`，不能沿用旧默认。
 - gas、balance、allowance 均满足预算。
 
 ### 5. Runtime 参数确认
@@ -115,6 +175,9 @@ set +a
 - 自动买入已启用，模式为 broadcast。
 - 单笔上限符合本次预算。
 - 单项目上限符合本次预算。
+- 跟单策略默认开启，仅在 live 窗口内生效；当前跟单地址为 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，买入金额为 `floor(对方消耗 VIRTUAL / 4)`，小于 `1V` 不出手。
+- 跟单策略可在管理员“自动买入控制”中启用/停用并修改跟单比例；默认 `25%`，保存后由执行器热加载。
+- 项目预算按项目全局统计，普通大户策略、跟单策略和含税估算 FDV 限价单共同消耗同一个 `max_project_v`。
 - 自动卖出已启用，模式为 broadcast。
 - 卖出规则为当前生产规则或本次明确指定的规则。
 - 大额买入事件回看窗口为 `120 秒`，除非本次复盘明确要求调整。
@@ -270,3 +333,32 @@ python3 scripts/ops/recalc_dual_sell_strategy.py \
 - 当前候选记录见 `docs/phases/phase-061-live-candidates-2026-05-20.md`；`MTR` 已创建只读 `dryrun,prewarm` timer，发射前 direct buy 仍 revert，需要窗口前复跑 readiness。
 - 归档必须成为每次窗口的默认产物；没有 archive 的实盘窗口，不算完成闭环。
 - 页面优化优先级低于执行失败率、真实 PnL 和复盘质量。
+
+## 2026-05-21 MTR 聚合器买入漏解析修复
+
+- 现象：`0x793808798e8c6c97cc5521521c22086aaa863543cd584bbce5f78cd0ba8bee07` 等交易在链上完成买入，但没有进入 `events/leaderboard`，导致 `榜单 V` 明显偏低。
+- 根因：这类交易走 `ETH/WETH -> VIRTUAL -> 内盘买入` 聚合器路径。旧 parser 用候选路由合约的 `VIRTUAL out - VIRTUAL in` 作为支出；路由合约在同一 tx 内先收到 VIRTUAL、再打入内盘/税收地址并把项目 token 转给用户，净额接近 `0`，因此被误判为非买入。
+- 修复：`parse_receipt_for_launch` 增加 `buyer_launch_out_raw`，当存在“VIRTUAL 打入内盘/税收/fee + 内盘 token 转出 + token 继续转给最终用户”的路径时，即使路由合约净流出为 `0`，也按该路径实际消耗的 VIRTUAL 计入买入，并把最终 token 接收者作为 buyer。
+- 生产回扫：MTR 全窗口 `46290350 -> 46293395` replay 后，买入事件从 `86` 增至 `319`，累计 `SpentV` 从 `16,716.440672 V` 增至 `101,155.608686 V`；指定交易 `0x7938...e07` 已入库，buyer=`0x38e47fece3ea323e864c65410f6458c820eaa897`，spent=`2889.260153 V`。
+- 最终审计：`candidateTxCount=509`，`eventTxCount=319`，`scannedCandidateWithoutEventCount=190`，`repairCandidateTxCount=0`，`status=green`。
+- 后续要求：真实窗口结束后必须固定结束区块跑 `audit -> replay repair -> final green audit`；移动 latest 审计只能作为在线观察，不能替代封闭窗口审计。
+
+### 全局历史回扫结果
+
+2026-05-21 修复后，已对生产库中所有具备 `token_addr + internal_pool_addr` 的受管项目执行全窗口 replay，并重新跑 final audit。结果如下：
+
+| Project | Events Before | Events After | Inserted | Candidates | Final Audit |
+| --- | ---: | ---: | ---: | ---: | --- |
+| MTR | 319 | 319 | 0 | 496 | green / repair=0 |
+| ROO | 505 | 938 | 433 | 1153 | green / repair=0 |
+| TDS | 128 | 265 | 137 | 504 | green / repair=0 |
+| ISC | 322 | 513 | 191 | 602 | green / repair=0 |
+| SR | 602 | 655 | 53 | 754 | green / repair=0 |
+| VOID | 4 | 14 | 10 | 79 | green / repair=0 |
+| ZODIAC | 51 | 51 | 0 | 443 | green / repair=0 |
+| LUCA | 6 | 6 | 0 | 425 | green / repair=0 |
+| F007 | 9 | 9 | 0 | 117 | green / repair=0 |
+| SCL | 0 | 0 | 0 | 278 | green / repair=0 |
+| FIRE | 0 | 0 | 0 | 26 | green / repair=0 |
+
+当前口径下，代码路径已全局修复，且当前生产库中已知受管项目的历史窗口已全局回扫完成。这个结论不覆盖未进入 `managed_projects` 的外部项目，也不替代未来新发射项目结束后的封闭窗口审计。

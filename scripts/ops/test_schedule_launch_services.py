@@ -17,8 +17,11 @@ if str(OPS_DIR) not in sys.path:
 from schedule_launch_services import (  # noqa: E402
     archive_timer_name,
     build_schedule,
+    classify_launch_profile,
+    format_local_timestamp,
     planned_files,
     selected_service_units,
+    services_for_launch_profile,
     start_timer_name,
 )
 
@@ -79,9 +82,54 @@ def test_start_now_without_start_at() -> None:
     assert_eq(selected_service_units(schedule), ["vwr-launch-dryrun@ABC.service"], "start-now units")
 
 
+def test_open_sniper_schedule_adds_fdv_limit_gate_override() -> None:
+    args = Namespace(
+        project="orion",
+        start_at="2026-05-26 00:00:54",
+        prewarm_minutes=30,
+        duration_minutes=99,
+        archive_delay_minutes=10,
+        services="open-sniper,fdv-limit",
+        no_archive_timer=False,
+        start_now=False,
+    )
+    schedule = build_schedule(args)
+    files = planned_files(schedule, Path("/tmp/systemd"), Path("/opt/virtuals-whale-radar"), install_templates=True)
+    override_path = "/tmp/systemd/vwr-launch-fdv-limit@ORION.service.d/10-require-open-sniper.conf"
+    assert override_path in files
+    assert "--require-open-sniper-before-fdv-limit" in files[override_path]
+    assert "--project ORION" in files[override_path]
+
+
+def test_launch_profile_classifier_and_services() -> None:
+    assert_eq(
+        classify_launch_profile({"known": True, "status": "bonding_v5_anti_sniper_off"}),
+        "no_tax_open_sniper",
+        "no-tax bonding v5 profile",
+    )
+    assert_eq(
+        services_for_launch_profile("no_tax_open_sniper"),
+        ("open-sniper", "fdv-limit", "autosell"),
+        "no-tax services",
+    )
+    assert_eq(classify_launch_profile({"known": True, "status": "bonding_v5_60s"}), "taxed_60s", "60s profile")
+    assert_eq(classify_launch_profile({"known": True, "status": "bonding_v5_98m"}), "taxed_98m", "98m profile")
+    assert_eq(services_for_launch_profile("taxed_98m"), ("dryrun", "prewarm", "autobuy", "autosell"), "taxed services")
+    assert_eq(classify_launch_profile({"known": False, "status": "official_config_missing"}), "unknown_blocked", "unknown profile")
+    try:
+        services_for_launch_profile("unknown_blocked")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown profile should not schedule services")
+    assert format_local_timestamp(1779724854)
+
+
 def main() -> None:
     test_schedule_units()
     test_start_now_without_start_at()
+    test_open_sniper_schedule_adds_fdv_limit_gate_override()
+    test_launch_profile_classifier_and_services()
     print("schedule_launch_services tests ok")
 
 

@@ -1,0 +1,23 @@
+[Unit]
+Description=Virtuals Whale Radar open-second no-tax buyer for %i
+After=network-online.target vwr@writer.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vwr
+Group=vwr
+WorkingDirectory=/opt/virtuals-whale-radar
+Environment=PYTHONUNBUFFERED=1
+Environment=VWR_ENABLE_AUTO_BUY_BROADCAST=1
+EnvironmentFile=-/etc/virtuals-whale-radar/rpc.env
+EnvironmentFile=-/etc/virtuals-whale-radar/execution-rpc.env
+EnvironmentFile=/etc/virtuals-whale-radar/burner-wallet.env
+ExecStart=/opt/virtuals-whale-radar/.venv/bin/python /opt/virtuals-whale-radar/scripts/ops/launch_open_sniper_executor.py --config /opt/virtuals-whale-radar/config.json --project %i --from-address 0x4a371b9b1bf1e7bc0700dff666631f0fc5c96624 --secret-file /etc/virtuals-whale-radar/burner-wallet.env --mode broadcast --enable-broadcast --buy-v 100 --max-buy-v 100 --max-project-v 100 --prepare-before-sec 600 --high-probe-before-sec 300 --ultra-probe-before-sec 90 --prepare-poll-sec 1 --high-probe-poll-sec 0.05 --ultra-probe-poll-sec 0.02 --high-probe-workers 2 --ultra-probe-workers 2 --probe-race-timeout-sec 0.8 --broadcast-fanout-timeout-sec 0.8 --min-poll-sec 0.02 --presign-refresh-sec 0.5 --requote-revert-selectors 0x850c6f76 --static-gas 450000 --no-wait-receipt --output-jsonl /opt/virtuals-whale-radar/data/execution/launch-open-sniper-%i.jsonl --exit-after-end-sec 300
+Restart=on-failure
+RestartSec=1
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

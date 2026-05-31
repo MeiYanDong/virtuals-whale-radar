@@ -15,7 +15,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation, useSearchParams } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { resolveProjectCandidates, resolveSelectedProject } from "@/adapters/dashboard";
 import { dashboardApi } from "@/api/dashboard-api";
@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import type {
   AppMetaResponse,
   AppNotificationsResponse,
+  ManagedProjectItem,
   MetaResponse,
   RefreshMode,
   SignalHubResponse,
@@ -87,6 +88,27 @@ function loadSavedProject(viewer: WorkspaceViewer) {
   }
 }
 
+function projectDetailRouteId(pathname: string, viewer: WorkspaceViewer) {
+  const prefix = viewer === "admin" ? "/admin/projects/" : "/app/projects/";
+  if (!pathname.startsWith(prefix)) return null;
+  const raw = pathname.slice(prefix.length);
+  return /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : null;
+}
+
+function projectRowsFromMeta(meta: MetaResponse | AppMetaResponse | undefined): ManagedProjectItem[] {
+  if (!meta) return [];
+  if ("managedProjects" in meta) return meta.managedProjects ?? [];
+  return meta.projects ?? [];
+}
+
+function findProjectRowByName(meta: MetaResponse | AppMetaResponse | undefined, project: string) {
+  const normalized = project.trim().toLowerCase();
+  if (!normalized) return null;
+  return (
+    projectRowsFromMeta(meta).find((item) => String(item.name || "").trim().toLowerCase() === normalized) ?? null
+  );
+}
+
 function loadSidebarMode(viewer: WorkspaceViewer): SidebarMode {
   try {
     const raw = window.localStorage.getItem(SIDEBAR_MODE_STORAGE_PREFIX[viewer]);
@@ -106,6 +128,8 @@ function nextSidebarMode(mode: SidebarMode): SidebarMode {
 function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
   const queryClient = useQueryClient();
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [refreshMode, setRefreshModeState] = useState<RefreshMode>(() => loadRefreshMode(viewer));
@@ -155,7 +179,8 @@ function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
     searchParams.get("project") || loadSavedProject(viewer),
   );
   const projectOptions = resolveProjectCandidates(metaQuery.data);
-  const shouldSyncProjectParam = true;
+  const detailRouteProjectId = projectDetailRouteId(location.pathname, viewer);
+  const shouldSyncProjectParam = detailRouteProjectId === null;
 
   useEffect(() => {
     if (!shouldSyncProjectParam) return;
@@ -197,10 +222,26 @@ function useWorkspaceShellContextValue(viewer: WorkspaceViewer) {
       const next = new URLSearchParams(searchParams);
       if (project) next.set("project", project);
       else next.delete("project");
+
+      const routeProjectId = projectDetailRouteId(location.pathname, viewer);
+      const projectRow = findProjectRowByName(metaQuery.data, project);
+      if (routeProjectId !== null && projectRow) {
+        const pathname = viewer === "admin" ? `/admin/projects/${projectRow.id}` : `/app/projects/${projectRow.id}`;
+        void navigate(
+          {
+            pathname,
+            search: next.toString() ? `?${next.toString()}` : "",
+          },
+          { replace: routeProjectId === projectRow.id },
+        );
+        setMobileOpen(false);
+        return;
+      }
+
       setSearchParams(next);
       setMobileOpen(false);
     },
-    [searchParams, setSearchParams],
+    [location.pathname, metaQuery.data, navigate, searchParams, setSearchParams, viewer],
   );
 
   const refreshAll = useCallback(async () => {

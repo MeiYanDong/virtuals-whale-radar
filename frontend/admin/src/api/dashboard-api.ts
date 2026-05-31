@@ -280,6 +280,8 @@ export const dashboardApi = {
     setLaunchFdvLimitOrders(
       projectId: number,
       payload: {
+        expectedProjectId?: number;
+        expectedProject?: string;
         orders: Array<{
           id?: number | null;
           enabled: boolean;
@@ -300,6 +302,8 @@ export const dashboardApi = {
     setLaunchStrategyConfig(
       projectId: number,
       payload: {
+        expectedProjectId?: number;
+        expectedProject?: string;
         enabled: boolean;
         mode: "simulate" | "broadcast";
         baseBuyV: string;
@@ -308,6 +312,9 @@ export const dashboardApi = {
         flatPausePct: string;
         fdvLimitEnabled: boolean;
         fdvLimitWanUsd: string;
+        followEnabled: boolean;
+        followWallet: string;
+        followRatioPct: string;
         maxBuyV: string;
         maxProjectV: string;
         updatedReason?: string;
@@ -329,6 +336,8 @@ export const dashboardApi = {
     setLaunchSellConfig(
       projectId: number,
       payload: {
+        expectedProjectId?: number;
+        expectedProject?: string;
         enabled: boolean;
         mode: "simulate" | "broadcast";
         strategy?: string;
