@@ -709,7 +709,9 @@ const launchBuyTriggerConditions = [
   { label: "含税 FDV ≤ 榜单成本" },
 ];
 
-function StrategyInfoHint({ label }: { label: string }) {
+function StrategyInfoHint({ label, align = "right" }: { label: string; align?: "left" | "right" }) {
+  const placementClass = align === "left" ? "left-0" : "right-0";
+
   return (
     <span className="group relative inline-flex">
       <button
@@ -721,7 +723,7 @@ function StrategyInfoHint({ label }: { label: string }) {
       </button>
       <span
         role="tooltip"
-        className="pointer-events-none absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-[14px] border border-border bg-popover px-3 py-2 text-left text-xs font-normal leading-5 tracking-normal text-foreground opacity-0 shadow-[var(--shadow-soft)] transition duration-150 group-focus-within:opacity-100 group-hover:opacity-100 sm:w-80"
+        className={`pointer-events-none absolute ${placementClass} top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] whitespace-normal break-words rounded-[14px] border border-border bg-popover px-3 py-2 text-left text-xs font-normal leading-5 tracking-normal text-foreground opacity-0 shadow-[var(--shadow-soft)] transition duration-150 group-focus-within:opacity-100 group-hover:opacity-100 sm:w-80`}
       >
         {label}
       </span>
@@ -751,7 +753,7 @@ function StrategyFieldLabel({
     <div className="flex items-center justify-between gap-2">
       <div className="flex min-w-0 items-center gap-1.5">
         <span className={strategyLabelClass}>{label}</span>
-        {hint ? <StrategyInfoHint label={hint} /> : null}
+        {hint ? <StrategyInfoHint label={hint} align="left" /> : null}
       </div>
       <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
         {unit}
