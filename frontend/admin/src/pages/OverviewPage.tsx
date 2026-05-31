@@ -856,7 +856,7 @@ function LaunchStrategyControlPanel({
                 ))}
               </div>
               <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                这里展示当前自动买入策略的固定入场门槛，不会随前端保存而改写。
+                这里展示大户榜单策略的固定入场门槛，不会随前端保存而改写。
               </div>
             </div>
 
@@ -889,43 +889,6 @@ function LaunchStrategyControlPanel({
                       onChange={(event) => onChange(applyLaunchStrategyPatch(form, { dipBuyV: event.target.value }))}
                     />
                   </div>
-                  </div>
-                </div>
-
-                <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className={strategyLabelClass}>跟单买入</div>
-                    <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                      <input
-                        type="checkbox"
-                        checked={form.followEnabled}
-                        onChange={(event) => onChange({ followEnabled: event.target.checked })}
-                      />
-                      {form.followEnabled ? "开启" : "关闭"}
-                    </label>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-[0.9fr_1.1fr]">
-                    <div className={strategyFieldClass}>
-                      <StrategyFieldLabel
-                        label="跟单比例"
-                        unit="%"
-                        hint="仅在 live 窗口内生效；当跟单地址买入本项目时，本系统按该比例计算买入 VIRTUAL 数量，低于 1V 会跳过。"
-                      />
-                      <Input
-                        className={strategyInputClass}
-                        inputMode="numeric"
-                        aria-label="跟单比例，单位百分比"
-                        value={form.followRatioPct}
-                        onChange={(event) => onChange({ followRatioPct: event.target.value })}
-                        disabled={!form.followEnabled}
-                      />
-                    </div>
-                    <div className="min-w-0 space-y-2">
-                      <div className={strategyLabelClass}>跟单地址</div>
-                      <div className="truncate rounded-[14px] border border-border bg-background/60 px-3 py-2 font-mono text-xs text-muted-foreground">
-                        {form.followWallet}
-                      </div>
-                    </div>
                   </div>
                 </div>
 
@@ -975,32 +938,45 @@ function LaunchStrategyControlPanel({
 
               <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className={strategyLabelClass}>风险上限</div>
+                  <div className={strategyLabelClass}>大户策略单笔保护</div>
                   <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
                     VIRTUAL
                   </span>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className={strategyFieldClass}>
-                    <StrategyFieldLabel label="单笔上限" unit="VIRTUAL" />
-                    <Input
-                      className={strategyInputClass}
-                      inputMode="decimal"
-                      aria-label="单笔上限，单位 VIRTUAL"
-                      value={form.maxBuyV}
-                      onChange={(event) => onChange({ maxBuyV: event.target.value })}
-                    />
-                  </div>
-                  <div className={strategyFieldClass}>
-                    <StrategyFieldLabel label="项目预算" unit="VIRTUAL" />
-                    <Input
-                      className={strategyInputClass}
-                      inputMode="decimal"
-                      aria-label="项目预算，单位 VIRTUAL"
-                      value={form.maxProjectV}
-                      onChange={(event) => onChange({ maxProjectV: event.target.value })}
-                    />
-                  </div>
+                <div className={strategyFieldClass}>
+                  <StrategyFieldLabel
+                    label="单笔上限"
+                    unit="VIRTUAL"
+                    hint="只限制大户榜单策略的单笔买入金额；跟单买入和含税估算 FDV 限价单按各自订单金额执行。"
+                  />
+                  <Input
+                    className={strategyInputClass}
+                    inputMode="decimal"
+                    aria-label="单笔上限，单位 VIRTUAL"
+                    value={form.maxBuyV}
+                    onChange={(event) => onChange({ maxBuyV: event.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="launch-strategy-rule-card rounded-[24px] border border-primary/25 bg-[color:var(--surface-soft)] px-4 py-4">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className={strategyLabelClass}>项目预算</div>
+                  <Badge variant="success">三种买入共享</Badge>
+                </div>
+                <div className={strategyFieldClass}>
+                  <StrategyFieldLabel
+                    label="项目预算"
+                    unit="VIRTUAL"
+                    hint="普通大户策略、跟单买入和含税估算 FDV 限价单共同消耗这个项目预算。"
+                  />
+                  <Input
+                    className={strategyInputClass}
+                    inputMode="decimal"
+                    aria-label="项目预算，单位 VIRTUAL"
+                    value={form.maxProjectV}
+                    onChange={(event) => onChange({ maxProjectV: event.target.value })}
+                  />
                 </div>
               </div>
             </div>
@@ -1011,6 +987,110 @@ function LaunchStrategyControlPanel({
               上次调整：版本 {lastAudit.version} / {formatDateTime(lastAudit.createdAt)}
             </div>
           ) : null}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function FollowBuyControlPanel({
+  data,
+  form,
+  pending,
+  onChange,
+  onSave,
+}: {
+  data?: LaunchStrategyRuntimeConfigResponse;
+  form: LaunchStrategyFormState;
+  pending: boolean;
+  onChange: (patch: Partial<LaunchStrategyFormState>) => void;
+  onSave: () => void;
+}) {
+  const item = data?.item;
+  const globalEnabled = Boolean(item?.enabled ?? form.enabled);
+  const globalMode = String(item?.mode ?? form.mode);
+
+  return (
+    <SectionCard
+      className="launch-strategy-panel overflow-hidden border-primary/20"
+      title="跟单买入"
+      description="独立买入策略。跟单地址买入当前项目时按比例买入；不套用大户榜单、税率、含税 FDV 限价、横盘跳过或抄底条件。"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={form.followEnabled ? "success" : "secondary"}>
+            {form.followEnabled ? "跟单开启" : "跟单关闭"}
+          </Badge>
+          <Badge variant="secondary">仅项目预算</Badge>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm leading-6 text-muted-foreground">
+            触发条件只有一个：跟单地址买入本项目。策略上限只看项目预算；自动买入总开关、余额、授权、熔断属于执行安全门禁。
+          </div>
+          <Button
+            type="button"
+            className="launch-strategy-action launch-strategy-action-primary"
+            onClick={onSave}
+            disabled={pending}
+          >
+            保存跟单设置
+          </Button>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+          <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className={strategyLabelClass}>跟单状态</div>
+              <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={form.followEnabled}
+                  onChange={(event) => onChange({ followEnabled: event.target.checked })}
+                />
+                {form.followEnabled ? "参与触发" : "不参与触发"}
+              </label>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className={strategyFieldClass}>
+                <StrategyFieldLabel
+                  label="跟单比例"
+                  unit="%"
+                  hint="系统按跟单地址本次消耗的 VIRTUAL 乘以该比例，向下取整得到我方买入数量。默认 25%。"
+                />
+                <Input
+                  className={strategyInputClass}
+                  inputMode="numeric"
+                  aria-label="跟单比例，单位百分比"
+                  value={form.followRatioPct}
+                  onChange={(event) => onChange({ followRatioPct: event.target.value })}
+                  disabled={!form.followEnabled}
+                />
+              </div>
+              <div className="space-y-2">
+                <div className={strategyLabelClass}>项目预算</div>
+                <div className="rounded-[14px] border border-border bg-background/60 px-3 py-2 text-sm font-semibold text-foreground">
+                  {formatConfigValue(form.maxProjectV || "0", " V")}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className={strategyLabelClass}>跟单地址</div>
+              <Badge variant={globalEnabled && globalMode === "broadcast" ? "success" : "secondary"}>
+                {globalEnabled && globalMode === "broadcast" ? "自动买入已启用" : "等待自动买入启用"}
+              </Badge>
+            </div>
+            <div className="truncate rounded-[14px] border border-border bg-background/60 px-3 py-2 font-mono text-xs text-muted-foreground">
+              {form.followWallet}
+            </div>
+            <div className="mt-3 text-xs leading-5 text-muted-foreground">
+              当前地址只展示不编辑。需要换跟单地址时应先在后端确认地址来源，再进入配置。
+            </div>
+          </div>
         </div>
       </div>
     </SectionCard>
@@ -1794,18 +1874,34 @@ export function OverviewPage() {
     onError: (error: Error) => toast.error(friendlyFdvLimitOrderError(error)),
   });
 
-  const saveLaunchStrategyConfig = (mode: "broadcast" | "disabled") => {
+  const saveLaunchStrategyConfig = (
+    mode: "broadcast" | "disabled" | "preserve",
+    reasonOverride?: string,
+  ) => {
+    const preserveRuntimeState = mode === "preserve";
+    const nextEnabled = preserveRuntimeState ? Boolean(launchStrategyForm.enabled) : mode !== "disabled";
+    const nextMode = preserveRuntimeState ? launchStrategyForm.mode : mode === "broadcast" ? "broadcast" : "simulate";
     const next: LaunchStrategyFormState = {
       ...normalizeLaunchStrategyFormForSubmit(launchStrategyForm),
       expectedProjectId: detailProjectId ?? undefined,
       expectedProject: expectedProjectName,
-      enabled: mode !== "disabled",
-      mode: mode === "broadcast" ? "broadcast" : "simulate",
+      enabled: nextEnabled,
+      mode: nextMode,
       updatedReason:
+        reasonOverride ||
         launchStrategyForm.updatedReason.trim() ||
-        (mode === "broadcast" ? "管理员手动保存并启用自动买入" : "管理员手动停用自动买入"),
+        (mode === "disabled"
+          ? "管理员手动停用自动买入"
+          : preserveRuntimeState
+            ? "管理员手动保存跟单买入设置"
+            : "管理员手动保存并启用自动买入"),
     };
     if (mode === "disabled" && !window.confirm("确认停用自动买入？")) return;
+    if (preserveRuntimeState) {
+      if (!window.confirm("保存跟单买入设置？保存后执行器下一轮热加载。")) return;
+      launchStrategyConfigMutation.mutate(next);
+      return;
+    }
     if (mode === "broadcast") {
       const base = Number(next.baseBuyV);
       const dip = Number(next.dipBuyV);
@@ -2276,6 +2372,13 @@ export function OverviewPage() {
               pending={launchStrategyConfigMutation.isPending}
               onChange={(patch) => setLaunchStrategyDraft((prev) => ({ ...prev, ...patch }))}
               onSave={saveLaunchStrategyConfig}
+            />
+            <FollowBuyControlPanel
+              data={launchStrategyConfigQuery.data}
+              form={launchStrategyForm}
+              pending={launchStrategyConfigMutation.isPending}
+              onChange={(patch) => setLaunchStrategyDraft((prev) => ({ ...prev, ...patch }))}
+              onSave={() => saveLaunchStrategyConfig("preserve", "管理员手动保存跟单买入设置")}
             />
             <FdvLimitOrdersPanel
               data={fdvLimitOrdersQuery.data}

@@ -2481,7 +2481,9 @@ Phase 052 执行结果：
   - 2026-05-20 新增独立“含税估算 FDV 限价单”：管理员可设置多个 `FDV <= X 万 USD，买入 Y VIRTUAL` 订单；限价单不使用“大户策略”语义，不依赖榜单成本。
   - 2026-05-31 新增正常税率 live 窗口跟单策略：默认跟随 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，买入金额为 `floor(对方消耗 VIRTUAL / 4)`，小于 `1V` 不出手。
   - 自动买入优先级固定为：普通大户榜单策略 > 跟单策略 > 含税估算 FDV 限价单。
-  - 2026-05-31 跟单策略接入管理员运行时控制：前端展示“跟单买入”卡片，支持启用/停用和修改跟单比例；默认 `25%`，当前跟单地址只展示不编辑。
+  - 2026-06-01 跟单策略前端改为与“含税估算 FDV 限价单”平级的独立板块，不再放入大户榜单策略卡，避免误解为受大户榜单 / 税率 / FDV / 横盘跳过 / 抄底条件约束。
+  - 跟单买入只以“跟单地址买入当前项目”为策略触发条件；策略上限只共享项目预算。自动买入总开关、余额、授权、熔断属于执行安全门禁，不是跟单策略条件。
+  - 跟单策略接入管理员运行时控制：前端独立展示“跟单买入”，支持启用/停用和修改跟单比例；默认 `25%`，当前跟单地址只展示不编辑。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动买入`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已买入 V、最近调整时间和 active fuse 提示。
 - 后端新增运行时配置能力：
@@ -2495,7 +2497,7 @@ Phase 052 执行结果：
   - 配置存在且 `enabled=false` 时不发出 BuyIntent。
   - `broadcast` 执行器遇到配置 `mode=simulate` 时阻断真实买入。
   - 配置版本变化时写入 `strategy_config_reloaded` 日志。
-  - 生产 `vwr-launch-autobuy@.service` 使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算。
+  - 生产 `vwr-launch-autobuy@.service` 使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算；前端将项目预算作为共享预算展示，不归属于单一策略。
   - `followEnabled / followWallet / followRatioPct` 随 `launch_strategy_runtime_configs` 热加载；保存后下一轮执行器循环立即采用，无需重启服务。
 - 本地验证通过：
   - Python `py_compile`。

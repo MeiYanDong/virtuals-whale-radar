@@ -1077,7 +1077,8 @@
 - [x] 修复 `launch_execution_ledger` 后续异常更新把已发送交易 `trade_sent=1 / broadcast_enabled=1` 覆盖回 `0` 的风险，保护同税率档防重和项目上限统计。
 - [x] 生产预热执行器已接入 active fuse 检查和 simulation/sign/prewarm/broadcast/receipt 异常熔断。
 - [x] 新增正常税率 live 窗口跟单策略：默认跟随 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，按 `floor(对方消耗 VIRTUAL / 4)` 买入；优先级为普通大户策略 > 跟单策略 > 含税估算 FDV 限价单。
-- [x] 跟单策略接入自动买入运行时控制：前端展示跟单买入，支持启用/停用和修改比例；执行器热加载 `followEnabled / followRatioPct`。
+- [x] 跟单策略接入自动买入运行时控制：前端独立展示跟单买入，支持启用/停用和修改比例；执行器热加载 `followEnabled / followRatioPct`。
+- [x] 2026-06-01 将“跟单买入”从大户榜单策略卡中拆出，改为与“含税估算 FDV 限价单”平级的独立板块；跟单策略不叠加大户榜单 / 税率 / FDV / 横盘跳过 / 抄底条件，只共享项目预算。
 - [x] 生产 autobuy 模板使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算上限。
 - [x] `prewarm_simulate` 模式下余额/授权不足记录为 `readiness_not_ready`，不触发 active fuse；`sign-ready` 仍会在 simulation 不绿时触发熔断。
 - [x] 本地 TDS ended 烟测通过：无 intent、无签名、无广播。
@@ -1143,6 +1144,7 @@
 - [x] 买入触发条件前端只展示当前后端策略事实，不新增提交字段，不改策略逻辑。
 - [x] 合并展示 `有效榜单 20 人 / 5 个成本样本`，并解释榜单人数和成本样本不是同一件事。
 - [x] 前端收敛为 `恢复默认`、`保存并启用`、`停用自动买入`，隐藏 mode/updatedReason 等原生字段。
+- [x] 项目预算前端改为共享预算语义：普通大户策略、跟单买入、含税估算 FDV 限价单共同消耗，避免误认为只属于大户策略。
 - [x] `launch_prewarm_executor.py` 支持配置热加载。
 - [x] 配置缺失时沿用 CLI/systemd 默认值。
 - [x] `enabled=false` 或 `mode=simulate` 时阻断真实买入。
