@@ -269,7 +269,7 @@ StrategyEvaluator
 - 跟单地址：`0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`。
 - 触发范围：仅目标项目 `live` 窗口内，该地址在同一项目的买入事件。
 - 买入金额：`floor(对方消耗 VIRTUAL / 4)`；结果小于 `1V` 时只记 skipped，不广播。
-- 管理员控制：`launch_strategy_runtime_configs` 保存 `follow_enabled / follow_wallet / follow_ratio_pct`；前端以独立“跟单买入”板块展示，和“含税估算 FDV 限价单”平级，不放入大户榜单策略卡；当前地址只展示，支持启用/停用和修改比例，默认 `25%`。
+- 管理员控制：`launch_strategy_runtime_configs` 保存 `follow_enabled / follow_wallet / follow_ratio_pct`；前端以独立“跟单买入”板块展示，和“含税估算 FDV 限价单”平级，不放入大户榜单策略卡；当前地址只展示，只保留启用、停用和保存比例动作，默认 `25%`。
 - 优先级：普通大户榜单策略 > 跟单策略 > 含税估算 FDV 限价单。
 - 预算口径：`vwr-launch-autobuy@.service` 使用 `--project-cap-scope project`，普通大户策略、跟单策略、FDV 限价单共享同一个 `max_project_v`；跟单策略不叠加大户榜单、税率、FDV、横盘跳过或抄底条件。
 - 防重复：同一 source tx hash 在跟单账本中只允许触发一次；跳过记录也会阻断重复处理。

@@ -998,17 +998,18 @@ function FollowBuyControlPanel({
   form,
   pending,
   onChange,
-  onSave,
+  onSetEnabled,
 }: {
   data?: LaunchStrategyRuntimeConfigResponse;
   form: LaunchStrategyFormState;
   pending: boolean;
   onChange: (patch: Partial<LaunchStrategyFormState>) => void;
-  onSave: () => void;
+  onSetEnabled: (enabled: boolean) => void;
 }) {
   const item = data?.item;
   const globalEnabled = Boolean(item?.enabled ?? form.enabled);
   const globalMode = String(item?.mode ?? form.mode);
+  const autoBuyRunning = globalEnabled && globalMode === "broadcast";
 
   return (
     <SectionCard
@@ -1018,39 +1019,45 @@ function FollowBuyControlPanel({
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={form.followEnabled ? "success" : "secondary"}>
-            {form.followEnabled ? "跟单开启" : "跟单关闭"}
+            {form.followEnabled ? "已启用" : "已停用"}
           </Badge>
-          <Badge variant="secondary">仅项目预算</Badge>
+          <Badge variant="secondary">共享项目预算</Badge>
         </div>
       }
     >
       <div className="space-y-4">
         <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div className="text-sm leading-6 text-muted-foreground">
-            触发条件只有一个：跟单地址买入本项目。策略上限只看项目预算；自动买入总开关、余额、授权、熔断属于执行安全门禁。
+            跟单地址买入当前项目时，按比例买入。策略只共享项目预算；自动买入总开关、余额、授权和熔断属于执行门禁。
           </div>
-          <Button
-            type="button"
-            className="launch-strategy-action launch-strategy-action-primary"
-            onClick={onSave}
-            disabled={pending}
-          >
-            保存跟单设置
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              className="launch-strategy-action launch-strategy-action-primary"
+              onClick={() => onSetEnabled(true)}
+              disabled={pending}
+            >
+              {form.followEnabled ? "保存比例" : "启用跟单"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="launch-strategy-action launch-strategy-action-danger"
+              onClick={() => onSetEnabled(false)}
+              disabled={pending || !form.followEnabled}
+            >
+              停用跟单
+            </Button>
+          </div>
         </div>
 
         <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
           <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div className={strategyLabelClass}>跟单状态</div>
-              <label className="inline-flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={form.followEnabled}
-                  onChange={(event) => onChange({ followEnabled: event.target.checked })}
-                />
-                {form.followEnabled ? "参与触发" : "不参与触发"}
-              </label>
+              <Badge variant={autoBuyRunning ? "success" : "secondary"}>
+                {autoBuyRunning ? "自动买入总开关已启用" : "等待自动买入总开关"}
+              </Badge>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className={strategyFieldClass}>
@@ -1069,9 +1076,12 @@ function FollowBuyControlPanel({
                 />
               </div>
               <div className="space-y-2">
-                <div className={strategyLabelClass}>项目预算</div>
+                <div className={strategyLabelClass}>共享项目预算</div>
                 <div className="rounded-[14px] border border-border bg-background/60 px-3 py-2 text-sm font-semibold text-foreground">
                   {formatConfigValue(form.maxProjectV || "0", " V")}
+                </div>
+                <div className="text-xs leading-5 text-muted-foreground">
+                  与大户策略、含税估算 FDV 限价单共用。
                 </div>
               </div>
             </div>
@@ -1080,15 +1090,12 @@ function FollowBuyControlPanel({
           <div className="launch-strategy-rule-card rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div className={strategyLabelClass}>跟单地址</div>
-              <Badge variant={globalEnabled && globalMode === "broadcast" ? "success" : "secondary"}>
-                {globalEnabled && globalMode === "broadcast" ? "自动买入已启用" : "等待自动买入启用"}
-              </Badge>
             </div>
             <div className="truncate rounded-[14px] border border-border bg-background/60 px-3 py-2 font-mono text-xs text-muted-foreground">
               {form.followWallet}
             </div>
             <div className="mt-3 text-xs leading-5 text-muted-foreground">
-              当前地址只展示不编辑。需要换跟单地址时应先在后端确认地址来源，再进入配置。
+              当前地址只展示不编辑。启用跟单后，只要该地址在 live 窗口买入本项目，本系统就按比例尝试跟随。
             </div>
           </div>
         </div>
@@ -1877,19 +1884,24 @@ export function OverviewPage() {
   const saveLaunchStrategyConfig = (
     mode: "broadcast" | "disabled" | "preserve",
     reasonOverride?: string,
+    formPatch: Partial<LaunchStrategyFormState> = {},
   ) => {
+    const sourceForm: LaunchStrategyFormState = {
+      ...launchStrategyForm,
+      ...formPatch,
+    };
     const preserveRuntimeState = mode === "preserve";
-    const nextEnabled = preserveRuntimeState ? Boolean(launchStrategyForm.enabled) : mode !== "disabled";
-    const nextMode = preserveRuntimeState ? launchStrategyForm.mode : mode === "broadcast" ? "broadcast" : "simulate";
+    const nextEnabled = preserveRuntimeState ? Boolean(sourceForm.enabled) : mode !== "disabled";
+    const nextMode = preserveRuntimeState ? sourceForm.mode : mode === "broadcast" ? "broadcast" : "simulate";
     const next: LaunchStrategyFormState = {
-      ...normalizeLaunchStrategyFormForSubmit(launchStrategyForm),
+      ...normalizeLaunchStrategyFormForSubmit(sourceForm),
       expectedProjectId: detailProjectId ?? undefined,
       expectedProject: expectedProjectName,
       enabled: nextEnabled,
       mode: nextMode,
       updatedReason:
         reasonOverride ||
-        launchStrategyForm.updatedReason.trim() ||
+        sourceForm.updatedReason.trim() ||
         (mode === "disabled"
           ? "管理员手动停用自动买入"
           : preserveRuntimeState
@@ -1898,7 +1910,11 @@ export function OverviewPage() {
     };
     if (mode === "disabled" && !window.confirm("确认停用自动买入？")) return;
     if (preserveRuntimeState) {
-      if (!window.confirm("保存跟单买入设置？保存后执行器下一轮热加载。")) return;
+      const followEnabled = Boolean(formPatch.followEnabled ?? sourceForm.followEnabled);
+      const message = followEnabled
+        ? `启用跟单买入，并按 ${next.followRatioPct}% 比例跟随？保存后执行器下一轮热加载。`
+        : "停用跟单买入？保存后执行器下一轮热加载。";
+      if (!window.confirm(message)) return;
       launchStrategyConfigMutation.mutate(next);
       return;
     }
@@ -2378,7 +2394,13 @@ export function OverviewPage() {
               form={launchStrategyForm}
               pending={launchStrategyConfigMutation.isPending}
               onChange={(patch) => setLaunchStrategyDraft((prev) => ({ ...prev, ...patch }))}
-              onSave={() => saveLaunchStrategyConfig("preserve", "管理员手动保存跟单买入设置")}
+              onSetEnabled={(enabled) =>
+                saveLaunchStrategyConfig(
+                  "preserve",
+                  enabled ? "管理员手动启用或更新跟单买入" : "管理员手动停用跟单买入",
+                  { followEnabled: enabled },
+                )
+              }
             />
             <FdvLimitOrdersPanel
               data={fdvLimitOrdersQuery.data}

@@ -1079,6 +1079,7 @@
 - [x] 新增正常税率 live 窗口跟单策略：默认跟随 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，按 `floor(对方消耗 VIRTUAL / 4)` 买入；优先级为普通大户策略 > 跟单策略 > 含税估算 FDV 限价单。
 - [x] 跟单策略接入自动买入运行时控制：前端独立展示跟单买入，支持启用/停用和修改比例；执行器热加载 `followEnabled / followRatioPct`。
 - [x] 2026-06-01 将“跟单买入”从大户榜单策略卡中拆出，改为与“含税估算 FDV 限价单”平级的独立板块；跟单策略不叠加大户榜单 / 税率 / FDV / 横盘跳过 / 抄底条件，只共享项目预算。
+- [x] 2026-06-01 收敛跟单买入前端文案：删除“参与触发”和“保存跟单设置”，改为 `启用跟单 / 停用跟单 / 保存比例`，预算展示为“共享项目预算”。
 - [x] 生产 autobuy 模板使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算上限。
 - [x] `prewarm_simulate` 模式下余额/授权不足记录为 `readiness_not_ready`，不触发 active fuse；`sign-ready` 仍会在 simulation 不绿时触发熔断。
 - [x] 本地 TDS ended 烟测通过：无 intent、无签名、无广播。
