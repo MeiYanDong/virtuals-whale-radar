@@ -418,6 +418,23 @@ def soft_wallet_readiness_reason(reason: str) -> bool:
     }
 
 
+def fdv_limit_order_retryable_reason(*, mode: str, reason: str) -> bool:
+    if mode != "broadcast":
+        return True
+    return reason in {
+        "simulate_mode_no_sign",
+        "signed_no_raw_tx_persisted",
+        "wallet_balance_and_allowance_not_ready",
+        "wallet_balance_not_ready",
+        "wallet_allowance_not_ready",
+        "missing_cli_or_env_broadcast_gate",
+        "active_fuse",
+        "simulation_not_green",
+        "simulation_failed",
+        "readiness_not_ready",
+    }
+
+
 def update_ledger_stage(
     bot: VirtualsBot,
     *,
@@ -1189,6 +1206,7 @@ async def prewarm_intent(
     skip_tax_rate_guard: bool = False,
     force_no_wait_receipt: bool = False,
     signed_candidate: SignedBuyCandidate | None = None,
+    retryable_simulation_failure: bool = False,
 ) -> dict[str, Any]:
     mode = executor_mode(args)
     ledger_record = make_ledger_record(
@@ -1567,7 +1585,10 @@ async def prewarm_intent(
             failed_checks = failed_simulation_checks(simulation)
             payload["reason"] = reason
             payload["failedChecks"] = failed_checks
-            soft_readiness = args.mode == "broadcast" and soft_wallet_readiness_reason(reason)
+            soft_readiness = args.mode == "broadcast" and (
+                soft_wallet_readiness_reason(reason)
+                or (retryable_simulation_failure and reason == "simulation_not_green")
+            )
             should_fuse = args.mode != "simulate" and not soft_readiness
             payload["fuseTriggered"] = should_fuse
             if should_fuse:
@@ -2449,6 +2470,7 @@ async def async_main() -> None:
                                     nonce_override=next_nonce_override,
                                     skip_tax_rate_guard=True,
                                     force_no_wait_receipt=True,
+                                    retryable_simulation_failure=True,
                                     signed_candidate=(
                                         None
                                         if next_nonce_override is not None
@@ -2470,15 +2492,7 @@ async def async_main() -> None:
                                         next_nonce_override = int((limit_payload.get("signedSummary") or {}).get("nonce")) + 1
                                 else:
                                     reason = str(limit_payload.get("reason") or limit_payload.get("event") or "")
-                                    if args.mode != "broadcast" or reason in {
-                                        "simulate_mode_no_sign",
-                                        "signed_no_raw_tx_persisted",
-                                        "wallet_balance_and_allowance_not_ready",
-                                        "wallet_balance_not_ready",
-                                        "wallet_allowance_not_ready",
-                                        "missing_cli_or_env_broadcast_gate",
-                                        "active_fuse",
-                                    }:
+                                    if fdv_limit_order_retryable_reason(mode=args.mode, reason=reason):
                                         bot.storage.mark_launch_fdv_limit_order_retryable(
                                             int(claimed.get("id") or 0),
                                             error=reason,

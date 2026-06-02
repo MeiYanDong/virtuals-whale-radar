@@ -23,6 +23,7 @@ from launch_prewarm_executor import (  # noqa: E402
     SignedBuyCandidate,
     compact_runtime_config,
     eligible_fdv_limit_orders,
+    fdv_limit_order_retryable_reason,
     fdv_limit_order_intent,
     follow_trade_buy_size,
     follow_trade_source_seen,
@@ -210,6 +211,24 @@ def test_signed_candidate_cache_take_once_and_clear_batch() -> None:
     assert_eq(taken, candidate, "candidate hit")
     assert_eq(cache, {}, "candidate batch cleared after hit")
     assert_eq(take_signed_candidate(cache, buy_size_v="25", tax_rate="92"), None, "candidate is single-use")
+
+
+def test_fdv_limit_order_simulation_revert_is_retryable() -> None:
+    assert_eq(
+        fdv_limit_order_retryable_reason(mode="broadcast", reason="simulation_not_green"),
+        True,
+        "fdv order simulation revert retryable",
+    )
+    assert_eq(
+        fdv_limit_order_retryable_reason(mode="broadcast", reason="receipt_failed"),
+        False,
+        "fdv order receipt failure is not soft retry",
+    )
+    assert_eq(
+        fdv_limit_order_retryable_reason(mode="simulate", reason="receipt_failed"),
+        True,
+        "simulate mode never fails live order",
+    )
 
 
 def test_project_scope_cap_counts_all_sent_buys() -> None:
@@ -407,6 +426,7 @@ def main() -> None:
     test_runtime_config_helpers()
     test_fdv_limit_order_helpers()
     test_signed_candidate_cache_take_once_and_clear_batch()
+    test_fdv_limit_order_simulation_revert_is_retryable()
     test_project_scope_cap_counts_all_sent_buys()
     test_follow_trade_buy_size_floor_and_project_cap()
     test_follow_trade_source_tx_dedupes_from_ledger_intent()

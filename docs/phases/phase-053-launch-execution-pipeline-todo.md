@@ -166,6 +166,8 @@
 - [x] 2026-05-26 调度脚本自动化 gate：当 `schedule_launch_services.py --services open-sniper,fdv-limit` 时，自动生成该项目的 fdv-limit systemd drop-in，避免下次手动漏配。
 - [x] 2026-05-26 通用 profile 入口：`schedule_launch_services.py --auto-profile` 读取官方 `launchInfo`，no-tax 走 `open-sniper,fdv-limit,autosell`，60s/98m/default 走正常服务，unknown 直接阻断。
 - [x] 生产只读验证：`launch_sell_executor.py --mode simulate --once` 读取到 ORION disabled 配置并输出 `runtime_config_disabled`，`tradeSent=false`、`broadcastEnabled=false`；生产 `/health` 与 `/healthz` 正常。
+- [x] 2026-06-02 EXY/EXYLOS 发射前审查：官方 `BONDING_V5 + antiSniperTaxType=2`，profile=`taxed_98m`，不会触发 open-sniper；生产 timer 已安装，`20:25 CST` 启动 `dryrun/prewarm/autobuy/autosell`，core workflow ready、execution RPC 独立、active fuse=0、allowance=300V、Base ETH gas 充足；当前 burner VIRTUAL 余额为 `0`，真实买入前必须补足。
+- [x] 2026-06-02 MTR 失败案例修复：MTR FDV 限价单曾在 `0xd4181deb` simulation revert 后触发 active fuse，后续人工清 fuse 后成功成交；FDV 限价单现在将未广播前的 `simulation_not_green` 视为可重试，不再因此熔断或永久失败。
 
 ## 6.1.2 生产预热执行器
 

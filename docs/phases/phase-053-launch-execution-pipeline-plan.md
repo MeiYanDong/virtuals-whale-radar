@@ -657,6 +657,7 @@ ROO 部署状态：
 - 同一税率档最多一次：执行器会读取 `launch_execution_ledger.trade_sent=1` 记录阻断重复广播。
 - 重启恢复：执行器启动时从 `launch_execution_ledger.trade_sent=1` 重建已买税率、自有加权成本和上一税率买点，避免 systemd 重启后丢失 dip20 / 横盘暂停判断。
 - `sign-ready/broadcast` 下任意 simulation/sign/prewarm/broadcast/receipt 异常熔断；`simulate` 只读模式只记账不熔断，避免灰度观察误挡真实执行。
+- FDV 限价单例外：未广播前的 `simulation_not_green` 只代表当前链上条件暂不可买或报价短暂失效，应回到 pending 重试，不触发 active fuse；真实 broadcast / receipt 失败仍熔断。MTR 2026-05-21 出现过 `0xd4181deb` 后人工清 fuse 再成功成交，已作为该规则的回归案例。
 - 自动卖出边界：生产常驻执行器已接入 ROO timer，但真实 live 窗口里的 SellIntent -> approval/simulation/broadcast/receipt 尚待第一次实盘验证。
 
 ## 6. 验收标准

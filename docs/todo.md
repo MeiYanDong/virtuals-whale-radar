@@ -1293,6 +1293,8 @@
 - [x] 2026-05-26 open-sniper 增加显式准点直发开关 `--post-trigger-direct-fire`，默认关闭，避免官方时间到但链上仍关闭时烧 nonce。
 - [x] 2026-05-26 open-sniper 最优版热路径：广播后短窗口确认 receipt/nonce；未确认时同 nonce 自动提高手续费重新 fanout。FDV 限价单新增 `--require-open-sniper-before-fdv-limit`，无税项目可先等首笔 open-sniper 发出，再放开限价单；调度脚本同时选择 `open-sniper,fdv-limit` 时会自动生成 gate drop-in。
 - [x] 2026-05-26 通用无税秒狙击 profile：`schedule_launch_services.py --auto-profile` 读取官方 `launchInfo`，no-tax 自动选 `open-sniper,fdv-limit,autosell`，60s/98m 走正常服务，未知税率阻断；本地 TDS dry-run 验证识别为 `taxed_60s`。
+- [x] 2026-06-02 EXY/EXYLOS 发射前审查：官方 `BONDING_V5 + antiSniperTaxType=2`，profile=`taxed_98m`，不会触发 open-sniper；生产 timer 已安装，`20:25 CST` 启动 `dryrun/prewarm/autobuy/autosell`，core workflow ready、execution RPC 独立、active fuse=0、allowance=300V、Base ETH gas 充足；当前 burner VIRTUAL 余额为 `0`，真实买入前必须补足。
+- [x] 2026-06-02 MTR 失败案例修复：MTR FDV 限价单曾在 `0xd4181deb` simulation revert 后触发 active fuse，后续人工清 fuse 后成功成交；FDV 限价单现在将未广播前的 `simulation_not_green` 视为可重试，不再因此熔断或永久失败。
 - [ ] 下一次真实 live 项目结束后，检查 archive `sampleCount/eventCount/ledgerCount`，并确认 `launch-samples-<SYMBOL>.jsonl` 正常增长。
 
 ## Phase 61：自用实盘盈利闭环
