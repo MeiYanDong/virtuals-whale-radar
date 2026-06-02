@@ -21,6 +21,7 @@ from launch_prewarm_executor import (  # noqa: E402
     DEFAULT_FOLLOW_TRADE_RULE,
     DEFAULT_FOLLOW_TRADE_STRATEGY,
     SignedBuyCandidate,
+    attempt_follow_trades,
     compact_runtime_config,
     eligible_fdv_limit_orders,
     fdv_limit_order_retryable_reason,
@@ -102,6 +103,8 @@ def test_runtime_config_helpers() -> None:
         "follow_ratio_pct": "50",
         "max_buy_v": "200",
         "max_project_v": "500",
+        "follow_max_project_v": "80",
+        "fdv_limit_max_project_v": "120",
         "updated_at": 123,
     }
     config = runtime_dynamic_config(row)
@@ -115,14 +118,24 @@ def test_runtime_config_helpers() -> None:
     args = Namespace(
         max_buy_v=Decimal("50"),
         max_project_v=Decimal("150"),
+        project_cap_scope="project",
         mode="broadcast",
         disable_follow_trade=False,
         follow_wallet="0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d",
         follow_divisor=Decimal("4"),
     )
+    no_row_effective = runtime_effective_args(args, None)
+    assert_eq(no_row_effective.project_cap_scope, "strategy", "default effective cap scope")
+    assert_eq(no_row_effective.follow_max_project_v, Decimal("150"), "default effective follow max project")
+    assert_eq(no_row_effective.fdv_limit_max_project_v, Decimal("150"), "default effective fdv limit max project")
+    assert_eq(args.project_cap_scope, "project", "original cap scope unchanged")
+
     effective = runtime_effective_args(args, row)
     assert_eq(effective.max_buy_v, Decimal("200"), "effective max buy")
     assert_eq(effective.max_project_v, Decimal("500"), "effective max project")
+    assert_eq(effective.project_cap_scope, "strategy", "effective standard cap scope")
+    assert_eq(effective.follow_max_project_v, Decimal("80"), "effective follow max project")
+    assert_eq(effective.fdv_limit_max_project_v, Decimal("120"), "effective fdv limit max project")
     assert_eq(effective.disable_follow_trade, False, "effective follow enabled")
     assert_eq(effective.follow_divisor, Decimal("2"), "effective follow divisor from ratio")
     assert_eq(args.max_buy_v, Decimal("50"), "original args unchanged")
@@ -133,6 +146,8 @@ def test_runtime_config_helpers() -> None:
     assert_eq(compact["baseBuyV"], "100", "compact base")
     assert_eq(compact["fdvLimitEnabled"], False, "compact fdv cap hidden")
     assert_eq(compact["fdvLimitWanUsd"], "", "compact fdv cap value hidden")
+    assert_eq(compact["followMaxProjectV"], "80", "compact follow max project")
+    assert_eq(compact["fdvLimitMaxProjectV"], "120", "compact fdv limit max project")
     assert_eq(compact["followEnabled"], True, "compact follow enabled")
     assert_eq(compact["followRatioPct"], "50", "compact follow ratio")
 
@@ -140,6 +155,27 @@ def test_runtime_config_helpers() -> None:
     disabled["follow_enabled"] = 0
     disabled_effective = runtime_effective_args(args, disabled)
     assert_eq(disabled_effective.disable_follow_trade, True, "effective follow disabled")
+
+
+def test_follow_trade_runtime_disabled_short_circuit() -> None:
+    args = Namespace(disable_follow_trade=False, fdv_limit_orders_only=False)
+    effective_args = Namespace(disable_follow_trade=True)
+    attempted, payloads = asyncio.run(
+        attempt_follow_trades(
+            args=args,
+            effective_args=effective_args,
+            cfg=None,
+            bot=None,
+            rpc=None,
+            project_row={"start_at": 1, "resolved_end_at": 2},
+            project_name="TEST",
+            sample={"projectStatus": "LIVE"},
+            sample_index=0,
+            rpc_selection=SimpleNamespace(rpc_shared_with_main=False, source="test"),
+        )
+    )
+    assert_eq(attempted, False, "runtime disabled follow attempted")
+    assert_eq(payloads, [], "runtime disabled follow payloads")
 
 
 def test_fdv_limit_order_helpers() -> None:

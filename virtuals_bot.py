@@ -398,6 +398,8 @@ DEFAULT_LAUNCH_MAX_BUY_V = Decimal("50")
 DEFAULT_LAUNCH_MAX_PROJECT_V = Decimal("150")
 DEFAULT_LAUNCH_FOLLOW_WALLET = "0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d"
 DEFAULT_LAUNCH_FOLLOW_RATIO_PCT = Decimal("25")
+DEFAULT_LAUNCH_FOLLOW_STRATEGY = "follow_wallet_v1"
+DEFAULT_LAUNCH_FOLLOW_RULE = "source_spent_v_quarter_floor"
 DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY = "tax_fdv_limit_order"
 DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE = "tax_fdv_limit_order"
 DEFAULT_LAUNCH_SELL_STRATEGY = "dual_roi_large_buy_sell"
@@ -1898,6 +1900,8 @@ class Storage:
                 follow_ratio_pct TEXT NOT NULL DEFAULT '25',
                 max_buy_v TEXT NOT NULL DEFAULT '50',
                 max_project_v TEXT NOT NULL DEFAULT '150',
+                follow_max_project_v TEXT NOT NULL DEFAULT '150',
+                fdv_limit_max_project_v TEXT NOT NULL DEFAULT '150',
                 version INTEGER NOT NULL DEFAULT 1,
                 updated_by_user_id INTEGER,
                 updated_reason TEXT NOT NULL DEFAULT '',
@@ -2035,6 +2039,16 @@ class Storage:
             "launch_strategy_runtime_configs",
             "follow_ratio_pct",
             f"TEXT NOT NULL DEFAULT '{decimal_to_str(DEFAULT_LAUNCH_FOLLOW_RATIO_PCT, 6)}'",
+        )
+        self._ensure_column(
+            "launch_strategy_runtime_configs",
+            "follow_max_project_v",
+            f"TEXT NOT NULL DEFAULT '{decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)}'",
+        )
+        self._ensure_column(
+            "launch_strategy_runtime_configs",
+            "fdv_limit_max_project_v",
+            f"TEXT NOT NULL DEFAULT '{decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)}'",
         )
         self._ensure_column("launch_sell_runtime_configs", "custom_rules_json", "TEXT NOT NULL DEFAULT '[]'")
         self._ensure_column("billing_requests", "admin_note", "TEXT NOT NULL DEFAULT ''")
@@ -2842,6 +2856,8 @@ class Storage:
             "follow_ratio_pct": decimal_to_str(DEFAULT_LAUNCH_FOLLOW_RATIO_PCT, 6),
             "max_buy_v": decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6),
             "max_project_v": decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6),
+            "follow_max_project_v": decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6),
+            "fdv_limit_max_project_v": decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6),
             "version": 0,
             "updated_by_user_id": None,
             "updated_reason": "",
@@ -2943,6 +2959,25 @@ class Storage:
             "maxProjectV",
             DEFAULT_LAUNCH_MAX_PROJECT_V,
         )
+        follow_max_project_v = parse_strategy_decimal(
+            payload.get(
+                "followMaxProjectV",
+                payload.get("follow_max_project_v", baseline.get("follow_max_project_v", baseline.get("max_project_v"))),
+            ),
+            "followMaxProjectV",
+            DEFAULT_LAUNCH_MAX_PROJECT_V,
+        )
+        fdv_limit_max_project_v = parse_strategy_decimal(
+            payload.get(
+                "fdvLimitMaxProjectV",
+                payload.get(
+                    "fdv_limit_max_project_v",
+                    baseline.get("fdv_limit_max_project_v", baseline.get("max_project_v")),
+                ),
+            ),
+            "fdvLimitMaxProjectV",
+            DEFAULT_LAUNCH_MAX_PROJECT_V,
+        )
 
         checks = {
             "baseBuyV": base_buy_v,
@@ -2952,11 +2987,20 @@ class Storage:
             "followRatioPct": follow_ratio_pct,
             "maxBuyV": max_buy_v,
             "maxProjectV": max_project_v,
+            "followMaxProjectV": follow_max_project_v,
+            "fdvLimitMaxProjectV": fdv_limit_max_project_v,
         }
         for field, value in checks.items():
             if value < 0:
                 raise ValueError(f"{field} cannot be negative")
-        for field, value in {"baseBuyV": base_buy_v, "dipBuyV": dip_buy_v, "maxBuyV": max_buy_v, "maxProjectV": max_project_v}.items():
+        for field, value in {
+            "baseBuyV": base_buy_v,
+            "dipBuyV": dip_buy_v,
+            "maxBuyV": max_buy_v,
+            "maxProjectV": max_project_v,
+            "followMaxProjectV": follow_max_project_v,
+            "fdvLimitMaxProjectV": fdv_limit_max_project_v,
+        }.items():
             if value <= 0:
                 raise ValueError(f"{field} must be positive")
         if dip_from_own_cost_pct > 100:
@@ -2972,9 +3016,24 @@ class Storage:
         if dip_buy_v > max_buy_v:
             raise ValueError("dipBuyV cannot exceed maxBuyV")
 
-        sent_project_v = self.sum_launch_execution_sent_buy_v_all_strategies(project=str(project_row.get("name") or ""))
+        project_name = str(project_row.get("name") or "")
+        sent_project_v = self.sum_launch_execution_sent_buy_v(project=project_name, strategy=strategy, rule_name=rule_name)
+        sent_follow_project_v = self.sum_launch_execution_sent_buy_v(
+            project=project_name,
+            strategy=DEFAULT_LAUNCH_FOLLOW_STRATEGY,
+            rule_name=DEFAULT_LAUNCH_FOLLOW_RULE,
+        )
+        sent_fdv_limit_project_v = self.sum_launch_execution_sent_buy_v(
+            project=project_name,
+            strategy=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+            rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+        )
         if max_project_v < sent_project_v:
-            raise ValueError("maxProjectV cannot be lower than already sent project V")
+            raise ValueError("maxProjectV cannot be lower than already sent whale strategy V")
+        if follow_max_project_v < sent_follow_project_v:
+            raise ValueError("followMaxProjectV cannot be lower than already sent follow V")
+        if fdv_limit_max_project_v < sent_fdv_limit_project_v:
+            raise ValueError("fdvLimitMaxProjectV cannot be lower than already sent FDV limit V")
 
         return {
             "project_id": int(project_row["id"]),
@@ -2994,7 +3053,11 @@ class Storage:
             "follow_ratio_pct": decimal_to_str(follow_ratio_pct, 6),
             "max_buy_v": decimal_to_str(max_buy_v, 6),
             "max_project_v": decimal_to_str(max_project_v, 6),
+            "follow_max_project_v": decimal_to_str(follow_max_project_v, 6),
+            "fdv_limit_max_project_v": decimal_to_str(fdv_limit_max_project_v, 6),
             "sent_project_v": decimal_to_str(sent_project_v, 6),
+            "sent_follow_project_v": decimal_to_str(sent_follow_project_v, 6),
+            "sent_fdv_limit_project_v": decimal_to_str(sent_fdv_limit_project_v, 6),
         }
 
     def upsert_launch_strategy_runtime_config(
@@ -3035,13 +3098,13 @@ class Storage:
                     project_id, project, strategy, rule_name, enabled, mode,
                     base_buy_v, dip_buy_v, dip_from_own_cost_pct, flat_pause_pct,
                     fdv_limit_enabled, fdv_limit_wan_usd, follow_enabled, follow_wallet, follow_ratio_pct,
-                    max_buy_v, max_project_v,
+                    max_buy_v, max_project_v, follow_max_project_v, fdv_limit_max_project_v,
                     version, updated_by_user_id, updated_reason, created_at, updated_at
                 ) VALUES (
                     :project_id, :project, :strategy, :rule_name, :enabled, :mode,
                     :base_buy_v, :dip_buy_v, :dip_from_own_cost_pct, :flat_pause_pct,
                     :fdv_limit_enabled, :fdv_limit_wan_usd, :follow_enabled, :follow_wallet, :follow_ratio_pct,
-                    :max_buy_v, :max_project_v,
+                    :max_buy_v, :max_project_v, :follow_max_project_v, :fdv_limit_max_project_v,
                     :version, :updated_by_user_id, :updated_reason, :created_at, :updated_at
                 )
                 ON CONFLICT(project_id) DO UPDATE SET
@@ -3061,6 +3124,8 @@ class Storage:
                     follow_ratio_pct = excluded.follow_ratio_pct,
                     max_buy_v = excluded.max_buy_v,
                     max_project_v = excluded.max_project_v,
+                    follow_max_project_v = excluded.follow_max_project_v,
+                    fdv_limit_max_project_v = excluded.fdv_limit_max_project_v,
                     version = excluded.version,
                     updated_by_user_id = excluded.updated_by_user_id,
                     updated_reason = excluded.updated_reason,
@@ -11708,11 +11773,24 @@ class VirtualsBot:
         item = stored or self.storage.default_launch_strategy_runtime_config(project_row)
         strategy = str(item.get("strategy") or DEFAULT_LAUNCH_BUY_STRATEGY)
         rule_name = str(item.get("rule_name") or DEFAULT_LAUNCH_BUY_RULE)
-        sent_project_v = self.storage.sum_launch_execution_sent_buy_v_all_strategies(
-            project=str(project_row.get("name") or "")
+        project_name = str(project_row.get("name") or "")
+        sent_project_v = self.storage.sum_launch_execution_sent_buy_v(
+            project=project_name,
+            strategy=strategy,
+            rule_name=rule_name,
+        )
+        sent_follow_project_v = self.storage.sum_launch_execution_sent_buy_v(
+            project=project_name,
+            strategy=DEFAULT_LAUNCH_FOLLOW_STRATEGY,
+            rule_name=DEFAULT_LAUNCH_FOLLOW_RULE,
+        )
+        sent_fdv_limit_project_v = self.storage.sum_launch_execution_sent_buy_v(
+            project=project_name,
+            strategy=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+            rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
         )
         active_fuse = self.storage.get_active_launch_execution_fuse(
-            project=str(project_row.get("name") or ""),
+            project=project_name,
             strategy=strategy,
             rule_name=rule_name,
         )
@@ -11752,6 +11830,12 @@ class VirtualsBot:
                 ),
                 "maxBuyV": str(item.get("max_buy_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_BUY_V, 6)),
                 "maxProjectV": str(item.get("max_project_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)),
+                "followMaxProjectV": str(
+                    item.get("follow_max_project_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)
+                ),
+                "fdvLimitMaxProjectV": str(
+                    item.get("fdv_limit_max_project_v") or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)
+                ),
                 "version": int(item.get("version") or 0),
                 "updatedByUserId": item.get("updated_by_user_id"),
                 "updatedReason": str(item.get("updated_reason") or ""),
@@ -11760,6 +11844,9 @@ class VirtualsBot:
             },
             "runtime": {
                 "sentProjectV": decimal_to_str(sent_project_v, 6),
+                "sentWhaleProjectV": decimal_to_str(sent_project_v, 6),
+                "sentFollowProjectV": decimal_to_str(sent_follow_project_v, 6),
+                "sentFdvLimitProjectV": decimal_to_str(sent_fdv_limit_project_v, 6),
                 "activeFuse": compact_fuse(active_fuse) if "compact_fuse" in globals() else active_fuse,
             },
             "audit": [
@@ -11830,6 +11917,12 @@ class VirtualsBot:
     def launch_fdv_limit_orders_payload(self, project_row: Dict[str, Any]) -> Dict[str, Any]:
         project_id = int(project_row["id"])
         rows = self.storage.list_launch_fdv_limit_orders(project_id=project_id, limit=500)
+        strategy_config = self.storage.effective_launch_strategy_runtime_config(project_row)
+        sent_fdv_limit_project_v = self.storage.sum_launch_execution_sent_buy_v(
+            project=str(project_row.get("name") or ""),
+            strategy=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+            rule_name=DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+        )
         return {
             "ok": True,
             "project": {
@@ -11867,6 +11960,11 @@ class VirtualsBot:
                 "ruleName": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
                 "mode": "speed_first",
                 "receiptWait": "skipped_on_hot_path",
+                "maxProjectV": str(
+                    strategy_config.get("fdv_limit_max_project_v")
+                    or decimal_to_str(DEFAULT_LAUNCH_MAX_PROJECT_V, 6)
+                ),
+                "sentProjectV": decimal_to_str(sent_fdv_limit_project_v, 6),
             },
         }
 
@@ -11899,6 +11997,18 @@ class VirtualsBot:
             identity_error = self.validate_project_identity_payload(project_row, payload)
             if identity_error:
                 return web.json_response({"error": identity_error}, status=409)
+            if "fdvLimitMaxProjectV" in payload or "fdv_limit_max_project_v" in payload:
+                self.storage.upsert_launch_strategy_runtime_config(
+                    project_row=project_row,
+                    payload={
+                        "fdvLimitMaxProjectV": payload.get(
+                            "fdvLimitMaxProjectV",
+                            payload.get("fdv_limit_max_project_v"),
+                        ),
+                        "updatedReason": "管理员手动保存含税估算 FDV 限价单预算",
+                    },
+                    operator_user_id=int(user.get("id") or 0) or None,
+                )
             self.storage.upsert_launch_fdv_limit_orders(
                 project_row=project_row,
                 payload=payload,

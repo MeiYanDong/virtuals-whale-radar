@@ -216,11 +216,17 @@ def follow_divisor_from_ratio_pct(ratio_pct: Any, default_divisor: Decimal = DEF
 
 
 def runtime_effective_args(args: argparse.Namespace, row: dict[str, Any] | None) -> argparse.Namespace:
-    if not row:
-        return args
     out = copy.copy(args)
+    if not row:
+        out.project_cap_scope = "strategy"
+        out.follow_max_project_v = Decimal(str(args.max_project_v or "0"))
+        out.fdv_limit_max_project_v = Decimal(str(args.max_project_v or "0"))
+        return out
     out.max_buy_v = decimal_value(row.get("max_buy_v"), Decimal(str(args.max_buy_v or "0")))
     out.max_project_v = decimal_value(row.get("max_project_v"), Decimal(str(args.max_project_v or "0")))
+    out.project_cap_scope = "strategy"
+    out.follow_max_project_v = decimal_value(row.get("follow_max_project_v"), out.max_project_v)
+    out.fdv_limit_max_project_v = decimal_value(row.get("fdv_limit_max_project_v"), out.max_project_v)
     follow_enabled = bool(int(row.get("follow_enabled") if row.get("follow_enabled") is not None else 1))
     out.disable_follow_trade = bool(getattr(args, "disable_follow_trade", False)) or not follow_enabled
     follow_wallet = str(row.get("follow_wallet") or getattr(args, "follow_wallet", DEFAULT_FOLLOW_TRADE_WALLET)).strip()
@@ -253,6 +259,8 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
             "followRatioPct": format(follow_ratio_pct, "f"),
             "maxBuyV": str(args.max_buy_v),
             "maxProjectV": str(args.max_project_v),
+            "followMaxProjectV": str(getattr(args, "follow_max_project_v", args.max_project_v)),
+            "fdvLimitMaxProjectV": str(getattr(args, "fdv_limit_max_project_v", args.max_project_v)),
         }
     return {
         "hasOverride": True,
@@ -272,6 +280,8 @@ def compact_runtime_config(row: dict[str, Any] | None, args: argparse.Namespace)
         "followRatioPct": format(follow_ratio_pct, "f"),
         "maxBuyV": str(row.get("max_buy_v") or ""),
         "maxProjectV": str(row.get("max_project_v") or ""),
+        "followMaxProjectV": str(row.get("follow_max_project_v") or row.get("max_project_v") or ""),
+        "fdvLimitMaxProjectV": str(row.get("fdv_limit_max_project_v") or row.get("max_project_v") or ""),
         "updatedAt": int(row.get("updated_at") or 0),
     }
 
@@ -771,7 +781,7 @@ async def attempt_follow_trades(
     sample_index: int,
     rpc_selection: Any,
 ) -> tuple[bool, list[dict[str, Any]]]:
-    if bool(getattr(args, "disable_follow_trade", False)):
+    if bool(getattr(effective_args, "disable_follow_trade", False)):
         return False, []
     if str(sample.get("projectStatus") or "").lower() != "live":
         return False, []
@@ -797,8 +807,14 @@ async def attempt_follow_trades(
         ):
             continue
         source_spent_v, source_spent_field = follow_trade_source_spent(row)
-        sent_v = sent_project_v_all_strategies(bot, project_name=project_name)
-        max_project_v = Decimal(str(effective_args.max_project_v)) if effective_args.max_project_v is not None else None
+        sent_v = sent_project_v(
+            bot,
+            project_name=project_name,
+            strategy_name=DEFAULT_FOLLOW_TRADE_STRATEGY,
+            rule_name=DEFAULT_FOLLOW_TRADE_RULE,
+        )
+        follow_cap_raw = getattr(effective_args, "follow_max_project_v", effective_args.max_project_v)
+        max_project_v = Decimal(str(follow_cap_raw)) if follow_cap_raw is not None else None
         buy_size_v, clamped, remaining_project_v = follow_trade_buy_size(
             source_spent_v=source_spent_v,
             divisor=divisor,
@@ -827,8 +843,9 @@ async def attempt_follow_trades(
             continue
         attempted_trade = True
         follow_args = copy.copy(effective_args)
+        follow_args.project_cap_scope = "strategy"
+        follow_args.max_project_v = max_project_v
         follow_args.max_buy_v = buy_size_v
-        follow_args.project_cap_scope = "project"
         intent = follow_trade_intent(
             row=row,
             project_name=project_name,
@@ -2446,7 +2463,12 @@ async def async_main() -> None:
                                     continue
                                 counts["fdv_limit_order"] = counts.get("fdv_limit_order", 0) + 1
                                 fdv_args = copy.copy(effective_args)
-                                fdv_args.project_cap_scope = "project"
+                                fdv_args.project_cap_scope = "strategy"
+                                fdv_args.max_project_v = getattr(
+                                    effective_args,
+                                    "fdv_limit_max_project_v",
+                                    effective_args.max_project_v,
+                                )
                                 order_buy_v = decimal_value(claimed.get("buy_v"))
                                 if fdv_args.max_buy_v is None or Decimal(fdv_args.max_buy_v) < order_buy_v:
                                     fdv_args.max_buy_v = order_buy_v

@@ -208,6 +208,7 @@ def main() -> None:
     )
     effective_args = runtime_effective_args(args, runtime_config_row)
     paper_sent_project_v = Decimal("0")
+    paper_sent_fdv_limit_project_v = Decimal("0")
     paper_triggered_fdv_limit_order_ids: set[int] = set()
     events: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -292,13 +293,18 @@ def main() -> None:
                             sample_index=sample_index,
                         )
                         fdv_args = copy.copy(effective_args)
+                        fdv_args.max_project_v = getattr(
+                            effective_args,
+                            "fdv_limit_max_project_v",
+                            effective_args.max_project_v,
+                        )
                         order_buy_v = decimal_value(limit_order.get("buy_v"))
                         if fdv_args.max_buy_v is None or Decimal(str(fdv_args.max_buy_v)) < order_buy_v:
                             fdv_args.max_buy_v = order_buy_v
                         risk_reason, risk_details = paper_risk_block(
                             intent=intent,
                             effective_args=fdv_args,
-                            paper_sent_project_v=paper_sent_project_v,
+                            paper_sent_project_v=paper_sent_fdv_limit_project_v,
                         )
                         if risk_reason:
                             limit_payload = {
@@ -324,7 +330,7 @@ def main() -> None:
                             }
                         else:
                             buy_size = decimal_value(intent.get("buy_size_v"))
-                            paper_sent_project_v += buy_size
+                            paper_sent_fdv_limit_project_v += buy_size
                             paper_triggered_fdv_limit_order_ids.add(int(limit_order.get("id") or 0))
                             limit_payload = {
                                 "event": "paper_fdv_limit_order_intent",
@@ -336,7 +342,8 @@ def main() -> None:
                                 "taxRate": sample.get("buyTaxRate"),
                                 "paperOnly": True,
                                 "tradeSent": False,
-                                "paperSentProjectV": fmt_decimal(paper_sent_project_v),
+                                "paperSentProjectV": fmt_decimal(paper_sent_fdv_limit_project_v),
+                                "paperSentFdvLimitProjectV": fmt_decimal(paper_sent_fdv_limit_project_v),
                                 "intent": intent,
                                 "fdvLimitOrder": {
                                     "id": int(limit_order.get("id") or 0),

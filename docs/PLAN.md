@@ -2473,7 +2473,7 @@ Phase 052 执行结果：
 - 生产逼近测试 runbook：`docs/phases/phase-055-live-window-production-like-test-runbook.md`。
 - 管理员项目详情页新增“自动买入控制”模块：
   - 支持恢复默认 `25/50/50/150` 与 `20/10` 阈值。
-  - 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限和项目预算。
+  - 支持编辑基础买入、抄底买入、抄底阈值、横盘暂停阈值、单笔上限、大户榜单预算、跟单预算和限价单预算。
   - UI 已从普通参数表重构为“买入策略卡”：买入触发条件只读展示，金额、节奏保护、抄底放大和风险上限分区编辑。
   - 买入触发条件展示当前后端策略事实，不支持前端修改，也不向后端提交新字段：`LIVE 中`、`税率 ≤ 95%`、`榜单 V ≥ 5,000`、`有效榜单 20 人 / 5 个成本样本`、`含税 FDV ≤ 榜单成本`。
   - `有效榜单 20 人 / 5 个成本样本` 用于避免误解：榜单人数表示大户广度，成本样本表示可参与榜单成本计算的有效地址数。
@@ -2482,22 +2482,22 @@ Phase 052 执行结果：
   - 2026-05-31 新增正常税率 live 窗口跟单策略：默认跟随 `0xe0b51bbf7af8bff0a8cd422e4b5f17aa0824969d`，买入金额为 `floor(对方消耗 VIRTUAL / 4)`，小于 `1V` 不出手。
   - 自动买入优先级固定为：普通大户榜单策略 > 跟单策略 > 含税估算 FDV 限价单。
   - 2026-06-01 跟单策略前端改为与“含税估算 FDV 限价单”平级的独立板块，不再放入大户榜单策略卡，避免误解为受大户榜单 / 税率 / FDV / 横盘跳过 / 抄底条件约束。
-  - 跟单买入只以“跟单地址买入当前项目”为策略触发条件；策略上限只共享项目预算。自动买入总开关、余额、授权、熔断属于执行安全门禁，不是跟单策略条件。
-  - 跟单策略接入管理员运行时控制：前端独立展示“跟单买入”，只保留 `启用跟单 / 停用跟单 / 保存比例` 三个业务动作；默认 `25%`，当前跟单地址只展示不编辑。
+  - 跟单买入只以“跟单地址买入当前项目”为策略触发条件；跟单预算独立统计，不共享大户榜单预算或含税估算 FDV 限价单预算。自动买入总开关、余额、授权、熔断属于执行安全门禁，不是跟单策略条件。
+  - 跟单策略接入管理员运行时控制：前端独立展示“跟单买入”，只保留 `启用跟单 / 停用跟单 / 保存跟单参数` 三个业务动作；默认 `25%`，当前跟单地址只展示不编辑。
   - 前端只展示业务动作：`恢复默认`、`保存并启用`、`停用自动买入`；`simulate/broadcast/updated_reason` 等原生控制字段只保留在后端。
   - 展示配置版本、已买入 V、最近调整时间和 active fuse 提示。
 - 后端新增运行时配置能力：
   - `launch_strategy_runtime_configs` 保存当前项目配置。
   - `launch_strategy_runtime_config_audit` 保存每次修改的 before/after 审计。
   - 管理员 API：`GET/POST /api/admin/projects/{project_id}/launch-strategy-config`。
-  - 静态风控校验：基础买入/抄底买入必须小于等于单笔上限；项目预算不能低于已发送买入 V。
+  - 静态风控校验：基础买入/抄底买入必须小于等于单笔上限；大户榜单预算、跟单预算、限价单预算分别不能低于各自已发送买入 V。
   - 2026-05-21 复盘 MTR 发射前操作后，新增项目身份硬校验：自动买入、自动卖出、含税估算 FDV 限价单保存时可携带 `expectedProjectId / expectedProject`，若页面选择项目与 URL route project 不一致，后端返回 409 并拒绝写入，避免管理员看着 MTR 实际保存到旧项目。
 - 自动买入执行器已接入热加载：
-  - 无配置行时沿用 CLI/systemd 默认值，保持向后兼容。
+  - 无配置行时金额仍沿用 CLI/systemd 默认值，但预算 scope 默认按策略独立，不再回退到共享项目预算。
   - 配置存在且 `enabled=false` 时不发出 BuyIntent。
   - `broadcast` 执行器遇到配置 `mode=simulate` 时阻断真实买入。
   - 配置版本变化时写入 `strategy_config_reloaded` 日志。
-  - 生产 `vwr-launch-autobuy@.service` 使用 `--project-cap-scope project`，普通买入、跟单买入和 FDV 限价单共享同一个项目预算；前端将项目预算作为共享预算展示，不归属于单一策略。
+  - 普通大户榜单策略、跟单策略和 FDV 限价单均使用 strategy-scoped cap；`max_project_v`、`follow_max_project_v`、`fdv_limit_max_project_v` 分别热加载。即使旧 systemd 模板仍传入 `--project-cap-scope project`，三种买入也不再共享预算。
   - `followEnabled / followWallet / followRatioPct` 随 `launch_strategy_runtime_configs` 热加载；保存后下一轮执行器循环立即采用，无需重启服务。
 - 本地验证通过：
   - Python `py_compile`。
@@ -2514,7 +2514,7 @@ Phase 052 执行结果：
   - 当前前端只保留 `恢复默认`、`保存并启用`、`停用自动买入` 三个主要动作。
   - HTTP 保存烟测通过：保存后可重置为 disabled `25/50/50/150`。
   - 2026-05-18 本地网页保存 TDS 小额参数 `0.1/0.2/0.2/0.6` 后，后端回读 `enabled=true / mode=broadcast / version=22`。
-  - 100x 完整发射窗口 paper replay 通过：99 个税率 tick 约 1 分钟跑完，产生 `0.1/0.2/0.1/0.2 VIRTUAL` 四次买入意图，项目预算 `0.6 VIRTUAL` 生效后阻断后续意图，全程 `paperOnly=true / tradeSent=false`。
+  - 100x 完整发射窗口 paper replay 通过：99 个税率 tick 约 1 分钟跑完，产生 `0.1/0.2/0.1/0.2 VIRTUAL` 四次普通策略买入意图，大户榜单预算 `0.6 VIRTUAL` 生效后阻断后续普通策略意图，全程 `paperOnly=true / tradeSent=false`。
   - 测试完成后已停用本地 TDS 自动买入，回读 `enabled=false / mode=simulate / version=23`。
 - 限价单 L5 小额真实广播 canary 通过：
   - 2026-05-20 使用 TDS internal market 和模拟 `LIVE` sample 触发临时限价单 `FDV <= 120 万 USD / 买入 0.01 VIRTUAL`。

@@ -106,6 +106,7 @@ FILES=(
   scripts/ops/launch_execution_pipeline.py
   scripts/ops/launch_latency_probe.py
   scripts/ops/launch_open_sniper_executor.py
+  scripts/ops/launch_preflight_gate.py
   scripts/ops/launch_prewarm_executor.py
   scripts/ops/launch_readiness_check.py
   scripts/ops/launch_rpc_pressure_probe.py

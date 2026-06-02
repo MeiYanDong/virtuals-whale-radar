@@ -289,6 +289,7 @@ export const dashboardApi = {
           buyV: string;
           sortOrder: number;
         }>;
+        fdvLimitMaxProjectV?: string;
       },
     ) {
       return requestJson<LaunchFdvLimitOrdersResponse>(
@@ -317,6 +318,8 @@ export const dashboardApi = {
         followRatioPct: string;
         maxBuyV: string;
         maxProjectV: string;
+        followMaxProjectV: string;
+        fdvLimitMaxProjectV: string;
         updatedReason?: string;
       },
     ) {

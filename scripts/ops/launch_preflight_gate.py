@@ -110,6 +110,8 @@ def compact_runtime_config(row: dict[str, Any] | None, kind: str) -> dict[str, A
             "dipBuyV": decimal_text(row.get("dip_buy_v")),
             "maxBuyV": decimal_text(row.get("max_buy_v")),
             "maxProjectV": decimal_text(row.get("max_project_v")),
+            "followMaxProjectV": decimal_text(row.get("follow_max_project_v")),
+            "fdvLimitMaxProjectV": decimal_text(row.get("fdv_limit_max_project_v")),
             "updatedAt": int(row.get("updated_at") or 0),
         }
     return {

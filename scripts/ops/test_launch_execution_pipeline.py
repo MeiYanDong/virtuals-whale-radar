@@ -44,6 +44,10 @@ from launch_execution_pipeline import (  # noqa: E402
 )
 from sell_virtuals_token import bind_sell  # noqa: E402
 from virtuals_bot import (  # noqa: E402
+    DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+    DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+    DEFAULT_LAUNCH_FOLLOW_RULE,
+    DEFAULT_LAUNCH_FOLLOW_STRATEGY,
     Storage,
     VirtualsBot,
     VIRTUALS_DIRECT_BUY_ROUTER,
@@ -526,6 +530,8 @@ def test_launch_strategy_runtime_config_storage() -> None:
                     "fdvLimitWanUsd": "300",
                     "maxBuyV": "200",
                     "maxProjectV": "300",
+                    "followMaxProjectV": "80",
+                    "fdvLimitMaxProjectV": "90",
                     "updatedReason": "hot project",
                 },
                 operator_user_id=None,
@@ -537,6 +543,8 @@ def test_launch_strategy_runtime_config_storage() -> None:
             assert_eq(config["dip_buy_v"], "200.000000", "runtime config dip")
             assert_eq(config["fdv_limit_enabled"], 1, "runtime config fdv limit enabled")
             assert_eq(config["fdv_limit_wan_usd"], "300.000000", "runtime config fdv limit")
+            assert_eq(config["follow_max_project_v"], "80.000000", "runtime config follow cap")
+            assert_eq(config["fdv_limit_max_project_v"], "90.000000", "runtime config fdv limit cap")
             assert_eq(len(storage.list_launch_strategy_runtime_config_audit(int(project["id"]))), 1, "runtime config audit")
 
             storage.upsert_launch_execution_record(
@@ -561,6 +569,54 @@ def test_launch_strategy_runtime_config_storage() -> None:
                 Decimal("250"),
                 "runtime config sent project v",
             )
+            storage.upsert_launch_execution_record(
+                {
+                    "intent_id": "hot_follow_1",
+                    "project": "HOT",
+                    "strategy": DEFAULT_LAUNCH_FOLLOW_STRATEGY,
+                    "rule_name": DEFAULT_LAUNCH_FOLLOW_RULE,
+                    "mode": "prewarm_broadcast",
+                    "status": "receipt_success",
+                    "action": "would_buy",
+                    "decision_reason": "receipt_observed",
+                    "tax_rate": "95",
+                    "buy_size_v": "70",
+                    "entry_tax_fdv_wan_usd": "100",
+                    "trade_sent": True,
+                    "broadcast_enabled": True,
+                }
+            )
+            storage.upsert_launch_execution_record(
+                {
+                    "intent_id": "hot_fdv_1",
+                    "project": "HOT",
+                    "strategy": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_STRATEGY,
+                    "rule_name": DEFAULT_LAUNCH_FDV_LIMIT_ORDER_RULE,
+                    "mode": "prewarm_broadcast",
+                    "status": "receipt_success",
+                    "action": "would_buy",
+                    "decision_reason": "receipt_observed",
+                    "tax_rate": "95",
+                    "buy_size_v": "80",
+                    "entry_tax_fdv_wan_usd": "100",
+                    "trade_sent": True,
+                    "broadcast_enabled": True,
+                }
+            )
+            storage.upsert_launch_strategy_runtime_config(
+                project_row=project,
+                payload={
+                    "enabled": True,
+                    "mode": "broadcast",
+                    "baseBuyV": "100",
+                    "dipBuyV": "200",
+                    "maxBuyV": "200",
+                    "maxProjectV": "300",
+                    "followMaxProjectV": "70",
+                    "fdvLimitMaxProjectV": "80",
+                },
+                operator_user_id=None,
+            )
             try:
                 storage.upsert_launch_strategy_runtime_config(
                     project_row=project,
@@ -579,6 +635,43 @@ def test_launch_strategy_runtime_config_storage() -> None:
                     raise
             else:
                 raise AssertionError("maxProjectV below sent V must be rejected")
+            for payload, expected in [
+                (
+                    {
+                        "enabled": True,
+                        "mode": "broadcast",
+                        "baseBuyV": "100",
+                        "dipBuyV": "200",
+                        "maxBuyV": "200",
+                        "maxProjectV": "300",
+                        "followMaxProjectV": "69",
+                    },
+                    "follow",
+                ),
+                (
+                    {
+                        "enabled": True,
+                        "mode": "broadcast",
+                        "baseBuyV": "100",
+                        "dipBuyV": "200",
+                        "maxBuyV": "200",
+                        "maxProjectV": "300",
+                        "fdvLimitMaxProjectV": "79",
+                    },
+                    "FDV limit",
+                ),
+            ]:
+                try:
+                    storage.upsert_launch_strategy_runtime_config(
+                        project_row=project,
+                        payload=payload,
+                        operator_user_id=None,
+                    )
+                except ValueError as exc:
+                    if expected not in str(exc):
+                        raise
+                else:
+                    raise AssertionError(f"{expected} cap below sent V must be rejected")
         finally:
             storage.close()
 

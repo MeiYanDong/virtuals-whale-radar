@@ -449,6 +449,8 @@ export interface LaunchStrategyRuntimeConfigItem {
   followRatioPct: string;
   maxBuyV: string;
   maxProjectV: string;
+  followMaxProjectV: string;
+  fdvLimitMaxProjectV: string;
   version: number;
   updatedByUserId: number | null;
   updatedReason: string;
@@ -470,6 +472,9 @@ export interface LaunchStrategyRuntimeConfigResponse {
   item: LaunchStrategyRuntimeConfigItem;
   runtime: {
     sentProjectV: string;
+    sentWhaleProjectV: string;
+    sentFollowProjectV: string;
+    sentFdvLimitProjectV: string;
     activeFuse?: Record<string, unknown> | null;
   };
   audit: Array<{
@@ -517,6 +522,8 @@ export interface LaunchFdvLimitOrdersResponse {
     ruleName: string;
     mode: string;
     receiptWait: string;
+    maxProjectV?: string;
+    sentProjectV?: string;
   };
 }
 

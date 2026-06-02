@@ -53,7 +53,7 @@
 ## 5. 执行器设计
 
 - `launch_prewarm_executor.py` 在循环中读取项目运行时配置。
-- 如果没有配置行，沿用 CLI/systemd 默认值，保持向后兼容。
+- 如果没有配置行，金额沿用 CLI/systemd 默认值；预算 scope 仍按策略独立，不回退到共享项目预算。
 - 如果配置存在但 `enabled=false`，执行器只记录 disabled 状态，不发出 BuyIntent。
 - 如果配置 `mode=simulate`，广播模式执行器不真实买入。
 - 如果配置版本变化，执行器记录 `strategy_config_reloaded`。
@@ -63,20 +63,20 @@
   - 同一轮多个订单同时触发时，策略层视为并列触发。
   - 执行层按限价从高到低快速连续广播，使用本地 nonce 递增，避免等待上一笔成交确认。
   - 热路径不等待 receipt；后续循环补查成交结果，并将订单标记为 `filled` 或 `failed`。
-  - 仍保留广播门禁、独立 execution RPC、active fuse、余额/授权/eth_call/estimateGas 检查和单项目预算上限。
+  - 仍保留广播门禁、独立 execution RPC、active fuse、余额/授权/eth_call/estimateGas 检查和限价单独立预算上限。
   - 仍受“自动买入控制”的总开关约束：管理员停用自动买入，或运行配置不是 `broadcast`，限价单不会真实广播。
 
 ## 6. 前端设计
 
 - 入口放在管理员项目详情页，不放全局 Settings。
 - 模块名：`自动买入控制`。
-- 展示当前配置版本、是否已启用、买入触发条件、基础买入、抄底买入、单笔上限、项目预算、抄底阈值、横盘跳过和已买入 V。
+- 展示当前配置版本、是否已启用、买入触发条件、基础买入、抄底买入、单笔上限、大户榜单预算、抄底阈值、横盘跳过和已买入 V。
 - 前端重构为“买入策略卡”，而不是普通参数表：
   - `买入触发条件`：只读展示，不支持前端修改，不向后端提交新字段。
   - `买入金额`：编辑基础买入和抄底买入。
   - `节奏保护`：编辑横盘跳过阈值，同时明确当前策略为每个税率档最多买入一次。
   - `抄底放大`：编辑低于我方成本多少百分比后放大买入。
-  - `风险上限`：编辑单笔上限和项目预算。
+  - `风险上限`：编辑单笔上限和大户榜单预算。
 - 新增独立模块 `含税估算 FDV 限价单`：
   - 文案使用“限价单”，不使用“大户策略最高 FDV”。
   - 每行展示为：`订单状态：参与触发/暂停触发；当含税估算 FDV 不高于 [X] 万 USD，买入 [Y] VIRTUAL`。
@@ -133,7 +133,7 @@
   - 基础买入 `0.1 VIRTUAL`
   - 抄底买入 `0.2 VIRTUAL`
   - 单笔上限 `0.2 VIRTUAL`
-  - 项目预算 `0.6 VIRTUAL`
+  - 大户榜单预算 `0.6 VIRTUAL`
   - 抄底阈值 `20%`
   - 横盘跳过 `10%`
 - 保存后后端回读 `enabled=true / mode=broadcast / version=22`，证明网页操作已传导到后端运行时配置。
@@ -143,11 +143,11 @@
   - 99 个税率 tick 在约 1 分钟内跑完。
   - 执行器按前端新值产生 4 次 paper buy intent：税率 `95/93/92/90`，买入金额 `0.1/0.2/0.1/0.2 VIRTUAL`。
   - 税率 `94/91` 因相邻税率档 FDV 变化小于等于 `10%` 被跳过。
-  - 累计 paper 买入达到 `0.6 VIRTUAL` 后，后续 89 次意图均被项目预算风控拦截。
+  - 累计 paper 普通策略买入达到 `0.6 VIRTUAL` 后，后续 89 次普通策略意图均被大户榜单预算风控拦截。
   - 全程 `paperOnly=true / tradeSent=false`。
 - 限价单 paper replay 事件：
   - `paper_fdv_limit_order_intent`：限价单满足 `LIVE + 当前含税估算 FDV <= 订单限价`，并通过 paper 风控。
-  - `paper_fdv_limit_order_blocked_by_risk_cap`：限价单满足价格条件，但被单笔或项目预算拦截。
+  - `paper_fdv_limit_order_blocked_by_risk_cap`：限价单满足价格条件，但被单笔或限价单预算拦截。
 - 模拟完成后通过本地 API 停用配置，回读 `enabled=false / mode=simulate / version=23`，避免测试启用状态残留。
 - 倍速使用建议：
   - 全窗口烟测使用 `100x`，99 分钟窗口约 1 分钟跑完。
@@ -199,7 +199,7 @@
 
 1. 限价单优先级互斥。
    - 同一 tick 内，若已有含税估算 FDV 限价单进入触发/广播流程，则普通自动买入不再在该 tick 继续触发。
-   - 目的：避免限价单和普通策略同时满足时重复买入、增加 nonce 压力或过快消耗项目预算。
+   - 目的：避免限价单和普通策略同时满足时重复买入、增加 nonce 压力或过快消耗对应策略预算。
    - 仍保留多个限价单同 tick 并列触发，按限价从高到低快速顺序发送。
 2. 普通自动买入 no-wait receipt。
    - 普通自动买入广播后不等待 receipt，先释放热路径；后续循环后台补查 receipt，并把账本更新为 `receipt_success` 或 `receipt_failed`。
@@ -211,7 +211,7 @@
    - 触发普通买入或含税估算 FDV 限价单时，如果买入金额和税率命中候选，热路径直接 `eth_sendRawTransaction`。
    - raw tx 只保存在进程内存，不写 DB、不写 JSONL、不打印；日志只记录 signed tx hash、nonce、gas、候选年龄和耗时。
    - 为避免同一 pending nonce 被复用，候选命中一次后立即清空同批候选；未命中或过期自动回退原有稳定路径。
-   - 限价单和普通策略仍共享原有广播门禁、独立 execution RPC、active fuse、余额/授权/eth_call/estimateGas 与预算风控。
+   - 限价单和普通策略仍共享原有广播门禁、独立 execution RPC、active fuse、余额/授权/eth_call/estimateGas；预算风控分别使用各自独立上限。
    - 模板参数限制为 `--signed-candidate-max-count 1`，降低 nonce 复用和 RPC 压力。
 
 仍不默认启用：

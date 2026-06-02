@@ -199,6 +199,8 @@ type LaunchStrategyFormState = {
   followRatioPct: string;
   maxBuyV: string;
   maxProjectV: string;
+  followMaxProjectV: string;
+  fdvLimitMaxProjectV: string;
   updatedReason: string;
 };
 
@@ -285,6 +287,8 @@ function formFromLaunchStrategyConfig(data?: LaunchStrategyRuntimeConfigResponse
     followRatioPct: formatEditableNumber(item?.followRatioPct ?? "25", 0),
     maxBuyV,
     maxProjectV: formatEditableNumber(item?.maxProjectV ?? "150"),
+    followMaxProjectV: formatEditableNumber(item?.followMaxProjectV ?? item?.maxProjectV ?? "150"),
+    fdvLimitMaxProjectV: formatEditableNumber(item?.fdvLimitMaxProjectV ?? item?.maxProjectV ?? "150"),
     updatedReason: "",
   };
 }
@@ -506,6 +510,10 @@ function normalizeLaunchStrategyFormForSubmit(form: LaunchStrategyFormState): La
   if (followRatio !== null) {
     next.followRatioPct = formatEditableNumber(followRatio, 0);
   }
+  for (const field of ["maxProjectV", "followMaxProjectV", "fdvLimitMaxProjectV"] as const) {
+    const value = parseStrategyInputNumber(next[field]);
+    if (value !== null) next[field] = formatStrategyInputNumber(value);
+  }
 
   return next;
 }
@@ -601,7 +609,13 @@ function friendlyLaunchStrategyError(error: Error) {
     return "抄底买入不能高于单笔上限。";
   }
   if (normalized.includes("maxprojectv") && normalized.includes("already sent")) {
-    return "项目预算不能低于已买入金额。";
+    return "大户榜单预算不能低于大户策略已买入金额。";
+  }
+  if (normalized.includes("followmaxprojectv") && normalized.includes("already sent")) {
+    return "跟单预算不能低于跟单已买入金额。";
+  }
+  if (normalized.includes("fdvlimitmaxprojectv") && normalized.includes("already sent")) {
+    return "限价单预算不能低于限价单已买入金额。";
   }
   if (normalized.includes("followwallet")) {
     return "跟单地址格式不正确。";
@@ -610,7 +624,7 @@ function friendlyLaunchStrategyError(error: Error) {
     return "跟单比例必须大于 0%，且不能超过 100%。";
   }
   if (normalized.includes("must be positive")) {
-    return "买入金额和预算必须大于 0。";
+    return "买入金额和各自预算必须大于 0。";
   }
   if (normalized.includes("cannot be negative")) {
     return "参数不能为负数。";
@@ -684,6 +698,8 @@ const defaultStrategyPatch: Partial<LaunchStrategyFormState> = {
   followRatioPct: "25",
   maxBuyV: "50",
   maxProjectV: "150",
+  followMaxProjectV: "150",
+  fdvLimitMaxProjectV: "150",
 };
 const defaultSellPatch: Partial<LaunchSellFormState> = {
   maxTaxRate: "30",
@@ -796,11 +812,11 @@ function LaunchStrategyControlPanel({
       <div className="launch-strategy-control grid gap-4 xl:grid-cols-[0.62fr_1.38fr]">
         <div className="space-y-3">
           <div className={strategyMetricCardClass}>
-            <div className={strategyLabelClass}>已买入</div>
+            <div className={strategyLabelClass}>大户策略已买入</div>
             <div className="mt-2 text-3xl font-semibold tracking-[-0.04em]">
-              {formatConfigValue(data?.runtime.sentProjectV ?? "0", " V")}
+              {formatConfigValue(data?.runtime.sentWhaleProjectV ?? data?.runtime.sentProjectV ?? "0", " V")}
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">自动买入已成交总额</div>
+            <div className="mt-1 text-xs text-muted-foreground">只统计大户榜单策略成交</div>
           </div>
           {activeFuse ? (
             <div className="launch-strategy-fuse rounded-[22px] border border-[color:var(--danger)] bg-[color:var(--danger-soft)] px-4 py-4 text-sm text-[color:var(--danger-foreground)]">
@@ -963,19 +979,19 @@ function LaunchStrategyControlPanel({
 
               <div className="launch-strategy-rule-card rounded-[24px] border border-primary/25 bg-[color:var(--surface-soft)] px-4 py-4">
                 <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className={strategyLabelClass}>项目预算</div>
-                  <Badge variant="success">三种买入共享</Badge>
+                  <div className={strategyLabelClass}>大户榜单预算</div>
+                  <Badge variant="success">独立上限</Badge>
                 </div>
                 <div className={strategyFieldClass}>
                   <StrategyFieldLabel
-                    label="项目预算"
+                    label="大户预算"
                     unit="VIRTUAL"
-                    hint="普通大户策略、跟单买入和含税估算 FDV 限价单共同消耗这个项目预算。"
+                    hint="只限制大户榜单策略在当前项目内的累计买入；不占用跟单买入和含税估算 FDV 限价单预算。"
                   />
                   <Input
                     className={strategyInputClass}
                     inputMode="decimal"
-                    aria-label="项目预算，单位 VIRTUAL"
+                    aria-label="大户榜单预算，单位 VIRTUAL"
                     value={form.maxProjectV}
                     onChange={(event) => onChange({ maxProjectV: event.target.value })}
                   />
@@ -1023,14 +1039,14 @@ function FollowBuyControlPanel({
           <Badge variant={form.followEnabled ? "success" : "secondary"}>
             {form.followEnabled ? "已启用" : "已停用"}
           </Badge>
-          <Badge variant="secondary">共享项目预算</Badge>
+          <Badge variant="success">独立预算</Badge>
         </div>
       }
     >
       <div className="space-y-4">
         <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div className="text-sm leading-6 text-muted-foreground">
-            跟单地址买入当前项目时，按比例买入。策略只共享项目预算；自动买入总开关、余额、授权和熔断属于执行门禁。
+            跟单地址买入当前项目时，按比例买入。跟单预算独立计算；自动买入总开关、余额、授权和熔断属于执行门禁。
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1039,7 +1055,7 @@ function FollowBuyControlPanel({
               onClick={() => onSetEnabled(true)}
               disabled={pending}
             >
-              {form.followEnabled ? "保存比例" : "启用跟单"}
+              {form.followEnabled ? "保存跟单参数" : "启用跟单"}
             </Button>
             <Button
               type="button"
@@ -1074,18 +1090,25 @@ function FollowBuyControlPanel({
                   aria-label="跟单比例，单位百分比"
                   value={form.followRatioPct}
                   onChange={(event) => onChange({ followRatioPct: event.target.value })}
-                  disabled={!form.followEnabled}
                 />
               </div>
               <div className="space-y-2">
-                <div className={strategyLabelClass}>共享项目预算</div>
-                <div className="rounded-[14px] border border-border bg-background/60 px-3 py-2 text-sm font-semibold text-foreground">
-                  {formatConfigValue(form.maxProjectV || "0", " V")}
-                </div>
-                <div className="text-xs leading-5 text-muted-foreground">
-                  与大户策略、含税估算 FDV 限价单共用。
-                </div>
+                <StrategyFieldLabel
+                  label="跟单预算"
+                  unit="VIRTUAL"
+                  hint="只限制跟单策略在当前项目内的累计买入；不占用大户榜单策略和含税估算 FDV 限价单预算。"
+                />
+                <Input
+                  className={strategyInputClass}
+                  inputMode="decimal"
+                  aria-label="跟单预算，单位 VIRTUAL"
+                  value={form.followMaxProjectV}
+                  onChange={(event) => onChange({ followMaxProjectV: event.target.value })}
+                />
               </div>
+            </div>
+            <div className="mt-3 text-xs leading-5 text-muted-foreground">
+              已跟单买入 {formatConfigValue(data?.runtime.sentFollowProjectV ?? "0", " V")}。
             </div>
           </div>
 
@@ -1109,14 +1132,20 @@ function FollowBuyControlPanel({
 function FdvLimitOrdersPanel({
   data,
   orders,
+  fdvLimitMaxProjectV,
+  sentFdvLimitProjectV,
   pending,
   onChange,
+  onCapChange,
   onSave,
 }: {
   data?: LaunchFdvLimitOrdersResponse;
   orders: FdvLimitOrderDraft[];
+  fdvLimitMaxProjectV: string;
+  sentFdvLimitProjectV: string;
   pending: boolean;
   onChange: (orders: FdvLimitOrderDraft[]) => void;
+  onCapChange: (value: string) => void;
   onSave: () => void;
 }) {
   const immutableOrders = (data?.items ?? []).filter((item) =>
@@ -1141,13 +1170,14 @@ function FdvLimitOrdersPanel({
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="success">速度优先</Badge>
           <Badge variant="secondary">多单并列触发</Badge>
+          <Badge variant="success">独立预算</Badge>
         </div>
       }
     >
       <div className="space-y-4">
         <div className="launch-strategy-command-bar flex flex-col gap-3 rounded-[24px] border border-border bg-[color:var(--surface-soft)] px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div className="text-sm leading-6 text-muted-foreground">
-            每条订单左侧状态只控制该订单是否参与触发；保存订单列表后写入后端。多个订单同时满足时按限价从高到低快速顺序发送。
+            每条订单左侧状态只控制该订单是否参与触发；保存后写入后端。多个订单同时满足时按限价从高到低快速顺序发送。
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1167,6 +1197,26 @@ function FdvLimitOrdersPanel({
             >
               保存订单列表
             </Button>
+          </div>
+        </div>
+
+        <div className="launch-strategy-rule-card grid gap-3 rounded-[24px] border border-primary/25 bg-[color:var(--surface-soft)] px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <div className={strategyFieldClass}>
+            <StrategyFieldLabel
+              label="限价单预算"
+              unit="VIRTUAL"
+              hint="只限制含税估算 FDV 限价单在当前项目内的累计买入；不占用大户榜单策略和跟单买入预算。"
+            />
+            <Input
+              className={strategyInputClass}
+              inputMode="decimal"
+              aria-label="限价单预算，单位 VIRTUAL"
+              value={fdvLimitMaxProjectV}
+              onChange={(event) => onCapChange(event.target.value)}
+            />
+          </div>
+          <div className="rounded-[14px] border border-border bg-background/60 px-3 py-2 text-sm font-semibold text-foreground">
+            已用 {formatConfigValue(sentFdvLimitProjectV || "0", " V")}
           </div>
         </div>
 
@@ -1864,6 +1914,7 @@ export function OverviewPage() {
       return dashboardApi.admin.setLaunchFdvLimitOrders(detailProjectId, {
         expectedProjectId: detailProjectId,
         expectedProject: expectedProjectName,
+        fdvLimitMaxProjectV: launchStrategyForm.fdvLimitMaxProjectV,
         orders: orders.map((order, index) => ({
           id: order.id ?? null,
           enabled: order.enabled,
@@ -1875,9 +1926,15 @@ export function OverviewPage() {
     },
     onSuccess: async () => {
       setFdvLimitOrdersDraft(null);
+      setLaunchStrategyDraft((prev) => {
+        const next = { ...prev };
+        delete next.fdvLimitMaxProjectV;
+        return next;
+      });
       toast.success("含税估算 FDV 限价单已保存。");
       if (detailProjectId) {
         await queryClient.invalidateQueries({ queryKey: queryKeys.adminLaunchFdvLimitOrders(detailProjectId) });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.adminLaunchStrategyConfig(detailProjectId) });
       }
     },
     onError: (error: Error) => toast.error(friendlyFdvLimitOrderError(error)),
@@ -1914,7 +1971,7 @@ export function OverviewPage() {
     if (preserveRuntimeState) {
       const followEnabled = Boolean(formPatch.followEnabled ?? sourceForm.followEnabled);
       const message = followEnabled
-        ? `启用跟单买入，并按 ${next.followRatioPct}% 比例跟随？保存后执行器下一轮热加载。`
+        ? `启用跟单买入，比例 ${next.followRatioPct}%，跟单预算 ${formatConfigValue(next.followMaxProjectV, " V", 4)}？保存后执行器下一轮热加载。`
         : "停用跟单买入？保存后执行器下一轮热加载。";
       if (!window.confirm(message)) return;
       launchStrategyConfigMutation.mutate(next);
@@ -1962,7 +2019,7 @@ export function OverviewPage() {
     const enabledOrders = fdvLimitOrdersForm.filter((order) => order.enabled);
     if (enabledOrders.length) {
       const totalV = enabledOrders.reduce((sum, order) => sum + (Number(order.buyV) || 0), 0);
-      const message = `保存 ${enabledOrders.length} 个参与触发的含税估算 FDV 限价单，合计买入 ${formatConfigValue(totalV, " V", 4)}。触发后会速度优先连续广播。确认继续？`;
+      const message = `保存 ${enabledOrders.length} 个参与触发的含税估算 FDV 限价单，订单合计 ${formatConfigValue(totalV, " V", 4)}，限价单预算 ${formatConfigValue(launchStrategyForm.fdvLimitMaxProjectV, " V", 4)}。触发后会速度优先连续广播。确认继续？`;
       if (!window.confirm(message)) return;
     }
     fdvLimitOrdersMutation.mutate(fdvLimitOrdersForm);
@@ -2407,8 +2464,11 @@ export function OverviewPage() {
             <FdvLimitOrdersPanel
               data={fdvLimitOrdersQuery.data}
               orders={fdvLimitOrdersForm}
+              fdvLimitMaxProjectV={launchStrategyForm.fdvLimitMaxProjectV}
+              sentFdvLimitProjectV={launchStrategyConfigQuery.data?.runtime.sentFdvLimitProjectV ?? "0"}
               pending={fdvLimitOrdersMutation.isPending}
               onChange={setFdvLimitOrdersDraft}
+              onCapChange={(value) => setLaunchStrategyDraft((prev) => ({ ...prev, fdvLimitMaxProjectV: value }))}
               onSave={saveFdvLimitOrders}
             />
             <LaunchSellControlPanel
